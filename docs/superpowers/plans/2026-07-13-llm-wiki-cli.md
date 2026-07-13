@@ -23,6 +23,7 @@ Copied verbatim from `docs/spec.md`. Every task's requirements implicitly includ
 - **Timestamps** are UTC ISO-8601 (`2026-07-13T14:02:11Z`); dates are `YYYY-MM-DD`.
 - **Vault resolution:** `--vault <path>` flag → `WIKI_VAULT` env → walk up from CWD for `wiki.yaml`.
 - **Build matrix:** `win-x64`, `linux-x64`, `osx-x64`, `osx-arm64`, `linux-arm64`.
+- **Local toolchain (this machine):** .NET 9 SDK is Homebrew `dotnet@9` (keg-only). `dotnet`, `DOTNET_ROOT`, and `LIBRARY_PATH` (openssl@3 + brotli lib dirs, required for the AOT native link on macOS) are exported from `~/.zshenv`, so every shell already has them — no per-command env setup needed. Verified: `net9.0` `PublishAot=true` builds and runs a native binary that uses `System.Security.Cryptography.SHA256`. Harmless "built for newer macOS version" linker warnings are expected; IL2xxx/IL3xxx trim/AOT warnings are not — fix those.
 
 **Note on task fidelity:** Tasks 1-18 (foundation + M1 + core M2) carry complete TDD code because they set every pattern the rest reuse. Tasks 19+ specify exact files, interfaces, behavior, and representative test code; where the implementation is a mechanical repeat of an earlier task's pattern, that is stated rather than re-transcribed. Follow the referenced earlier task for the shape.
 
