@@ -1,0 +1,11 @@
+version: 1
+name: "{{name}}"                 # vault display name
+review_gate: {{review_gate}}     # pages land as pending-review when true
+categories:                      # source categories - fully user-defined
+  - id: meeting-transcript
+    description: "Customer meeting transcripts"
+  - id: article
+    description: "Web articles and blog posts"
+lint:
+  staleness_days: 90              # advisory: summaries older than this with newer related sources
+  max_page_lines: 400             # advisory: pages larger than this flagged for splitting

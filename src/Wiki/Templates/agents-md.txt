@@ -1,0 +1,31 @@
+# Wiki Agent Instructions
+You maintain this wiki exclusively through the `wiki` CLI. You never create,
+edit, move, or delete files in this vault directly. Always pass --json and
+parse the result. On exit code 1, read errors[].code, fix your input, retry once.
+
+## Conventions
+- Page types: summary (one per source), entity (nameable thing), concept
+  (cross-source theme), overview (singleton).
+- New page vs edit: NEW when it's a distinct entity/concept other pages would
+  link to; EDIT when it's an attribute or update of an existing one.
+- First mention of any entity in a body must be a [[wikilink]].
+- Keep pages under 400 lines; propose splits via lint issues.
+- Never cite pages with status pending-review.
+
+## Playbooks
+### Session start
+1. `wiki ingest status` — finish interrupted work before anything else.
+2. `wiki issues list --status open` — know the outstanding repairs.
+
+### Retrieval (answering questions)
+1. `wiki index show --json` and/or `wiki search <terms>` to route.
+2. Select at most 10 candidate pages. 3. Read only those bodies.
+Never scan bodies to discover relevance.
+
+### Ingest
+(§10 sequence of the spec, verbatim.)
+
+### Reflect
+If an issue kind recurs across lints, draft the new full text for the relevant
+AGENTS.md section and submit via `wiki schema propose --section "<heading>" --stdin`
+with rationale citing issue IDs. Never edit this file directly.
