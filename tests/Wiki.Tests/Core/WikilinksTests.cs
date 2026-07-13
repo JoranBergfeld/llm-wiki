@@ -26,4 +26,11 @@ public class WikilinksTests
         var result = Wikilinks.Rewrite(body, "contoso", "acme");
         Assert.Equal("[[acme]]\n```\n[[contoso]]\n```\n", result);
     }
+
+    [Fact] public void Rewrite_DoesNotRewriteSharedPrefixTarget()
+    {
+        var body = "[[contoso]] and [[contoso-deal]] and [[contoso|Contoso Inc]]";
+        var result = Wikilinks.Rewrite(body, "contoso", "acme");
+        Assert.Equal("[[acme]] and [[contoso-deal]] and [[acme|Contoso Inc]]", result);
+    }
 }
