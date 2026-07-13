@@ -171,7 +171,9 @@ public sealed class Envelope
 using System.Text.Json.Serialization;
 namespace Wiki.Json;
 
-[JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+// Compact single-line output: the envelope is a machine interface (one JSON blob per line,
+// JSONL-friendly) and the test harness parses the last stdout line. Do NOT set WriteIndented.
+[JsonSourceGenerationOptions(WriteIndented = false, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(Envelope))]
 [JsonSerializable(typeof(WikiError))]
