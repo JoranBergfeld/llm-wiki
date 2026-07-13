@@ -33,7 +33,12 @@ public static class Frontmatter
             if (lines[i] == Delimiter) { closingIndex = i; break; }
 
             var line = lines[i];
-            if (line.Length == 0) continue; // tolerate blank lines inside the block
+            // Blank lines inside the block are tolerated and canonicalized away: they carry no
+            // key, so skipping them doesn't weaken the closed-key check, but they are NOT
+            // reproduced by ToBlock(). This means the round-trip guarantee (Parse then Serialize
+            // reproduces the input) holds for canonical, serializer-produced frontmatter only;
+            // hand-edited input with stray blank lines parses fine but normalizes on the way out.
+            if (line.Length == 0) continue;
 
             int colon = line.IndexOf(':');
             if (colon < 0)

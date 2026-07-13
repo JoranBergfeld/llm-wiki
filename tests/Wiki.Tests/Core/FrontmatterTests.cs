@@ -56,6 +56,40 @@ public class FrontmatterTests
     }
 
     [Fact]
+    public void Parse_RoundTrips_BothSourcesAndTagsNonEmpty()
+    {
+        var text = Valid
+            .Replace("sources: [01J9ZKM1E8W1R2X3Y4Z5A6B7C8]",
+                     "sources: [01J9ZKM1E8W1R2X3Y4Z5A6B7C8, 01J9ZKM2E8W1R2X3Y4Z5A6B7C8]")
+            .Replace("tags: []", "tags: [alpha, beta]");
+        var doc = PageDoc.Parse(text);
+        Assert.Equal(2, doc.Front.Sources.Length);
+        Assert.Equal(new[] { "alpha", "beta" }, doc.Front.Tags);
+        Assert.Equal(text.Trim(), doc.Serialize().Trim());
+    }
+
+    [Fact]
+    public void Parse_MalformedLineNoColon_Throws()
+    {
+        var bad = Valid.Replace("tags: []", "tags: []\nnot-a-kv-pair");
+        var ex = Assert.Throws<ValidationException>(() => PageDoc.Parse(bad));
+        Assert.Equal("frontmatter-schema", ex.Code);
+    }
+
+    [Fact]
+    public void Parse_BodyWithLiteralDelimiterLine_RoundTrips()
+    {
+        var body = "Intro line.\n---\nAfter a literal delimiter [[contoso-deal]].";
+        var text = Valid.Replace("Body about [[contoso-deal]].", body);
+        var doc = PageDoc.Parse(text);
+        // The first '---' after the opening block is the real closing delimiter, so the
+        // literal '---' inside the body must survive verbatim.
+        Assert.Equal(body, doc.Body);
+        Assert.Equal(PageType.Entity, doc.Front.Type);
+        Assert.Equal(text.Trim(), doc.Serialize().Trim());
+    }
+
+    [Fact]
     public void Parse_InvalidId_Throws()
     {
         var bad = Valid.Replace("id: 01J9ZKM3E8W1R2X3Y4Z5A6B7C8", "id: not-a-ulid");
