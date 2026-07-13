@@ -45,7 +45,13 @@ public sealed class VaultConfig
             throw new ValidationException("config", $"cannot read config file '{yamlPath}': {ex.Message}", yamlPath);
         }
 
-        var lines = text.Replace("\r\n", "\n").Split('\n');
+        var rawLines = text.Replace("\r\n", "\n").Split('\n');
+        // Strip inline comments up front, quote-aware, so every downstream matcher sees
+        // comment-free lines. Leading indentation is preserved (the indent-based loop
+        // guards depend on it); only the trailing comment + its whitespace are removed.
+        var lines = new string[rawLines.Length];
+        for (int li = 0; li < rawLines.Length; li++)
+            lines[li] = StripInlineComment(rawLines[li]);
 
         string? version = null;
         string? name = null;
@@ -193,6 +199,29 @@ public sealed class VaultConfig
         if (raw == "false") { value = false; return true; }
         value = false;
         return false;
+    }
+
+    // Remove a trailing inline comment, quote-aware. A '#' only starts a comment when it is
+    // outside double quotes AND is the first non-whitespace char on the line or is preceded
+    // by whitespace. So `name: "C# shop"  # note` keeps the internal `#`, `a#b` stays literal
+    // (no space before `#`), and `categories:  # ...` / `staleness_days: 90  # ...` are cut.
+    // Leading indentation is preserved; only from the comment onward (and trailing space) is dropped.
+    private static string StripInlineComment(string line)
+    {
+        bool inQuotes = false;
+        for (int i = 0; i < line.Length; i++)
+        {
+            var c = line[i];
+            if (c == '"')
+            {
+                inQuotes = !inQuotes;
+            }
+            else if (c == '#' && !inQuotes && (i == 0 || char.IsWhiteSpace(line[i - 1])))
+            {
+                return line[..i].TrimEnd();
+            }
+        }
+        return line.TrimEnd();
     }
 
     private static string Unquote(string value)
