@@ -12,6 +12,8 @@ namespace Wiki.Core;
 // sanctioned producers of those paths.
 public static class AtomicFile
 {
+    // Note: creates any missing parent directories (mkdir -p) before writing, so
+    // callers can write into wiki/summaries etc. before those dirs exist on disk.
     public static void Write(string path, string content)
     {
         var dir = System.IO.Path.GetDirectoryName(path);
@@ -45,13 +47,21 @@ public static class AtomicFile
         }
     }
 
+    // Comparisons are case-INsensitive on purpose. This guard is a write-refusal
+    // safety boundary: on APFS (macOS) and NTFS (Windows) - the default, case-
+    // insensitive filesystems on both target platforms - `RAW/a.md` resolves to the
+    // same file as `raw/a.md`, so a case-sensitive check would let a case-variant
+    // spelling slip past and let AtomicFile.Write clobber a protected file. Over-
+    // rejecting a case-variant path costs nothing (no legitimate caller writes to
+    // RAW/); under-rejecting risks silent data loss. This is deliberately separate
+    // from the spec's "case-sensitive internally" idmap/duplicate-detection rule.
     private static bool IsUnder(string path, string dir)
     {
         var prefix = dir.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar)
                      + System.IO.Path.DirectorySeparatorChar;
-        return path.StartsWith(prefix, System.StringComparison.Ordinal);
+        return path.StartsWith(prefix, System.StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool PathsEqual(string a, string b)
-        => string.Equals(a, b, System.StringComparison.Ordinal);
+        => string.Equals(a, b, System.StringComparison.OrdinalIgnoreCase);
 }
