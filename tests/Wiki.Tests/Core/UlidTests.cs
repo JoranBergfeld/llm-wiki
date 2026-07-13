@@ -16,6 +16,29 @@ public class UlidTests
         Assert.True(string.CompareOrdinal(a, b) < 0); // later time sorts later
     }
 
+    [Fact]
+    public void New_GoldenVector_AllRandomBitsSet_AreAllZ()
+    {
+        // 80 random bits all set -> every 5-bit group = 31 = 'Z'.
+        // Expected computed by hand from the Crockford alphabet, MSB-first.
+        var rnd = new byte[10];
+        for (int i = 0; i < rnd.Length; i++) rnd[i] = 0xFF;
+        var ulid = WikiUlid.New(0, rnd);
+        Assert.Equal("0000000000" + new string('Z', 16), ulid);
+    }
+
+    [Fact]
+    public void New_GoldenVector_OnlyFirstRandomBitSet_PinsMsbFirstOrdering()
+    {
+        // Only the most significant bit of byte 0 is set (0x80).
+        // First 5-bit group = 10000 = 16 = 'G', remaining groups all 0.
+        // Expected computed by hand; this pins MSB-first ordering + byte0-bit0 position.
+        var rnd = new byte[10];
+        rnd[0] = 0x80;
+        var ulid = WikiUlid.New(0, rnd);
+        Assert.Equal("0000000000G" + new string('0', 15), ulid);
+    }
+
     [Theory]
     [InlineData("01J9ZKM3E8W1R2X3Y4Z5A6B7C8", true)]
     [InlineData("not-a-ulid", false)]
