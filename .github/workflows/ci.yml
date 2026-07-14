@@ -1,9 +1,15 @@
 name: CI
 
 # Every push to main: run the tests, and if they pass, build the native-AOT
-# distributable for all five targets and publish them to a rolling "latest"
+# distributable for each target and publish them to a rolling "latest"
 # prerelease. Native AOT cannot cross-compile across OSes, so each target
 # builds on its own runner.
+#
+# osx-x64 (Intel Mac) is intentionally omitted: GitHub's macos-13 (Intel)
+# runners are scarce and routinely queue 20+ min, which would stall the
+# gated release. Apple Silicon is standard now, so osx-arm64 covers modern
+# Macs. The code still supports the osx-x64 RID for anyone building on an
+# Intel Mac locally.
 
 on:
   push:
@@ -46,8 +52,6 @@ jobs:
             os: ubuntu-24.04-arm
           - rid: win-x64
             os: windows-latest
-          - rid: osx-x64
-            os: macos-13
           - rid: osx-arm64
             os: macos-latest
     runs-on: ${{ matrix.os }}
@@ -113,4 +117,4 @@ jobs:
             --title "Latest main build ($sha_short)" \
             --notes "Automated native-AOT build from main @ $sha_short (run #${GITHUB_RUN_NUMBER}).
 
-          Binaries: linux-x64, linux-arm64, win-x64, osx-x64, osx-arm64. Unix targets are \`.tar.gz\` (contains \`wiki\`); Windows is \`.zip\` (contains \`wiki.exe\`)."
+          Binaries: linux-x64, linux-arm64, win-x64, osx-arm64. Unix targets are \`.tar.gz\` (contains \`wiki\`); Windows is \`.zip\` (contains \`wiki.exe\`)."
