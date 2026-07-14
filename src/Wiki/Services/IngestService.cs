@@ -97,6 +97,9 @@ public sealed class IngestService
     // check below runs before Ledger.Advance/Save - "nothing lands on a
     // failed precondition" (Global Constraints), same discipline as
     // PageService/SourceService's validate-then-write split.
+    // `cfg` is currently unused - kept in the signature to match the brief's
+    // interface contract (and so a future precondition that needs config,
+    // e.g. staleness thresholds, has it to hand without a signature churn).
     public void Advance(Vault v, VaultConfig cfg, string sourceId, LedgerState to, string[] touched)
     {
         var ledger = new Ledger();

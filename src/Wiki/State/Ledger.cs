@@ -57,7 +57,15 @@ public sealed class Ledger
         {
             SourceId = sourceId,
             State = to,
-            Touched = touched,
+            // The `--touched` audit list belongs to the `integrated`
+            // transition and must SURVIVE every later transition (spec §10:
+            // "recorded in ledger for audit"). Only adopt the caller's list
+            // when moving *into* Integrated; otherwise carry the existing one
+            // forward - exactly the same preserve-not-clobber discipline as
+            // IntegratedAt on the line below. `advance --to linted` passes no
+            // `--touched` (an empty array), so clobbering here would silently
+            // erase the audit trail on every normal ingest run.
+            Touched = to == LedgerState.Integrated ? touched : existing.Touched,
             IntegratedAt = to == LedgerState.Integrated ? utcIso : existing.IntegratedAt,
             RegisteredAt = existing.RegisteredAt,
         };

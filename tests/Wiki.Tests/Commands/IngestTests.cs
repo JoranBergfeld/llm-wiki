@@ -15,6 +15,14 @@ public class IngestTests
 {
     private static string LedgerPath(TempVault tv) => Path.Combine(tv.Path, ".wiki", "ledger.json");
     private static string LogPath(TempVault tv) => Path.Combine(tv.Path, "wiki", "log.md");
+    private static string IndexPath(TempVault tv) => Path.Combine(tv.Path, "wiki", "index.md");
+
+    // Snapshot ledger.json so a rejected advance can be asserted to have
+    // landed *nothing* - the "blocking validation, nothing lands" invariant.
+    // Returns "" if the file doesn't exist yet, matching File.ReadAllText's
+    // "unchanged" semantics for a never-created file.
+    private static string LedgerSnapshot(TempVault tv)
+        => File.Exists(LedgerPath(tv)) ? File.ReadAllText(LedgerPath(tv)) : "";
 
     // Registers a fresh vault + one source, in `registered` state. Returns
     // the vault and the new source's id (read out of `source add --json`'s
@@ -42,9 +50,11 @@ public class IngestTests
     public void Advance_ToSummarized_RequiresSummaryPage()
     {
         var (tv, id) = Seeded();
+        var snapshot = LedgerSnapshot(tv);
         var early = tv.Run("ingest", "advance", id, "--to", "summarized", "--json");
         Assert.Equal(1, early.ExitCode);
         Assert.Contains(early.Envelope.Errors, e => e.Code == "precondition-summary");
+        Assert.Equal(snapshot, LedgerSnapshot(tv));
 
         SummarizeSource(tv, id);
 
@@ -95,10 +105,12 @@ public class IngestTests
     public void Advance_OutOfOrder_Rejected()
     {
         var (tv, id) = Seeded();
+        var snapshot = LedgerSnapshot(tv);
         // registered -> integrated skips summarized entirely.
         var r = tv.Run("ingest", "advance", id, "--to", "integrated", "--touched", "", "--json");
         Assert.Equal(1, r.ExitCode);
         Assert.Contains(r.Envelope.Errors, e => e.Code == "precondition-order");
+        Assert.Equal(snapshot, LedgerSnapshot(tv));
         tv.Dispose();
     }
 
@@ -113,9 +125,11 @@ public class IngestTests
         // Now at `integrated`; advancing "back" to `summarized` is not the
         // current state (idempotent case) and not the next state either -
         // out-of-order, exit 1.
+        var snapshot = LedgerSnapshot(tv);
         var r = tv.Run("ingest", "advance", id, "--to", "summarized", "--json");
         Assert.Equal(1, r.ExitCode);
         Assert.Contains(r.Envelope.Errors, e => e.Code == "precondition-order");
+        Assert.Equal(snapshot, LedgerSnapshot(tv));
         tv.Dispose();
     }
 
@@ -152,6 +166,63 @@ public class IngestTests
         tv.Dispose();
     }
 
+    // Regression test for the Critical fix: Ledger.Advance used to clobber
+    // `Touched` on every transition (it was only ever set from the caller's
+    // `touched` argument, which is `[]` for every `--to` except `integrated`
+    // since `--touched` isn't passed on the `linted` advance). That wiped
+    // the `integrated` audit trail the moment a source moved to `linted`.
+    // The fix carries `existing.Touched` forward on any transition that
+    // isn't itself `--to integrated`. This asserts the audit list set at
+    // `integrated` is still there after the later `linted` advance.
+    [Fact]
+    public void Advance_ToLinted_PreservesTouchedFromIntegrated()
+    {
+        var (tv, id) = Seeded();
+        SummarizeSource(tv, id);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "summarized", "--json").ExitCode);
+
+        var integrate = tv.Run("ingest", "advance", id, "--to", "integrated", "--touched", "a,b,c", "--json");
+        Assert.Equal(0, integrate.ExitCode);
+        Assert.Contains("\"touched\":[\"a\",\"b\",\"c\"]", File.ReadAllText(LedgerPath(tv)));
+
+        // Satisfy the `linted` precondition: a lint run recorded strictly
+        // after this entry's `integratedAt` timestamp, in `.wiki/lint.json`
+        // (`LintStateData.LastRun` -> wire field `lastRun`, camelCase per
+        // WikiJsonContext). A day in the future is safely newer than
+        // whatever `integratedAt` the real clock just stamped.
+        var lintPath = Path.Combine(tv.Path, ".wiki", "lint.json");
+        var lastRun = System.DateTimeOffset.UtcNow.AddDays(1)
+            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        File.WriteAllText(lintPath, $"{{\"lastRun\":\"{lastRun}\"}}");
+
+        // No `--touched` on this advance - exactly the case that used to
+        // wipe the list.
+        var linted = tv.Run("ingest", "advance", id, "--to", "linted", "--json");
+        Assert.Equal(0, linted.ExitCode);
+        Assert.Contains("\"touched\":[\"a\",\"b\",\"c\"]", File.ReadAllText(LedgerPath(tv)));
+        tv.Dispose();
+    }
+
+    [Fact]
+    public void Advance_ToIntegrated_IndexDrift_RejectedWithPreconditionIndex()
+    {
+        var (tv, id) = Seeded();
+        SummarizeSource(tv, id);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "summarized", "--json").ExitCode);
+
+        // Simulate something writing wiki/index.md outside the CLI - the
+        // one thing spec §9 says must never happen, and exactly the drift
+        // `precondition-index` exists to catch.
+        File.WriteAllText(IndexPath(tv), "drifted\n");
+
+        var snapshot = LedgerSnapshot(tv);
+        var r = tv.Run("ingest", "advance", id, "--to", "integrated", "--touched", "", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "precondition-index");
+        Assert.Equal(snapshot, LedgerSnapshot(tv));
+        tv.Dispose();
+    }
+
     [Fact]
     public void Advance_ToLinted_WithoutLintRun_RejectedWithPreconditionLint()
     {
@@ -165,9 +236,11 @@ public class IngestTests
         // ahead of Task 22 completing the loop.
         Assert.False(File.Exists(Path.Combine(tv.Path, ".wiki", "lint.json")));
 
+        var snapshot = LedgerSnapshot(tv);
         var r = tv.Run("ingest", "advance", id, "--to", "linted", "--json");
         Assert.Equal(1, r.ExitCode);
         Assert.Contains(r.Envelope.Errors, e => e.Code == "precondition-lint");
+        Assert.Equal(snapshot, LedgerSnapshot(tv));
         tv.Dispose();
     }
 
