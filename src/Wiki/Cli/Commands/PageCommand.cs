@@ -1,7 +1,6 @@
 using System;
 using System.CommandLine;
 using System.IO;
-using System.Linq;
 using Spectre.Console;
 using Wiki.Core;
 using Wiki.Services;

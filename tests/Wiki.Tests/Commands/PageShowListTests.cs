@@ -61,7 +61,14 @@ public class PageShowListTests
 
         var r = tv.Run("page", "list", "--json");
         Assert.Equal(0, r.ExitCode);
-        Assert.Equal(2, Data(r).GetArrayLength());
+        var data = Data(r);
+        Assert.Equal(2, data.GetArrayLength());
+
+        // PageStore.Enumerate scans summaries -> entities -> concepts (each
+        // ordinal-sorted within its dir), so the entity "contoso" must come
+        // before the concept "widgets". Lock that deterministic order in.
+        Assert.Equal("contoso", data[0].GetProperty("slug").GetString());
+        Assert.Equal("widgets", data[1].GetProperty("slug").GetString());
     }
 
     [Fact]
@@ -138,7 +145,10 @@ public class PageShowListTests
         Assert.Equal("Contoso", data.GetProperty("title").GetString());
         Assert.Equal("The vendor", data.GetProperty("summary").GetString());
         Assert.Equal(new[] { "a", "b" }, JsonElementToStrings(data.GetProperty("tags")));
-        Assert.Contains("The body text.", data.GetProperty("body").GetString());
+        // Body round-trips verbatim: RunStdin feeds exactly "The body text."
+        // (no trailing newline), so show must return that exact string -
+        // assert equality so padding/corruption can't slip through.
+        Assert.Equal("The body text.", data.GetProperty("body").GetString());
     }
 
     [Fact]
