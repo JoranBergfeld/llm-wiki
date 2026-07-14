@@ -102,6 +102,7 @@ public static class App
         root.Add(IngestCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(SearchCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(IndexCommand.Build(vaultOption, jsonOption, stdout, stdin));
+        root.Add(IssuesCommand.Build(vaultOption, jsonOption, stdout, stdin));
 
         return root;
     }
