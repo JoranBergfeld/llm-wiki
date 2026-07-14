@@ -161,12 +161,19 @@ public sealed class CategoryService
         return line.TrimEnd();
     }
 
+    // wiki.yaml is config, not frontmatter: a description with a stray '"' or
+    // newline would corrupt the single-line quoted value this inserts (the
+    // parser has no quote-escaping), so it's rejected here. Code is
+    // `invalid-description` - a config-appropriate code, NOT the
+    // `frontmatter-schema` code SourceService/PageService use, since an agent
+    // branching on errors[].code shouldn't be told a wiki.yaml edit failed a
+    // page/source frontmatter rule.
     private static void GuardScalar(string value, string field)
     {
         foreach (var c in value)
         {
             if (c == '"' || c == '\n' || c == '\r')
-                throw new ValidationException("frontmatter-schema", $"'{field}' may not contain quotes or newlines");
+                throw new ValidationException("invalid-description", $"'{field}' may not contain quotes or newlines");
         }
     }
 }

@@ -163,4 +163,107 @@ public class CategoryTests
         Assert.Equal(400, cfg.MaxPageLines);
         Assert.True(cfg.HasCategory("paper"));
     }
+
+    // A bad --description (stray quote/newline) is a wiki.yaml CONFIG error,
+    // not a page/source frontmatter error - the code must reflect that so an
+    // agent branching on errors[].code isn't misled. Nothing lands.
+    [Fact]
+    public void Add_DescriptionWithQuote_Rejected_InvalidDescription_ConfigUnchanged()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+
+        var before = File.ReadAllText(ConfigPath(tv));
+
+        var r = tv.Run("category", "add", "paper", "--description", "has a \" quote", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "invalid-description");
+        Assert.DoesNotContain(r.Envelope.Errors, e => e.Code == "frontmatter-schema");
+
+        Assert.Equal(before, File.ReadAllText(ConfigPath(tv)));
+    }
+
+    // Edge case a: an empty `categories:` block (zero items). A hand-edited or
+    // freshly-authored wiki.yaml can be in this state; the first `category
+    // add` must insert the item directly under `categories:` and re-load
+    // cleanly, leaving the surrounding keys/comments intact.
+    [Fact]
+    public void Add_IntoEmptyCategoriesBlock_InsertsFirstItem_RoundTrips()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+
+        // Hand-write a valid wiki.yaml whose categories block has no items.
+        File.WriteAllText(ConfigPath(tv),
+            "version: 1\n" +
+            "name: \"t\"                       # vault display name\n" +
+            "review_gate: false\n" +
+            "categories:                      # source categories\n" +
+            "lint:\n" +
+            "  staleness_days: 90\n" +
+            "  max_page_lines: 400\n");
+
+        var r = tv.Run("category", "add", "paper", "--description", "Research papers", "--json");
+        Assert.Equal(0, r.ExitCode);
+
+        var after = File.ReadAllText(ConfigPath(tv));
+        Assert.Contains("categories:                      # source categories", after);
+        Assert.Contains("  - id: paper", after);
+        Assert.Contains("    description: \"Research papers\"", after);
+        // The comment on the categories line and other keys survive.
+        Assert.Contains("# vault display name", after);
+        Assert.Contains("lint:", after);
+
+        var cfg = Wiki.Core.VaultConfig.Load(ConfigPath(tv));
+        Assert.True(cfg.HasCategory("paper"));
+        Assert.Single(cfg.Categories);
+        Assert.Equal(1, cfg.Version);
+        Assert.Equal(90, cfg.StalenessDays);
+        Assert.Equal(400, cfg.MaxPageLines);
+    }
+
+    // Edge case b: `categories:` is the LAST top-level block, running to EOF
+    // with no following top-level key. VaultConfig.Load parses top-level keys
+    // order-independently, so a human could legitimately put `lint:` first.
+    // The insertion must land after the last existing category (at EOF) and
+    // re-load cleanly.
+    [Fact]
+    public void Add_WhenCategoriesIsLastBlock_InsertsAtEof_RoundTrips()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+
+        // lint: BEFORE categories:, categories runs to EOF.
+        File.WriteAllText(ConfigPath(tv),
+            "version: 1\n" +
+            "name: \"t\"\n" +
+            "review_gate: false\n" +
+            "lint:\n" +
+            "  staleness_days: 90             # advisory staleness\n" +
+            "  max_page_lines: 400\n" +
+            "categories:\n" +
+            "  - id: meeting-transcript\n" +
+            "    description: \"Customer meeting transcripts\"\n");
+
+        var r = tv.Run("category", "add", "paper", "--description", "Research papers", "--json");
+        Assert.Equal(0, r.ExitCode);
+
+        var after = File.ReadAllText(ConfigPath(tv));
+        Assert.Contains("  - id: paper", after);
+        Assert.Contains("    description: \"Research papers\"", after);
+        // The pre-existing category and the lint comment both survive.
+        Assert.Contains("  - id: meeting-transcript", after);
+        Assert.Contains("# advisory staleness", after);
+
+        // The new item lands AFTER the existing one (block appended at EOF).
+        var idxExisting = after.IndexOf("- id: meeting-transcript", System.StringComparison.Ordinal);
+        var idxNew = after.IndexOf("- id: paper", System.StringComparison.Ordinal);
+        Assert.True(idxNew > idxExisting);
+
+        var cfg = Wiki.Core.VaultConfig.Load(ConfigPath(tv));
+        Assert.True(cfg.HasCategory("paper"));
+        Assert.True(cfg.HasCategory("meeting-transcript"));
+        Assert.Equal(90, cfg.StalenessDays);
+        Assert.Equal(400, cfg.MaxPageLines);
+    }
 }
