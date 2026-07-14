@@ -71,6 +71,64 @@ public sealed class Ledger
         };
     }
 
+    // `wiki reindex` structural recompute (Task 27, amendment A). `structural`
+    // is whatever ReindexService derived purely from the markdown scan
+    // (registered/summarized/integrated - never `linted`, that needs lint
+    // history reindex can't see). Merge rule:
+    //
+    //   - No existing entry (the vault's `.wiki/` was deleted and rebuilt
+    //     from scratch): there is no history to preserve, so the fresh entry
+    //     IS the structural state, with every history field at its
+    //     from-scratch default - Touched = [] (the `--touched` audit trail
+    //     is genuinely unknown, not "empty"), IntegratedAt = null (reindex
+    //     never witnessed an `integrated` transition, so stamping "now" would
+    //     fabricate history the property test amendment A explicitly forbids
+    //     claiming), RegisteredAt = null (same reasoning: reindex doesn't
+    //     know when this source was first registered, only that raw/<id>.md
+    //     exists now - left null rather than backdated to "now" via an
+    //     injected clock, since a null RegisteredAt is honestly "unknown"
+    //     where a fabricated timestamp would misleadingly look authoritative).
+    //   - Existing entry: State becomes max(existing.State, structural) by
+    //     LedgerState's declaration ordering (Registered < Summarized <
+    //     Integrated < Linted) - reindex can only prove a source has reached
+    //     AT LEAST the structural state (e.g. a `linted` source stays
+    //     `linted` even though lint history isn't markdown-derivable; an
+    //     `integrated` source whose entity/concept citation reindex can see
+    //     stays `integrated`, never downgraded to `summarized`). Every
+    //     history field (Touched, IntegratedAt, RegisteredAt) is carried
+    //     forward untouched - reindex never overwrites real history with a
+    //     structural guess. A no-op merge (structural doesn't exceed the
+    //     existing state) doesn't even rewrite the entry.
+    public void Reconcile(string sourceId, LedgerState structural)
+    {
+        var existing = Get(sourceId);
+        if (existing is null)
+        {
+            _byId[sourceId] = new LedgerEntry
+            {
+                SourceId = sourceId,
+                State = structural,
+                Touched = System.Array.Empty<string>(),
+                IntegratedAt = null,
+                RegisteredAt = null,
+            };
+            return;
+        }
+
+        var merged = (LedgerState)System.Math.Max((int)existing.State, (int)structural);
+        if (merged == existing.State)
+            return;
+
+        _byId[sourceId] = new LedgerEntry
+        {
+            SourceId = existing.SourceId,
+            State = merged,
+            Touched = existing.Touched,
+            IntegratedAt = existing.IntegratedAt,
+            RegisteredAt = existing.RegisteredAt,
+        };
+    }
+
     public IReadOnlyList<LedgerEntry> All()
     {
         var keys = new List<string>(_byId.Keys);
