@@ -75,6 +75,22 @@ public sealed class PageService
 
         var existing = PageStore.Enumerate(v);
 
+        // Overview is a singleton (`wiki/overview.md`). Create has no --id,
+        // so there's no way to disambiguate "replace the existing overview"
+        // from "make a second one" - a second create with a different title
+        // would silently overwrite the file on disk while idmap.json kept
+        // both ids, corrupting the id->path mapping. Block it here, before
+        // any write; updating the overview is the --id path (Task 13).
+        if (req.Type == PageType.Overview)
+        {
+            var overviewPath = System.IO.Path.Combine(v.WikiDir, "overview.md");
+            var overviewExists = System.IO.File.Exists(overviewPath)
+                || existing.Any(p => p.Front.Type == PageType.Overview);
+            if (overviewExists)
+                throw new ValidationException("overview-exists",
+                    "an overview page already exists; update it with --id <id> instead of creating a new one");
+        }
+
         foreach (var (existingSlug, existingFront) in existing)
         {
             if (existingFront.Type == req.Type && string.Equals(existingFront.Title, req.Title, StringComparison.OrdinalIgnoreCase))

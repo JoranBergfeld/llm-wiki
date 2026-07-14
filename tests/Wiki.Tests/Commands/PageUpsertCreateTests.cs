@@ -78,6 +78,111 @@ public class PageUpsertCreateTests
     }
 
     [Fact]
+    public void Create_SecondOverviewWithDifferentTitle_Rejected_NothingChanged()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var first = tv.RunStdin("Body one.", "page", "upsert", "--type", "overview",
+            "--title", "Overview", "--summary", "s1", "--json");
+        Assert.Equal(0, first.ExitCode);
+
+        var overviewPath = Path.Combine(tv.Path, "wiki", "overview.md");
+        var overviewSnapshot = File.ReadAllText(overviewPath);
+        var idmapSnapshot = File.ReadAllText(IdMapPath(tv));
+
+        // Different title, still no --id - the duplicate-title check wouldn't
+        // catch this (titles differ), so this exercises the dedicated
+        // overview-singleton guard instead.
+        var second = tv.RunStdin("Body two.", "page", "upsert", "--type", "overview",
+            "--title", "Different Title", "--summary", "s2", "--json");
+        Assert.Equal(1, second.ExitCode);
+        Assert.Contains(second.Envelope.Errors, e => e.Code == "overview-exists");
+
+        Assert.Equal(overviewSnapshot, File.ReadAllText(overviewPath));
+        Assert.Equal(idmapSnapshot, File.ReadAllText(IdMapPath(tv)));
+    }
+
+    [Fact]
+    public void Create_TitleWithQuote_Rejected_FrontmatterSchema_NothingWritten()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var r = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Bad\"Title", "--summary", "s", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "frontmatter-schema");
+        Assert.False(Directory.Exists(Path.Combine(tv.Path, "wiki", "entities"))
+            && Directory.EnumerateFiles(Path.Combine(tv.Path, "wiki", "entities"), "*.md").Any());
+        Assert.False(File.Exists(IdMapPath(tv)));
+        Assert.Equal("", File.ReadAllText(IndexPath(tv)));
+        Assert.Equal("", File.ReadAllText(LogPath(tv)));
+    }
+
+    [Fact]
+    public void Create_BodyFile_HappyPath_WritesBodyFromFile()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var bodyFile = Path.Combine(tv.Path, "body.txt");
+        File.WriteAllText(bodyFile, "Body from a file, no links here.");
+
+        var r = tv.Run("page", "upsert", "--type", "entity", "--title", "Fileco",
+            "--summary", "s", "--body-file", bodyFile, "--json");
+        Assert.Equal(0, r.ExitCode);
+        var file = Path.Combine(tv.Path, "wiki", "entities", "fileco.md");
+        Assert.True(File.Exists(file));
+        Assert.Contains("Body from a file, no links here.", File.ReadAllText(file));
+    }
+
+    [Fact]
+    public void Create_SameTitleDifferentType_BothAllowed()
+    {
+        using var tv = new TempVault(); Init(tv);
+        // duplicate-title is scoped per-type, so a concept titled "Acme" is
+        // not blocked by an existing entity "Acme". Note the slug *namespace*
+        // is global across types (verified against the built binary), so the
+        // second write is suffixed to acme-2.md rather than colliding with
+        // (or reusing) the entity's acme.md - "allowed" means both writes
+        // succeed as distinct pages, not that they share a slug.
+        var entity = tv.RunStdin("Body one.", "page", "upsert", "--type", "entity",
+            "--title", "Acme", "--summary", "s1", "--json");
+        Assert.Equal(0, entity.ExitCode);
+
+        var concept = tv.RunStdin("Body two.", "page", "upsert", "--type", "concept",
+            "--title", "Acme", "--summary", "s2", "--json");
+        Assert.Equal(0, concept.ExitCode);
+
+        Assert.True(File.Exists(Path.Combine(tv.Path, "wiki", "entities", "acme.md")));
+        Assert.True(File.Exists(Path.Combine(tv.Path, "wiki", "concepts", "acme-2.md")));
+    }
+
+    [Fact]
+    public void Create_SlugCollisionAcrossDifferentTitles_SuffixesSecond()
+    {
+        using var tv = new TempVault(); Init(tv);
+        // "Acme Inc" and "Acme, Inc." both slugify to "acme-inc" under
+        // Slug.From (non-alnum runs collapse to a single '-'), so the second
+        // create must suffix rather than collide with the first.
+        var first = tv.RunStdin("Body one.", "page", "upsert", "--type", "entity",
+            "--title", "Acme Inc", "--summary", "s1", "--json");
+        Assert.Equal(0, first.ExitCode);
+
+        var second = tv.RunStdin("Body two.", "page", "upsert", "--type", "entity",
+            "--title", "Acme, Inc.", "--summary", "s2", "--json");
+        Assert.Equal(0, second.ExitCode);
+
+        Assert.True(File.Exists(Path.Combine(tv.Path, "wiki", "entities", "acme-inc.md")));
+        Assert.True(File.Exists(Path.Combine(tv.Path, "wiki", "entities", "acme-inc-2.md")));
+    }
+
+    [Fact]
+    public void Update_WithId_Rejected_NotImplemented()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var r = tv.RunStdin("Body.", "page", "upsert", "--id", "01AAAAAAAAAAAAAAAAAAAAAAAA",
+            "--type", "entity", "--title", "X", "--summary", "s", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "not-implemented");
+    }
+
+    [Fact]
     public void Create_DuplicateTitleWithinType_Rejected_NothingChanged()
     {
         using var tv = new TempVault(); Init(tv);
