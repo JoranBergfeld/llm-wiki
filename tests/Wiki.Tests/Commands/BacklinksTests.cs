@@ -72,6 +72,39 @@ public class BacklinksTests
     }
 
     [Fact]
+    public void Backlinks_SelfLink_NotCountedAsOwnBacklink()
+    {
+        // A page whose body links to [[itself]] is never its own backlink -
+        // a self-reference is not inbound from anywhere else.
+        using var tv = new TempVault(); Init(tv);
+        tv.RunStdin("See [[solo]] for details.", "page", "upsert", "--type", "entity",
+            "--title", "Solo", "--summary", "s", "--json");
+
+        var r = tv.Run("page", "backlinks", "solo", "--json");
+        Assert.Equal(0, r.ExitCode);
+        var data = Data(r);
+        Assert.Equal(JsonValueKind.Array, data.ValueKind);
+        Assert.Equal(0, data.GetArrayLength());
+    }
+
+    [Fact]
+    public void ListOrphans_SelfLinkingPage_IsStillReported()
+    {
+        // A page linking ONLY to itself, with nothing external pointing at
+        // it, IS orphaned - the self-link must not keep it off the list.
+        using var tv = new TempVault(); Init(tv);
+        tv.RunStdin("See [[solo]] for details.", "page", "upsert", "--type", "entity",
+            "--title", "Solo", "--summary", "s", "--json");
+
+        var r = tv.Run("page", "list", "--orphans", "--json");
+        Assert.Equal(0, r.ExitCode);
+        var data = Data(r);
+        var slugs = new System.Collections.Generic.List<string>();
+        for (var i = 0; i < data.GetArrayLength(); i++) slugs.Add(data[i].GetProperty("slug").GetString()!);
+        Assert.Contains("solo", slugs);
+    }
+
+    [Fact]
     public void Backlinks_NonexistentPage_NotFound()
     {
         using var tv = new TempVault(); Init(tv);

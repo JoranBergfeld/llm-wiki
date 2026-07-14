@@ -219,6 +219,14 @@ public sealed class PageService
         {
             foreach (var link in Wikilinks.Extract(body))
             {
+                // A page is never its own backlink: a `[[self]]` reference is
+                // not an inbound link from anywhere else, so it mustn't keep a
+                // page off the orphan list (a page linking ONLY to itself, with
+                // nothing external pointing at it, IS orphaned) nor show up in
+                // its own `backlinks` output.
+                if (string.Equals(link.Target, slug, StringComparison.Ordinal))
+                    continue;
+
                 if (!map.TryGetValue(link.Target, out var sources))
                 {
                     sources = new SortedSet<string>(StringComparer.Ordinal);
