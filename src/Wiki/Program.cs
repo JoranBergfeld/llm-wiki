@@ -96,6 +96,7 @@ public static class App
         };
 
         root.Add(InitCommand.Build(vaultOption, jsonOption, stdout, stdin));
+        root.Add(PageCommand.Build(vaultOption, jsonOption, stdout, stdin));
 
         return root;
     }
