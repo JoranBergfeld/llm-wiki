@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Wiki.Cli.Commands;
 using Wiki.Services;
+using Wiki.State;
 namespace Wiki.Json;
 
 [JsonSourceGenerationOptions(WriteIndented = false, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
@@ -14,4 +15,7 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(PageSummary[]))]
 [JsonSerializable(typeof(PageView))]
 [JsonSerializable(typeof(ReindexReport))]
+[JsonSerializable(typeof(SourceAddResult))]
+[JsonSerializable(typeof(LedgerEntryData))]
+[JsonSerializable(typeof(LedgerEntryData[]))]
 public partial class WikiJsonContext : JsonSerializerContext { }
