@@ -214,7 +214,7 @@ wiki source impact <id>                         All pages whose `sources` includ
 wiki source retract <id> [--reason "…"]         §14 cascade
 
 # Ingest (§10)
-wiki ingest status [<source-id>]                Ledger state; without args: everything not `integrated`
+wiki ingest status [<source-id>]                Ledger state; without args: everything not `linted` (i.e. all incomplete ingests — amendment G)
 wiki ingest advance <source-id> --to <state>    CLI validates preconditions before recording transition
 wiki ingest resume <source-id>                  Prints exactly what remains (states + expected artifacts), --json
 
@@ -452,3 +452,4 @@ Resolved during a spec-validation pass before implementation. These override the
 - **D. Last-lint timestamp home.** Stored in `.wiki/lint.json`, written by every `wiki lint`; the `linted` ledger precondition compares it against the ledger's `integrated` timestamp. §10 updated.
 - **E. Pending-review pages are indexed.** They appear in `index.md`/`wiki index show` with their `status` so the agent can route to and revise them; AGENTS.md still forbids *citing* them in answers. §9 updated.
 - **F. Fuzzy lints stay dumb in v1.** `coverage-gap`, `stale`, and `oversize` use deliberately simple deterministic heuristics (capitalized multi-word token frequency; timestamp + shared-source comparison; line count). No NLP. Refinement is a v2 candidate.
+- **G. `ingest status` (no args) lists everything not `linted`.** The §8 table originally said "not `integrated`", but a source at `integrated` still needs a lint pass to finish; showing only non-`integrated` sources would hide that outstanding work. "Not `linted`" = all incomplete ingests, which is what the resume/status guarantee is for.
