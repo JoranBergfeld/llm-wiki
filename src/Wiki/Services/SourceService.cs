@@ -304,8 +304,14 @@ public sealed class SourceService
 
         var (front, body, fullPath) = ResolveSource(v, id);
 
+        // Already-retracted is a STATE conflict (exit 3), not a blocking
+        // input error (exit 1): the caller's input is fine, the target state
+        // is simply already reached - same shape as IngestService's same-state
+        // re-advance and InitCommand's re-init. Telling the agent (per
+        // AGENTS.md) to "fix your input" would be wrong; exit 3 says "the
+        // world is already how you asked". Still reject (don't double-cascade).
         if (front.Status == SourceStatus.Retracted)
-            throw new ValidationException("already-retracted", $"source '{id}' is already retracted");
+            throw new StateConflictException("already-retracted", $"source '{id}' is already retracted");
 
         // Snapshot every citing page BEFORE any write - same "gather first,
         // mutate after validation" discipline as every other service here.
@@ -353,11 +359,27 @@ public sealed class SourceService
         {
             if (pageFront.Type == PageType.Summary)
             {
+                // Step 2: the source's summary page(s) -> archived. This is
+                // separate from step 3's loop below and applies even if the
+                // summary was already archived (a same-value SetStatus, cheap).
                 pageService.SetStatus(v, pageFront.Id, PageStatus.Archived);
                 archivedSummaries.Add(slug);
             }
+            else if (pageFront.Status == PageStatus.Archived)
+            {
+                // Step 3, amendment I carve-out: an already-`archived` citer is
+                // dead history (excluded from index/lint by §7). Flipping it
+                // back to needs-review would resurrect it and file a repair
+                // issue for a page nobody's reading. §14's literal "every other
+                // page" is narrowed to every other NON-archived citer: leave
+                // archived citers untouched - no status change, no issue.
+                continue;
+            }
             else
             {
+                // Step 3: every other non-archived citer (active /
+                // pending-review / needs-review) -> needs-review + a filed
+                // retraction issue carrying the reason.
                 pageService.SetStatus(v, pageFront.Id, PageStatus.NeedsReview);
                 var detail = $"source '{id}' was retracted (reason: {reason}); page cites it and needs repair " +
                     "(rewrite the body to drop claims resting on it, remove the id from 'sources', upsert)";

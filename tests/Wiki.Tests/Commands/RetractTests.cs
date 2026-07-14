@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using Wiki.Tests.Support;
 using Xunit;
@@ -102,6 +103,72 @@ public class RetractTests
         Assert.Contains("author retracted the claim", log);
 
         _ = conceptId; // asserted via slug above; kept for clarity of what was created
+    }
+
+    [Fact]
+    public void Retract_SkipsArchivedCiters_FlagsActiveAndPendingReviewCiters()
+    {
+        // amendment I: §14's "every other page" is narrowed to every other
+        // NON-archived citer. An already-archived citer is dead history (§7
+        // excludes it from index/lint), so flipping it back to needs-review
+        // would resurrect it - it must be left untouched with no issue filed.
+        // A pending-review citer, by contrast, is live and DOES get flipped -
+        // confirming only `archived` is carved out, not "anything non-active".
+        using var tv = new TempVault(); Init(tv);
+        var sourceId = AddSource(tv, "input.md", "content", "article", "Shared source");
+
+        // Summary page citing the source -> will be archived by step 2.
+        var summary = tv.RunStdin("Summary body.", "page", "upsert", "--type", "summary",
+            "--title", "Shared summary", "--summary", "s", "--sources", sourceId, "--json");
+        var summarySlug = Data(summary).GetProperty("slug").GetString()!;
+
+        // Active concept citing it -> needs-review + issue.
+        var active = tv.RunStdin("Active body.", "page", "upsert", "--type", "concept",
+            "--title", "Active concept", "--summary", "s", "--sources", sourceId, "--json");
+        var activeSlug = Data(active).GetProperty("slug").GetString()!;
+
+        // A second concept citing it, pre-set to archived via set-status.
+        var archivedCiter = tv.RunStdin("Archived body.", "page", "upsert", "--type", "concept",
+            "--title", "Archived concept", "--summary", "s", "--sources", sourceId, "--json");
+        var archivedId = Data(archivedCiter).GetProperty("id").GetString()!;
+        var archivedSlug = Data(archivedCiter).GetProperty("slug").GetString()!;
+        Assert.Equal(0, tv.Run("page", "set-status", archivedId, "archived", "--json").ExitCode);
+
+        // A pending-review entity citing it (init an ungated vault above, so
+        // set-status is the way to land a page in pending-review here).
+        var pending = tv.RunStdin("Pending body.", "page", "upsert", "--type", "entity",
+            "--title", "Pending entity", "--summary", "s", "--sources", sourceId, "--json");
+        var pendingId = Data(pending).GetProperty("id").GetString()!;
+        var pendingSlug = Data(pending).GetProperty("slug").GetString()!;
+        Assert.Equal(0, tv.Run("page", "set-status", pendingId, "pending-review", "--json").ExitCode);
+
+        var retract = tv.Run("source", "retract", sourceId, "--reason", "shared source pulled", "--json");
+        Assert.Equal(0, retract.ExitCode);
+        var data = Data(retract);
+        Assert.Equal(1, data.GetProperty("archivedSummaries").GetArrayLength());
+        Assert.Equal(summarySlug, data.GetProperty("archivedSummaries")[0].GetString());
+        // Only the active + pending-review citers are flagged; the archived one isn't.
+        var affected = data.GetProperty("affectedPages");
+        Assert.Equal(2, affected.GetArrayLength());
+        var affectedSlugs = affected.EnumerateArray().Select(x => x.GetString()).ToArray();
+        Assert.Contains(activeSlug, affectedSlugs);
+        Assert.Contains(pendingSlug, affectedSlugs);
+        Assert.DoesNotContain(archivedSlug, affectedSlugs);
+
+        // Active concept -> needs-review.
+        Assert.Equal("needs-review", Data(tv.Run("page", "show", activeSlug, "--json")).GetProperty("status").GetString());
+        // Pending-review entity -> needs-review.
+        Assert.Equal("needs-review", Data(tv.Run("page", "show", pendingSlug, "--json")).GetProperty("status").GetString());
+        // Pre-archived citer -> STILL archived (untouched).
+        Assert.Equal("archived", Data(tv.Run("page", "show", archivedSlug, "--json")).GetProperty("status").GetString());
+
+        // Retraction issues: one against active, one against pending; NONE against the archived citer.
+        var issues = Data(tv.Run("issues", "list", "--kind", "retraction", "--json"));
+        Assert.Equal(2, issues.GetArrayLength());
+        var issueSubjects = issues.EnumerateArray().Select(i => i.GetProperty("subject").GetString()).ToArray();
+        Assert.Contains(activeSlug, issueSubjects);
+        Assert.Contains(pendingSlug, issueSubjects);
+        Assert.DoesNotContain(archivedSlug, issueSubjects);
     }
 
     [Fact]
@@ -210,8 +277,11 @@ public class RetractTests
         var rawBefore = File.ReadAllText(RawFilePath(tv, sourceId));
         var logBefore = File.ReadAllText(LogPath(tv));
 
+        // Already-retracted is a STATE conflict (exit 3), not a blocking
+        // input error (exit 1) - the input is fine, the target state is just
+        // already reached (amendment I; same shape as re-init / re-advance).
         var second = tv.Run("source", "retract", sourceId, "--reason", "second reason", "--json");
-        Assert.Equal(1, second.ExitCode);
+        Assert.Equal(3, second.ExitCode);
         Assert.Contains(second.Envelope.Errors, e => e.Code == "already-retracted");
 
         // Nothing changed on the second (rejected) call.
