@@ -105,6 +105,7 @@ public static class App
         root.Add(IssuesCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(LintCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(ReviewCommand.Build(vaultOption, jsonOption, stdout, stdin));
+        root.Add(SchemaCommand.Build(vaultOption, jsonOption, stdout, stdin));
 
         return root;
     }
