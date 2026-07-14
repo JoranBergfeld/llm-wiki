@@ -315,4 +315,95 @@ public class LintTests
         var gaps = IssuesList(tv, "coverage-gap");
         Assert.Contains(gaps.EnumerateArray(), e => e.GetProperty("subject").GetString() == "Foo Bar Corp");
     }
+
+    // -------------------- content-immutability invariant --------------------
+
+    [Fact]
+    public void Lint_PlainRun_NeverEditsAnyPageContent_AcrossWholeVault()
+    {
+        // The core "lint never edits page content" invariant (Global
+        // Constraints), asserted broadly: a multi-page vault spanning every
+        // page type, with real findings filed (orphan + oversize), must come
+        // out of a PLAIN `wiki lint` (no --fix-links) with every page file
+        // byte-identical - even though .wiki/issues.json, .wiki/lint.json, and
+        // possibly index.md all change. Locks the invariant so a future check
+        // that carelessly rewrites a body gets caught here.
+        using var tv = new TempVault(); Init(tv);
+
+        tv.RunStdin("Welcome to the vault.", "page", "upsert", "--type", "overview",
+            "--title", "Overview", "--summary", "s", "--json");
+        // Orphan: active entity with no inbound links.
+        tv.RunStdin("Contoso is a vendor. No one links here.", "page", "upsert", "--type", "entity",
+            "--title", "Contoso", "--summary", "s", "--json");
+        // Oversize concept (> default max_page_lines 400). Also links to the
+        // entity so at least the entity isn't the only orphan trigger, and so
+        // there's real inter-page linking in the snapshot.
+        var bigBody = "See [[contoso]].\n" + string.Join("\n", Enumerable.Repeat("filler", 401));
+        tv.RunStdin(bigBody, "page", "upsert", "--type", "concept",
+            "--title", "Big Concept", "--summary", "s", "--json");
+        tv.RunStdin("A short summary page.", "page", "upsert", "--type", "summary",
+            "--title", "Sum", "--summary", "s", "--json");
+
+        // Snapshot the exact bytes of EVERY page file in the vault.
+        var pageFiles = Directory
+            .EnumerateFiles(Path.Combine(tv.Path, "wiki"), "*.md", SearchOption.AllDirectories)
+            .Where(p => Path.GetFileName(p) != "index.md" && Path.GetFileName(p) != "log.md")
+            .ToArray();
+        Assert.Equal(4, pageFiles.Length); // overview + entity + concept + summary
+        var snapshot = pageFiles.ToDictionary(p => p, File.ReadAllText);
+
+        var r = tv.Run("lint", "--json");
+        Assert.Equal(0, r.ExitCode);
+        // Real findings were filed (proves lint actually did work, not a no-op).
+        // big-concept and sum are both orphans (contoso is linked from
+        // big-concept, so it isn't); big-concept is also the oversize page.
+        Assert.True(Data(r).GetProperty("filed").GetInt32() >= 2);
+        Assert.True(IssuesList(tv, "orphan").GetArrayLength() >= 1);
+        Assert.Equal(1, IssuesList(tv, "oversize").GetArrayLength());
+
+        // The invariant: every page file is byte-identical to its snapshot.
+        foreach (var (path, before) in snapshot)
+            Assert.Equal(before, File.ReadAllText(path));
+    }
+
+    // -------------------- --fix-links "no prior idmap entry" branch --------------------
+
+    [Fact]
+    public void Lint_FixLinks_NoPriorIdmapEntry_RepairsIdmap_LeavesBodyUnchanged()
+    {
+        // ApplyFixLinks' `d.OldSlug is null` branch: a page file that exists
+        // with valid frontmatter but whose id is NOT in idmap (e.g. dropped in
+        // directly via Obsidian, never indexed). --fix-links must Put the
+        // id->correct-path mapping but touch NO page body, since nothing could
+        // have linked to a slug that never existed in idmap.
+        using var tv = new TempVault(); Init(tv);
+
+        var created = tv.RunStdin("Contoso body, self-contained.", "page", "upsert", "--type", "entity",
+            "--title", "Contoso", "--summary", "s", "--json");
+        var contosoId = ExtractId(created);
+
+        // Drop the id's idmap entry, simulating "file present, never indexed".
+        var idmapBefore = JsonSerializer.Deserialize(
+            File.ReadAllText(IdMapPath(tv)), Wiki.Json.WikiJsonContext.Default.DictionaryStringString)!;
+        idmapBefore.Remove(contosoId);
+        File.WriteAllText(IdMapPath(tv), JsonSerializer.Serialize(
+            idmapBefore, Wiki.Json.WikiJsonContext.Default.DictionaryStringString));
+
+        var bodySnapshot = File.ReadAllText(EntityPath(tv, "contoso"));
+
+        var r = tv.Run("lint", "--fix-links", "--json");
+        Assert.Equal(0, r.ExitCode);
+        var data = Data(r);
+        Assert.Equal(1, data.GetProperty("fixLinksIdmapRepaired").GetInt32());
+        // The no-old-slug branch rewrites zero bodies.
+        Assert.Equal(0, data.GetProperty("fixLinksBodiesRewritten").GetInt32());
+
+        // idmap now maps the id to its correct path...
+        var idmapAfter = JsonSerializer.Deserialize(
+            File.ReadAllText(IdMapPath(tv)), Wiki.Json.WikiJsonContext.Default.DictionaryStringString)!;
+        Assert.Equal("wiki/entities/contoso.md", idmapAfter[contosoId]);
+
+        // ...and the page body is byte-unchanged.
+        Assert.Equal(bodySnapshot, File.ReadAllText(EntityPath(tv, "contoso")));
+    }
 }
