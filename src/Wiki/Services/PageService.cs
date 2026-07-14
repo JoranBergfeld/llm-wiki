@@ -272,7 +272,7 @@ public sealed class PageService
             var idmap = new IdMap();
             idmap.Load(v);
             var relPath = idmap.PathFor(idOrName);
-            // Same "not a page" cases as Upsert --id's unknown-id guard: no
+            // Same "not a page" cases as Upsert --id's not-found guard: no
             // idmap entry, a raw/ source id (valid entry, not a page), or a
             // stale entry whose file is gone - all collapse to not-found here.
             if (relPath is null || !relPath.StartsWith("wiki/", StringComparison.Ordinal))
@@ -332,7 +332,7 @@ public sealed class PageService
         var relPath = idmap.PathFor(id);
         var fullPath = relPath is null ? null : System.IO.Path.Combine(v.Root, relPath);
         if (relPath is null || !relPath.StartsWith("wiki/", StringComparison.Ordinal) || !System.IO.File.Exists(fullPath))
-            throw new ValidationException("unknown-id", $"unknown page id '{id}'");
+            throw new ValidationException("not-found", $"unknown page id '{id}'");
 
         var doc = PageDoc.Parse(System.IO.File.ReadAllText(fullPath));
         var front = doc.Front;
@@ -419,7 +419,7 @@ public sealed class PageService
         var relPath = idmap.PathFor(id);
         var fullPath = relPath is null ? null : System.IO.Path.Combine(v.Root, relPath);
         if (relPath is null || !relPath.StartsWith("wiki/", StringComparison.Ordinal) || !System.IO.File.Exists(fullPath))
-            throw new ValidationException("unknown-id", $"unknown page id '{id}'");
+            throw new ValidationException("not-found", $"unknown page id '{id}'");
 
         var doc = PageDoc.Parse(System.IO.File.ReadAllText(fullPath));
         var existingFront = doc.Front;
@@ -491,7 +491,7 @@ public sealed class PageService
         // entry (file since deleted outside the CLI) resolves to nothing on
         // disk. Both are "not a page you can upsert" - same code either way.
         if (relPath is null || !relPath.StartsWith("wiki/", StringComparison.Ordinal) || !System.IO.File.Exists(fullPath))
-            throw new ValidationException("unknown-id", $"unknown page id '{req.Id}'");
+            throw new ValidationException("not-found", $"unknown page id '{req.Id}'");
 
         var existingDoc = PageDoc.Parse(System.IO.File.ReadAllText(fullPath));
         var existingFront = existingDoc.Front;

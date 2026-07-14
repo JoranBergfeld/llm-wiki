@@ -159,7 +159,7 @@ public class RenameTests
         // at all - the rejection must not conjure one into existence.
         var r = tv.Run("page", "rename", "01AAAAAAAAAAAAAAAAAAAAAAAA", "whatever", "--json");
         Assert.Equal(1, r.ExitCode);
-        Assert.Contains(r.Envelope.Errors, e => e.Code == "unknown-id");
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "not-found");
         Assert.False(File.Exists(IdMapPath(tv)));
     }
 
@@ -248,7 +248,7 @@ public class RenameTests
         using var tv = new TempVault(); Init(tv);
         var r = tv.Run("page", "set-status", "01AAAAAAAAAAAAAAAAAAAAAAAA", "active", "--json");
         Assert.Equal(1, r.ExitCode);
-        Assert.Contains(r.Envelope.Errors, e => e.Code == "unknown-id");
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "not-found");
     }
 
     [Fact]

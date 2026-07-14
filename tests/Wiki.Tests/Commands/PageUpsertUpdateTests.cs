@@ -79,7 +79,7 @@ public class PageUpsertUpdateTests
         var r = tv.RunStdin("New body.", "page", "upsert", "--id", "01AAAAAAAAAAAAAAAAAAAAAAAA",
             "--type", "entity", "--title", "X", "--summary", "s2", "--json");
         Assert.Equal(1, r.ExitCode);
-        Assert.Contains(r.Envelope.Errors, e => e.Code == "unknown-id");
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "not-found");
 
         Assert.Equal(fileSnapshot, File.ReadAllText(file));
         Assert.Equal(idmapSnapshot, File.ReadAllText(IdMapPath(tv)));
@@ -90,7 +90,7 @@ public class PageUpsertUpdateTests
     public void Update_StaleIdmapEntry_FileDeleted_Rejected_NothingChanged()
     {
         // idmap knows the id, but its target file is gone from disk (deleted
-        // outside the CLI). The !File.Exists arm of the unknown-id guard must
+        // outside the CLI). The !File.Exists arm of the not-found guard must
         // catch this rather than crashing on a read of a missing file.
         using var tv = new TempVault(); Init(tv);
         var created = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
@@ -107,7 +107,7 @@ public class PageUpsertUpdateTests
         var r = tv.RunStdin("New body.", "page", "upsert", "--id", id,
             "--type", "entity", "--title", "Contoso", "--summary", "s2", "--json");
         Assert.Equal(1, r.ExitCode);
-        Assert.Contains(r.Envelope.Errors, e => e.Code == "unknown-id");
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "not-found");
 
         Assert.False(File.Exists(file));
         Assert.Equal(idmapSnapshot, File.ReadAllText(IdMapPath(tv)));
@@ -183,7 +183,7 @@ public class PageUpsertUpdateTests
         var r = tv.RunStdin("Body.", "page", "upsert", "--id", "01SOURCEFAKEIDAAAAAAAAAAAA",
             "--type", "entity", "--title", "X", "--summary", "s", "--json");
         Assert.Equal(1, r.ExitCode);
-        Assert.Contains(r.Envelope.Errors, e => e.Code == "unknown-id");
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "not-found");
         Assert.Equal(idmapSnapshot, File.ReadAllText(idmapPath));
         Assert.Equal(indexSnapshot, File.ReadAllText(IndexPath(tv)));
     }

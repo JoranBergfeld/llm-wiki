@@ -129,7 +129,14 @@ public static class IssuesCommand
             store.Resolve(id, note);
             store.Save(vault);
 
-            var utcIso = System.DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture);
+            // Same seam every other mutation command uses (PageService/
+            // SourceService/ReviewService/SchemaService): capture "now" as a
+            // single unix-ms value, then format the log timestamp from that -
+            // not a bare `DateTime.UtcNow.ToString(...)` call sitting
+            // directly in command code with no seam behind it.
+            var nowMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var utcIso = System.DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
+                .ToString("yyyy-MM-ddTHH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
             LogFile.Append(vault, utcIso, "issue-resolve", id, note ?? "(no note)");
 
             var resolved = store.Get(id)!;
