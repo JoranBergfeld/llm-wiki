@@ -73,6 +73,39 @@ public class IssuesCommandTests
         Assert.Equal("stale", Data(openOnly)[0].GetProperty("kind").GetString());
     }
 
+    [Fact]
+    public void List_InvalidStatus_ValidationError_NotSilentEmpty()
+    {
+        // `issues list` is the reflect loop's ground-truth read surface, so a
+        // typo'd --status must fail loudly rather than returning a
+        // clean-looking empty result at exit 0.
+        using var tv = new TempVault(); Init(tv);
+        SeedOpenIssue(tv, IssueKind.Orphan, "page-1", "d", "2024-01-01T00:00:00Z");
+
+        var r = tv.Run("issues", "list", "--status", "opne", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "invalid-issue-status");
+    }
+
+    [Fact]
+    public void List_ValidStatusResolved_FiltersCorrectly()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var toResolve = SeedOpenIssue(tv, IssueKind.Orphan, "page-1", "d", "2024-01-01T00:00:00Z");
+        SeedOpenIssue(tv, IssueKind.Stale, "page-2", "d", "2024-01-01T00:00:00Z");
+        Assert.Equal(0, tv.Run("issues", "resolve", toResolve, "--json").ExitCode);
+
+        var open = tv.Run("issues", "list", "--status", "open", "--json");
+        Assert.Equal(0, open.ExitCode);
+        Assert.Equal(1, Data(open).GetArrayLength());
+        Assert.Equal("stale", Data(open)[0].GetProperty("kind").GetString());
+
+        var resolved = tv.Run("issues", "list", "--status", "resolved", "--json");
+        Assert.Equal(0, resolved.ExitCode);
+        Assert.Equal(1, Data(resolved).GetArrayLength());
+        Assert.Equal(toResolve, Data(resolved)[0].GetProperty("id").GetString());
+    }
+
     // -------------------- issues show --------------------
 
     [Fact]

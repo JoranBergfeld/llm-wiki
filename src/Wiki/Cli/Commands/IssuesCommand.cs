@@ -45,7 +45,7 @@ public static class IssuesCommand
         {
             var kindRaw = parseResult.GetValue(kindOption);
             var kind = string.IsNullOrEmpty(kindRaw) ? (IssueKind?)null : IssueKindX.Parse(kindRaw);
-            var status = parseResult.GetValue(statusOption);
+            var status = ValidateStatus(parseResult.GetValue(statusOption));
 
             var vault = ctx.ResolveVault();
             var store = new Issues();
@@ -146,6 +146,23 @@ public static class IssuesCommand
         }));
 
         return resolve;
+    }
+
+    // `--status` is a raw string (Issue.Status isn't an enum), so unlike the
+    // sibling `--kind` option there's no Parse() to lean on. Validate it here
+    // against the closed lifecycle set before it reaches Issues.List's `!=`
+    // filter - otherwise a typo like `--status opne` matches nothing and
+    // returns a clean-looking empty list at exit 0, which is a real footgun
+    // for `wiki issues list` being the reflect loop's ground-truth read
+    // surface. null/omitted still means "no filter" (all statuses). Code
+    // `invalid-issue-status` mirrors the enum-style `invalid-issue-kind`.
+    private static string? ValidateStatus(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw))
+            return null;
+        if (raw != "open" && raw != "resolved")
+            throw new ValidationException("invalid-issue-status", $"unknown issue status '{raw}'; expected 'open' or 'resolved'");
+        return raw;
     }
 
     private static IssueData ToData(Issue e) => new()
