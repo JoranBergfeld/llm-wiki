@@ -89,6 +89,18 @@ public sealed class PageService
             throw new ValidationException("type-mismatch",
                 $"--type '{PageTypeX.ToWire(req.Type)}' does not match existing page type '{PageTypeX.ToWire(existingFront.Type)}' for id '{req.Id}'");
 
+        // Title is immutable on update: a page's title drives its slug and
+        // identity, and changing it means rewriting every inbound wikilink -
+        // that's Task 20's rename command, not upsert. --title is CLI-required
+        // on every upsert, so silently discarding a differing one would look
+        // like the flag did something. Reject the mismatch (same footgun class
+        // as type-mismatch above). Trimmed both sides to ignore incidental
+        // surrounding whitespace, not to normalize case (title identity is
+        // case-sensitive, matching duplicate-title's storage).
+        if (req.Title.Trim() != existingFront.Title.Trim())
+            throw new ValidationException("title-mismatch",
+                "the update title must match the existing page title; changing a page's title/identity is done via rename (a later command), not upsert");
+
         if (string.IsNullOrWhiteSpace(req.Summary))
             throw new ValidationException("summary-required", "--summary is required when updating a page");
 

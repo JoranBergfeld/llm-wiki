@@ -87,6 +87,87 @@ public class PageUpsertUpdateTests
     }
 
     [Fact]
+    public void Update_StaleIdmapEntry_FileDeleted_Rejected_NothingChanged()
+    {
+        // idmap knows the id, but its target file is gone from disk (deleted
+        // outside the CLI). The !File.Exists arm of the unknown-id guard must
+        // catch this rather than crashing on a read of a missing file.
+        using var tv = new TempVault(); Init(tv);
+        var created = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Contoso", "--summary", "s", "--json");
+        Assert.Equal(0, created.ExitCode);
+        var id = ExtractId(created);
+
+        var file = Path.Combine(tv.Path, "wiki", "entities", "contoso.md");
+        File.Delete(file);
+        var idmapSnapshot = File.ReadAllText(IdMapPath(tv));
+        var indexSnapshot = File.ReadAllText(IndexPath(tv));
+        var logSnapshot = File.ReadAllText(LogPath(tv));
+
+        var r = tv.RunStdin("New body.", "page", "upsert", "--id", id,
+            "--type", "entity", "--title", "Contoso", "--summary", "s2", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "unknown-id");
+
+        Assert.False(File.Exists(file));
+        Assert.Equal(idmapSnapshot, File.ReadAllText(IdMapPath(tv)));
+        Assert.Equal(indexSnapshot, File.ReadAllText(IndexPath(tv)));
+        Assert.Equal(logSnapshot, File.ReadAllText(LogPath(tv)));
+    }
+
+    [Fact]
+    public void Update_TitleMismatch_Rejected_NothingChanged()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var created = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Contoso", "--summary", "s", "--json");
+        Assert.Equal(0, created.ExitCode);
+        var id = ExtractId(created);
+
+        var file = Path.Combine(tv.Path, "wiki", "entities", "contoso.md");
+        var fileSnapshot = File.ReadAllText(file);
+        var idmapSnapshot = File.ReadAllText(IdMapPath(tv));
+        var indexSnapshot = File.ReadAllText(IndexPath(tv));
+        var logSnapshot = File.ReadAllText(LogPath(tv));
+
+        var r = tv.RunStdin("New body.", "page", "upsert", "--id", id,
+            "--type", "entity", "--title", "Different", "--summary", "s2", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "title-mismatch");
+
+        Assert.Equal(fileSnapshot, File.ReadAllText(file));
+        Assert.Equal(idmapSnapshot, File.ReadAllText(IdMapPath(tv)));
+        Assert.Equal(indexSnapshot, File.ReadAllText(IndexPath(tv)));
+        Assert.Equal(logSnapshot, File.ReadAllText(LogPath(tv)));
+    }
+
+    [Fact]
+    public void Update_SummaryWithQuote_Rejected_FrontmatterSchema_NothingChanged()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var created = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Contoso", "--summary", "s", "--json");
+        Assert.Equal(0, created.ExitCode);
+        var id = ExtractId(created);
+
+        var file = Path.Combine(tv.Path, "wiki", "entities", "contoso.md");
+        var fileSnapshot = File.ReadAllText(file);
+        var idmapSnapshot = File.ReadAllText(IdMapPath(tv));
+        var indexSnapshot = File.ReadAllText(IndexPath(tv));
+        var logSnapshot = File.ReadAllText(LogPath(tv));
+
+        var r = tv.RunStdin("New body.", "page", "upsert", "--id", id,
+            "--type", "entity", "--title", "Contoso", "--summary", "has a \" quote", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "frontmatter-schema");
+
+        Assert.Equal(fileSnapshot, File.ReadAllText(file));
+        Assert.Equal(idmapSnapshot, File.ReadAllText(IdMapPath(tv)));
+        Assert.Equal(indexSnapshot, File.ReadAllText(IndexPath(tv)));
+        Assert.Equal(logSnapshot, File.ReadAllText(LogPath(tv)));
+    }
+
+    [Fact]
     public void Update_IdResolvesToSource_Rejected_NothingChanged()
     {
         // A raw/ source id is a valid idmap entry but not a page - upsert
