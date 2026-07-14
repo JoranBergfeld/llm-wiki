@@ -11,11 +11,31 @@ namespace Wiki.Services;
 // uses this for slug-collision checks, duplicate-title checks, dangling-link
 // resolution, and index regeneration; Tasks 14/15/19/22 reuse it for the
 // same "give me every page in the vault" need.
+//
+// EnumerateWithBody (Task 19) is the same walk, just also keeping the body
+// PageDoc.Parse already parsed off disk - no extra file read. Backlinks/
+// orphan detection need every page's body to run Wikilinks.Extract over,
+// which Enumerate's (Slug, Front) shape can't carry; a second directory scan
+// re-reading the same files would be wasted I/O, so both public methods
+// share one internal walk (EnumerateFull) that captures the body once and
+// Enumerate simply drops it.
 public static class PageStore
 {
     public static IReadOnlyList<(string Slug, PageFrontmatter Front)> Enumerate(Vault v)
     {
-        var pages = new List<(string Slug, PageFrontmatter Front)>();
+        var full = EnumerateFull(v);
+        var pages = new List<(string Slug, PageFrontmatter Front)>(full.Count);
+        foreach (var p in full)
+            pages.Add((p.Slug, p.Front));
+        return pages;
+    }
+
+    public static IReadOnlyList<(string Slug, PageFrontmatter Front, string Body)> EnumerateWithBody(Vault v)
+        => EnumerateFull(v);
+
+    private static List<(string Slug, PageFrontmatter Front, string Body)> EnumerateFull(Vault v)
+    {
+        var pages = new List<(string Slug, PageFrontmatter Front, string Body)>();
 
         AddDirectory(v.PageDir(PageType.Summary), pages);
         AddDirectory(v.PageDir(PageType.Entity), pages);
@@ -29,13 +49,13 @@ public static class PageStore
         if (File.Exists(overviewPath))
         {
             var doc = PageDoc.Parse(File.ReadAllText(overviewPath));
-            pages.Add(("overview", doc.Front));
+            pages.Add(("overview", doc.Front, doc.Body));
         }
 
         return pages;
     }
 
-    private static void AddDirectory(string dir, List<(string Slug, PageFrontmatter Front)> pages)
+    private static void AddDirectory(string dir, List<(string Slug, PageFrontmatter Front, string Body)> pages)
     {
         if (!Directory.Exists(dir))
             return;
@@ -50,7 +70,7 @@ public static class PageStore
         {
             var slug = Path.GetFileNameWithoutExtension(file);
             var doc = PageDoc.Parse(File.ReadAllText(file));
-            pages.Add((slug, doc.Front));
+            pages.Add((slug, doc.Front, doc.Body));
         }
     }
 }

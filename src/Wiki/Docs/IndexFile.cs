@@ -23,6 +23,30 @@ public static class IndexFile
         (PageType.Summary, "Summaries"),
     };
 
+    // Same selection Render uses (exclude archived, group by type in the
+    // fixed order above, sort each group by title then slug) but returning
+    // the structured (type, pages) groups instead of markdown text. Task 19's
+    // `index show` reuses this so the JSON view and index.md can never drift
+    // apart on what counts as "in the index" or what order it's in.
+    public static IReadOnlyList<(PageType Type, IReadOnlyList<(string Slug, PageFrontmatter Front)> Pages)> GroupedEntries(
+        IEnumerable<(string Slug, PageFrontmatter Front)> pages)
+    {
+        var all = pages.ToList();
+        var result = new List<(PageType, IReadOnlyList<(string Slug, PageFrontmatter Front)>)>();
+
+        foreach (var (type, _) in Groups)
+        {
+            var group = all
+                .Where(p => p.Front.Type == type && p.Front.Status != PageStatus.Archived)
+                .OrderBy(p => p.Front.Title, System.StringComparer.Ordinal)
+                .ThenBy(p => p.Slug, System.StringComparer.Ordinal)
+                .ToList();
+            result.Add((type, group));
+        }
+
+        return result;
+    }
+
     public static string Render(IEnumerable<(string Slug, PageFrontmatter Front)> pages)
     {
         var all = pages.ToList();

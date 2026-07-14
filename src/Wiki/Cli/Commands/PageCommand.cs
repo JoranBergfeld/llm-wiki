@@ -8,9 +8,9 @@ using Wiki.Services;
 namespace Wiki.Cli.Commands;
 
 // `wiki page ...` command group. Task 12/13 wired up `upsert` (create +
-// update); this task (14) adds the read-only query pair `show`/`list`.
-// `rename`/`set-status`/`backlinks` land in later tasks as further siblings
-// under the same `page` group.
+// update); Task 14 added the read-only query pair `show`/`list`; this task
+// (19) adds `backlinks` and `list --orphans`. `rename`/`set-status` land in
+// later tasks as further siblings under the same `page` group.
 public static class PageCommand
 {
     public static Command Build(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
@@ -19,6 +19,7 @@ public static class PageCommand
         page.Add(BuildUpsert(vaultOption, jsonOption, stdout, stdin));
         page.Add(BuildShow(vaultOption, jsonOption, stdout, stdin));
         page.Add(BuildList(vaultOption, jsonOption, stdout, stdin));
+        page.Add(BuildBacklinks(vaultOption, jsonOption, stdout, stdin));
         return page;
     }
 
@@ -159,11 +160,16 @@ public static class PageCommand
         {
             Description = "Filter to a single page status: active | pending-review | needs-review | archived",
         };
+        var orphansOption = new Option<bool>("--orphans")
+        {
+            Description = "Show only active pages with zero inbound wikilinks (excludes overview and pending-review)",
+        };
 
-        var list = new Command("list", "List pages, optionally filtered by --type and/or --status")
+        var list = new Command("list", "List pages, optionally filtered by --type, --status, and/or --orphans")
         {
             typeOption,
             statusOption,
+            orphansOption,
         };
 
         list.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
@@ -172,10 +178,11 @@ public static class PageCommand
             var statusRaw = parseResult.GetValue(statusOption);
             var type = string.IsNullOrEmpty(typeRaw) ? (PageType?)null : PageTypeX.Parse(typeRaw);
             var status = string.IsNullOrEmpty(statusRaw) ? (PageStatus?)null : PageStatusX.Parse(statusRaw);
+            var orphans = parseResult.GetValue(orphansOption);
 
             var vault = ctx.ResolveVault();
             var service = new PageService();
-            var results = service.List(vault, type, status);
+            var results = service.List(vault, type, status, orphans);
 
             if (ctx.Json)
             {
@@ -189,6 +196,40 @@ public static class PageCommand
         }));
 
         return list;
+    }
+
+    private static Command BuildBacklinks(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var idOrNameArgument = new Argument<string>("id-or-name")
+        {
+            Description = "Page id (ULID) or slug/name to look up",
+        };
+
+        var backlinks = new Command("backlinks", "List the slugs of pages whose body links to this page")
+        {
+            idOrNameArgument,
+        };
+
+        backlinks.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var idOrName = parseResult.GetRequiredValue(idOrNameArgument);
+
+            var vault = ctx.ResolveVault();
+            var service = new PageService();
+            var results = service.Backlinks(vault, idOrName);
+
+            if (ctx.Json)
+            {
+                ctx.EmitOk(results);
+            }
+            else
+            {
+                RenderBacklinksList(ctx.Out, results);
+            }
+            return 0;
+        }));
+
+        return backlinks;
     }
 
     private static void RenderShowPanel(TextWriter output, PageView view)
@@ -241,6 +282,20 @@ public static class PageCommand
 
         console.Write(table);
         console.MarkupLine($"[grey]{pages.Count} page(s)[/]");
+    }
+
+    private static void RenderBacklinksList(TextWriter output, System.Collections.Generic.IReadOnlyList<string> slugs)
+    {
+        var console = AnsiConsole.Create(new AnsiConsoleSettings { Out = new AnsiConsoleOutput(output) });
+
+        if (slugs.Count == 0)
+        {
+            console.MarkupLine("[grey]no backlinks[/]");
+            return;
+        }
+
+        foreach (var slug in slugs)
+            console.MarkupLine(Markup.Escape($"[[{slug}]]"));
     }
 
     private static string ResolveBody(CommandContext ctx, string? bodyFile)
