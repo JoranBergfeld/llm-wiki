@@ -172,15 +172,10 @@ public class PageUpsertCreateTests
         Assert.True(File.Exists(Path.Combine(tv.Path, "wiki", "entities", "acme-inc-2.md")));
     }
 
-    [Fact]
-    public void Update_WithId_Rejected_NotImplemented()
-    {
-        using var tv = new TempVault(); Init(tv);
-        var r = tv.RunStdin("Body.", "page", "upsert", "--id", "01AAAAAAAAAAAAAAAAAAAAAAAA",
-            "--type", "entity", "--title", "X", "--summary", "s", "--json");
-        Assert.Equal(1, r.ExitCode);
-        Assert.Contains(r.Envelope.Errors, e => e.Code == "not-implemented");
-    }
+    // Update_WithId_Rejected_NotImplemented lived here for Task 12, when
+    // the --id branch was an explicit stub. Task 13 implements that branch
+    // for real; its unknown-id / type-mismatch / etc. rejection tests now
+    // live in PageUpsertUpdateTests.cs alongside the rest of the update path.
 
     [Fact]
     public void Create_DuplicateTitleWithinType_Rejected_NothingChanged()

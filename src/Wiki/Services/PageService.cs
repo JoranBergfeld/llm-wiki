@@ -55,11 +55,116 @@ public sealed class PageService
     public UpsertResult Upsert(Vault v, VaultConfig cfg, UpsertRequest req)
         => req.Id is null ? Create(v, cfg, req) : Update(v, cfg, req);
 
-    // Task 13 replaces this body with the full-body update path (spec §11 /
-    // §9 review-shadow handling). Left as an explicit, typed stub rather than
-    // falling through so Upsert's create/update split is obvious from here.
-    private static UpsertResult Update(Vault v, VaultConfig cfg, UpsertRequest req)
-        => throw new ValidationException("not-implemented", "page upsert --id (update path) is implemented in a later task");
+    // Full-body update: id/created/title/type/status are preserved from the
+    // page already on disk; summary/sources/tags/body come from the request.
+    // Slug and file path never change here - renames are Task 20's job, not
+    // this one's. `cfg` is unused today (mirrors Create; the review-gate
+    // wiring in Task 23 will need it for both branches).
+    private UpsertResult Update(Vault v, VaultConfig cfg, UpsertRequest req)
+    {
+        // --- Blocking validation: ALL of it runs before anything below touches disk. ---
+
+        // idmap.Load is a read, not a write - safe to do mid-validation, and
+        // the same loaded instance is reused below for Put+Save (mirrors Create).
+        var idmap = new IdMap();
+        idmap.Load(v);
+
+        var relPath = idmap.PathFor(req.Id!);
+        var fullPath = relPath is null ? null : System.IO.Path.Combine(v.Root, relPath);
+
+        // A raw/ source is a valid idmap entry but not a page; a stale idmap
+        // entry (file since deleted outside the CLI) resolves to nothing on
+        // disk. Both are "not a page you can upsert" - same code either way.
+        if (relPath is null || !relPath.StartsWith("wiki/", StringComparison.Ordinal) || !System.IO.File.Exists(fullPath))
+            throw new ValidationException("unknown-id", $"unknown page id '{req.Id}'");
+
+        var existingFront = PageDoc.Parse(System.IO.File.ReadAllText(fullPath)).Front;
+
+        // A page's type is fixed at creation; update never migrates it
+        // between directories. Silently keeping the stored type while
+        // accepting a different --type would look like the flag did
+        // something when it didn't, so reject the mismatch instead - the
+        // safer of the two options (vs. silently ignoring --type).
+        if (req.Type != existingFront.Type)
+            throw new ValidationException("type-mismatch",
+                $"--type '{PageTypeX.ToWire(req.Type)}' does not match existing page type '{PageTypeX.ToWire(existingFront.Type)}' for id '{req.Id}'");
+
+        if (string.IsNullOrWhiteSpace(req.Summary))
+            throw new ValidationException("summary-required", "--summary is required when updating a page");
+
+        GuardScalar(req.Summary, "summary");
+
+        foreach (var sourceId in req.Sources)
+        {
+            var sourcePath = idmap.PathFor(sourceId);
+            if (sourcePath is null || !sourcePath.StartsWith("raw/", StringComparison.Ordinal))
+                throw new ValidationException("unknown-source", $"unknown source id '{sourceId}'");
+        }
+
+        // Title is immutable on update (not in the replace list, and renames
+        // are Task 20's job), so there is no new title to collide with an
+        // existing one - duplicate-title from Create simply doesn't apply
+        // here and is intentionally not re-run. That also means a
+        // self-update can never trip it.
+        var slug = System.IO.Path.GetFileNameWithoutExtension(fullPath);
+
+        var existingPages = PageStore.Enumerate(v);
+        var existingSlugs = new HashSet<string>(existingPages.Select(p => p.Slug), StringComparer.Ordinal);
+
+        var links = Wikilinks.Extract(req.Body);
+        var danglingTargets = links
+            .Select(l => l.Target)
+            .Where(target => target != slug && !existingSlugs.Contains(target))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (danglingTargets.Length > 0 && !req.AllowDangling)
+            throw new ValidationException("dangling-link",
+                $"dangling wikilink target(s): {string.Join(", ", danglingTargets)}");
+
+        var nowMs = _nowUnixMs();
+        var today = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
+            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        var front = new PageFrontmatter
+        {
+            Id = existingFront.Id,
+            Type = existingFront.Type,
+            Title = existingFront.Title,
+            Status = existingFront.Status,
+            Created = existingFront.Created,
+            Updated = today,
+            Summary = req.Summary,
+            Sources = req.Sources,
+            Tags = req.Tags,
+        };
+
+        var doc = new PageDoc(front, req.Body);
+        var serialized = doc.Serialize();
+        // Frontmatter schema gate proper: must round-trip through the same
+        // closed-schema parser real page files are read back with.
+        PageDoc.Parse(serialized);
+
+        // --- Validation complete. Everything from here on is the write. ---
+
+        AtomicFile.Write(fullPath, serialized);
+
+        // Path is unchanged on update, so this Put is a same-value no-op -
+        // kept anyway so idmap.Save always runs off one consistent
+        // load-mutate-save cycle, same shape as Create's.
+        idmap.Put(existingFront.Id, relPath);
+        idmap.Save(v);
+
+        var freshPages = PageStore.Enumerate(v);
+        IndexFile.Regenerate(v, freshPages);
+
+        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
+            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        LogFile.Append(v, utcIso, "upsert", slug, $"update id={existingFront.Id} type={PageTypeX.ToWire(existingFront.Type)}");
+
+        var filedDangling = req.AllowDangling ? danglingTargets : Array.Empty<string>();
+        return new UpsertResult(existingFront.Id, slug, relPath, PageStatusX.ToWire(front.Status), filedDangling);
+    }
 
     private UpsertResult Create(Vault v, VaultConfig cfg, UpsertRequest req)
     {
