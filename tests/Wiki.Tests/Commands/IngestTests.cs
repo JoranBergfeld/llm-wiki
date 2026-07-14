@@ -203,6 +203,35 @@ public class IngestTests
         tv.Dispose();
     }
 
+    // Amendment J: a lint run in the SAME wall-clock second as the
+    // `integrated` transition satisfies the `linted` precondition. Both
+    // timestamps are second-granularity, and the canonical flow (spec §10
+    // step 5) integrates then immediately lints, so a same-second lint really
+    // did run after integration - the precondition accepts `lastRun >=
+    // integratedAt`, not strictly `>`. This is the production-code fix that
+    // replaced the E2E test's old Thread.Sleep workaround.
+    [Fact]
+    public void Advance_ToLinted_SameSecondLint_Accepted()
+    {
+        var (tv, id) = Seeded();
+        SummarizeSource(tv, id);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "summarized", "--json").ExitCode);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "integrated", "--touched", "", "--json").ExitCode);
+
+        // Read back the exact `integratedAt` the integrate advance stamped,
+        // then write lint.json's `lastRun` to the SAME value - simulating a
+        // lint that landed in the same second as the integration.
+        var status = tv.Run("ingest", "status", id, "--json");
+        var integratedAt = ((JsonElement)status.Envelope.Data!).GetProperty("integratedAt").GetString()!;
+        var lintPath = Path.Combine(tv.Path, ".wiki", "lint.json");
+        File.WriteAllText(lintPath, $"{{\"lastRun\":\"{integratedAt}\"}}");
+
+        var linted = tv.Run("ingest", "advance", id, "--to", "linted", "--json");
+        Assert.Equal(0, linted.ExitCode);
+        Assert.Contains("\"state\":\"linted\"", File.ReadAllText(LedgerPath(tv)));
+        tv.Dispose();
+    }
+
     [Fact]
     public void Advance_ToIntegrated_IndexDrift_RejectedWithPreconditionIndex()
     {

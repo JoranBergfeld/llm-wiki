@@ -211,12 +211,21 @@ public sealed class IngestService
                 "run 'wiki reindex' or investigate before integrating");
     }
 
-    // `linted` precondition (spec §10, amendment D): a lint run newer than
-    // this entry's `integratedAt` timestamp must exist, tracked in
+    // `linted` precondition (spec §10, amendments D + J): a lint run at or
+    // after this entry's `integratedAt` timestamp must exist, tracked in
     // `.wiki/lint.json`'s `lastRun` field. `wiki lint` (Task 22) is the only
-    // writer of that file; until it exists, this precondition can never
-    // pass - which is exactly the "documents the amendment-D wiring ahead of
-    // Task 22" behavior the brief asks for.
+    // writer of that file; until it exists, this precondition can never pass.
+    //
+    // Amendment J: the comparison is `lastRun >= integratedAt`, NOT strictly
+    // `>`. Both timestamps are second-granularity ISO strings off the same
+    // wall clock, and the canonical flow (spec §10 step 5) is integrate then
+    // immediately lint - an agent scripting those two commands back-to-back
+    // lands both in the SAME wall-clock second, and that lint genuinely ran
+    // AFTER integration. Rejecting a same-second lint (the old `<=` reject)
+    // would fail a correct, in-order flow purely on timestamp granularity;
+    // `>=`-accept is the honest reading of "a lint newer-or-equal to the
+    // integrate ran". A lint STRICTLY older than integratedAt is still
+    // rejected - that lint predates the integration and proves nothing.
     private static void CheckLintPrecondition(Vault v, LedgerEntry entry)
     {
         var lintPath = Path.Combine(v.StateDir, "lint.json");
@@ -228,11 +237,11 @@ public sealed class IngestService
             !DateTimeOffset.TryParse(lintState.LastRun, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var lastRun) ||
             entry.IntegratedAt is null ||
             !DateTimeOffset.TryParse(entry.IntegratedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var integratedAt) ||
-            lastRun <= integratedAt)
+            lastRun < integratedAt)
         {
             throw new ValidationException("precondition-lint",
-                $"no lint run newer than this source's 'integrated' timestamp ({entry.IntegratedAt}) is recorded " +
-                $"in '{lintPath}'; run 'wiki lint' again after integrating");
+                $"no lint run at or after this source's 'integrated' timestamp ({entry.IntegratedAt}) is recorded " +
+                $"in '{lintPath}'; run 'wiki lint' after integrating this source");
         }
     }
 }
