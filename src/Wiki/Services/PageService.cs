@@ -31,6 +31,20 @@ public sealed record UpsertResult(
     public string HumanSummary() => $"Upserted [[{Slug}]] ({Status}) -> {Path}";
 }
 
+// `wiki page rename` result. LinksRewritten counts the number of OTHER pages
+// whose body contained at least one `[[oldSlug]]`/`[[oldSlug|display]]`
+// wikilink and got rewritten to `[[newSlug...]]` - i.e. the size of the
+// inbound-link set that had to follow the move, the same "who points at
+// this slug" notion `page backlinks` reports.
+public sealed record RenameResult(
+    string Id,
+    string OldSlug,
+    string NewSlug,
+    int LinksRewritten) : IHumanRenderable
+{
+    public string HumanSummary() => $"Renamed [[{OldSlug}]] -> [[{NewSlug}]] ({LinksRewritten} inbound link(s) rewritten)";
+}
+
 // `wiki page list` row shape. Deliberately flat/scalar (wire strings for
 // Type/Status, not the enums) - it's a query result meant to be read straight
 // off the wire, same spirit as UpsertResult. SourcesCount stands in for the
@@ -288,6 +302,164 @@ public sealed class PageService
             front.Tags,
             frontmatterOnly ? null : doc.Body);
     }
+
+    // `wiki page rename <id> <new-slug>`: renames a page's on-disk slug (the
+    // filename) and rewrites every inbound `[[wikilink]]` across the vault so
+    // links keep resolving after the move - that "aim heals" step is the
+    // whole point of rename over a manual `mv`. Only the filename changes;
+    // id/created/body content are untouched (the slug lives in the filename,
+    // never in frontmatter, so there's no frontmatter field to edit here).
+    //
+    // The move is two file ops - AtomicFile.Write(new) then File.Delete(old)
+    // - not atomic as a pair, but each op alone is crash-safe. A crash caught
+    // between the two leaves both files on disk momentarily; `wiki reindex`
+    // heals that by rebuilding idmap/index fresh from whatever page files
+    // exist (spec §3 forward-repair), so this is acceptable per spec.
+    public RenameResult Rename(Vault v, string id, string newSlug)
+    {
+        // --- Blocking validation: ALL of it runs before anything below touches disk. ---
+
+        var idmap = new IdMap();
+        idmap.Load(v);
+
+        var relPath = idmap.PathFor(id);
+        var fullPath = relPath is null ? null : System.IO.Path.Combine(v.Root, relPath);
+        if (relPath is null || !relPath.StartsWith("wiki/", StringComparison.Ordinal) || !System.IO.File.Exists(fullPath))
+            throw new ValidationException("unknown-id", $"unknown page id '{id}'");
+
+        var doc = PageDoc.Parse(System.IO.File.ReadAllText(fullPath));
+        var front = doc.Front;
+
+        // The overview singleton is the vault's own fixed-path entry point
+        // (`wiki/overview.md`) - it has no slug of its own to rename, and
+        // giving it one would break every caller that expects to find it at
+        // that well-known path. Reject outright rather than silently no-op.
+        if (front.Type == PageType.Overview)
+            throw new ValidationException("cannot-rename-overview", "the overview singleton cannot be renamed");
+
+        var oldSlug = System.IO.Path.GetFileNameWithoutExtension(fullPath);
+
+        // new-slug must already be a normalized kebab slug: Rename does not
+        // silently reinterpret free text the way Create derives a slug from
+        // --title (Slug.From collapsing punctuation/case). Requiring the
+        // caller to pass an already-clean value means what you asked for is
+        // exactly what lands - no surprise character-collapsing on a rename.
+        if (string.IsNullOrEmpty(newSlug) || Slug.From(newSlug) != newSlug)
+            throw new ValidationException("invalid-slug", $"'{newSlug}' is not a normalized kebab-case slug");
+
+        if (newSlug == oldSlug)
+            throw new ValidationException("slug-unchanged", $"'{newSlug}' is already this page's slug");
+
+        // Slugs are globally unique across page types (Task 12 decision: the
+        // Obsidian `[[slug]]` namespace has no per-type scoping), so the
+        // collision check spans every page regardless of type.
+        var existingPages = PageStore.Enumerate(v);
+        if (existingPages.Any(p => p.Slug == newSlug))
+            throw new ValidationException("slug-taken", $"slug '{newSlug}' is already in use");
+
+        // --- Validation complete. Everything from here on is the write. ---
+
+        var newPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(fullPath)!, newSlug + ".md");
+
+        AtomicFile.Write(newPath, doc.Serialize());
+        System.IO.File.Delete(fullPath);
+
+        var newRelPath = System.IO.Path.GetRelativePath(v.Root, newPath).Replace('\\', '/');
+        idmap.Put(front.Id, newRelPath);
+        idmap.Save(v);
+
+        // Rewrite every inbound [[oldSlug]] wikilink across the vault. This
+        // re-scans fresh off disk (not the `existingPages` snapshot used for
+        // the collision check above) so it sees the renamed page at its NEW
+        // path/slug rather than the old one.
+        var rewrittenCount = 0;
+        foreach (var (slug, pFront, body) in PageStore.EnumerateWithBody(v))
+        {
+            var rewritten = Wikilinks.Rewrite(body, oldSlug, newSlug);
+            if (string.Equals(rewritten, body, StringComparison.Ordinal))
+                continue;
+
+            AtomicFile.Write(FullPathFor(v, slug, pFront), new PageDoc(pFront, rewritten).Serialize());
+            rewrittenCount++;
+        }
+
+        var finalPages = PageStore.Enumerate(v);
+        IndexFile.Regenerate(v, finalPages);
+
+        var nowMs = _nowUnixMs();
+        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
+            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        LogFile.Append(v, utcIso, "rename", newSlug,
+            $"id={front.Id} old={oldSlug} new={newSlug} links_rewritten={rewrittenCount}");
+
+        return new RenameResult(front.Id, oldSlug, newSlug, rewrittenCount);
+    }
+
+    // `wiki page set-status <id> <status>`: the repair/workflow primitive
+    // later tasks (review gate, retraction) reuse internally to move a page
+    // between PageStatus values without touching body/summary/sources/tags.
+    // Sets `updated` to today (same clock seam Create/Update use) since a
+    // status change is itself an edit to the page's record. Index is
+    // regenerated because status drives index inclusion (archived pages are
+    // excluded entirely) and the `[pending-review]` marker.
+    public void SetStatus(Vault v, string id, PageStatus status)
+    {
+        // --- Blocking validation: ALL of it runs before anything below touches disk. ---
+
+        var idmap = new IdMap();
+        idmap.Load(v);
+
+        var relPath = idmap.PathFor(id);
+        var fullPath = relPath is null ? null : System.IO.Path.Combine(v.Root, relPath);
+        if (relPath is null || !relPath.StartsWith("wiki/", StringComparison.Ordinal) || !System.IO.File.Exists(fullPath))
+            throw new ValidationException("unknown-id", $"unknown page id '{id}'");
+
+        var doc = PageDoc.Parse(System.IO.File.ReadAllText(fullPath));
+        var existingFront = doc.Front;
+
+        var nowMs = _nowUnixMs();
+        var today = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
+            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        var front = new PageFrontmatter
+        {
+            Id = existingFront.Id,
+            Type = existingFront.Type,
+            Title = existingFront.Title,
+            Status = status,
+            Created = existingFront.Created,
+            Updated = today,
+            Summary = existingFront.Summary,
+            Sources = existingFront.Sources,
+            Tags = existingFront.Tags,
+        };
+
+        var serialized = new PageDoc(front, doc.Body).Serialize();
+        // Frontmatter schema gate proper: must round-trip through the same
+        // closed-schema parser real page files are read back with.
+        PageDoc.Parse(serialized);
+
+        // --- Validation complete. Everything from here on is the write. ---
+
+        AtomicFile.Write(fullPath, serialized);
+
+        var freshPages = PageStore.Enumerate(v);
+        IndexFile.Regenerate(v, freshPages);
+
+        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
+            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var slug = System.IO.Path.GetFileNameWithoutExtension(fullPath);
+        LogFile.Append(v, utcIso, "set-status", slug, $"id={existingFront.Id} status={PageStatusX.ToWire(status)}");
+    }
+
+    // Full path for a page's file on disk from its (slug, frontmatter) pair
+    // - mirrors ReindexService.RelPathFor / PageService.Show's slug->path
+    // reconstruction: overview is the fixed-path singleton `wiki/overview.md`,
+    // everything else lives at `wiki/<type-dir>/<slug>.md`.
+    private static string FullPathFor(Vault v, string slug, PageFrontmatter front)
+        => front.Type == PageType.Overview
+            ? System.IO.Path.Combine(v.WikiDir, "overview.md")
+            : System.IO.Path.Combine(v.PageDir(front.Type), slug + ".md");
 
     // Full-body update: id/created/title/type/status are preserved from the
     // page already on disk; summary/sources/tags/body come from the request.

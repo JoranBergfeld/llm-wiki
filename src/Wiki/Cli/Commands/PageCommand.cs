@@ -20,6 +20,8 @@ public static class PageCommand
         page.Add(BuildShow(vaultOption, jsonOption, stdout, stdin));
         page.Add(BuildList(vaultOption, jsonOption, stdout, stdin));
         page.Add(BuildBacklinks(vaultOption, jsonOption, stdout, stdin));
+        page.Add(BuildRename(vaultOption, jsonOption, stdout, stdin));
+        page.Add(BuildSetStatus(vaultOption, jsonOption, stdout, stdin));
         return page;
     }
 
@@ -230,6 +232,88 @@ public static class PageCommand
         }));
 
         return backlinks;
+    }
+
+    private static Command BuildRename(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var idArgument = new Argument<string>("id")
+        {
+            Description = "Page id (ULID) to rename",
+        };
+        var newSlugArgument = new Argument<string>("new-slug")
+        {
+            Description = "New slug - must already be normalized kebab-case (e.g. 'acme-corp')",
+        };
+
+        var rename = new Command("rename", "Rename a page's slug (filename), rewriting every inbound [[wikilink]]")
+        {
+            idArgument,
+            newSlugArgument,
+        };
+
+        rename.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var id = parseResult.GetRequiredValue(idArgument);
+            var newSlug = parseResult.GetRequiredValue(newSlugArgument);
+
+            var vault = ctx.ResolveVault();
+            var service = new PageService();
+            var result = service.Rename(vault, id, newSlug);
+            ctx.EmitOk(result);
+            return 0;
+        }));
+
+        return rename;
+    }
+
+    private static Command BuildSetStatus(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var idArgument = new Argument<string>("id")
+        {
+            Description = "Page id (ULID) to update",
+        };
+        var statusArgument = new Argument<string>("status")
+        {
+            Description = "New status: active | pending-review | needs-review | archived",
+        };
+
+        var setStatus = new Command("set-status", "Set a page's frontmatter status")
+        {
+            idArgument,
+            statusArgument,
+        };
+
+        setStatus.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var id = parseResult.GetRequiredValue(idArgument);
+            // PageStatusX.Parse throws ValidationException(code="invalid-page-status")
+            // on garbage - the same code `page list --status` already
+            // surfaces for a bad --status filter, so garbage input here is
+            // consistent with the rest of the CLI rather than inventing a
+            // second "this status string is bad" code.
+            var status = PageStatusX.Parse(parseResult.GetRequiredValue(statusArgument));
+
+            var vault = ctx.ResolveVault();
+            var service = new PageService();
+            service.SetStatus(vault, id, status);
+
+            // SetStatus's own contract is `void` (Task 20 brief); re-read the
+            // page via the existing read-only Show query so callers still get
+            // the resulting frontmatter back, without a bespoke DTO. Mirrors
+            // BuildShow's json/human split exactly.
+            var view = service.Show(vault, id, frontmatterOnly: true);
+            if (ctx.Json)
+            {
+                ctx.EmitOk(view);
+            }
+            else
+            {
+                RenderShowPanel(ctx.Out, view);
+            }
+            return 0;
+        }));
+
+        return setStatus;
     }
 
     private static void RenderShowPanel(TextWriter output, PageView view)

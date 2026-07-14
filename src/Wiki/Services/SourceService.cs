@@ -21,6 +21,40 @@ public sealed record SourceAddResult(
     public string HumanSummary() => $"Registered source {Id} ({Category}) -> {Path}";
 }
 
+// `wiki source list` row shape - a scanning/routing view, same spirit as
+// PageSummary: wire strings for Status (not the enum), no body.
+public sealed record SourceSummary(
+    string Id,
+    string Title,
+    string Category,
+    string Status,
+    string Added,
+    string Sha256);
+
+// `wiki source show <id>` result: full source frontmatter plus (optionally)
+// the raw body. Body is null - and so omitted from JSON via WikiJsonContext's
+// WhenWritingNull default - when the caller passed --frontmatter-only, same
+// convention as PageView.
+public sealed record SourceView(
+    string Id,
+    string Title,
+    string Category,
+    string Status,
+    string Added,
+    string Sha256,
+    string Origin,
+    string? Body);
+
+// `wiki source impact <id>` row: one page whose frontmatter `sources` array
+// cites this source id - the provenance query an agent runs before
+// retracting/editing a source to see what would be affected.
+public sealed record SourceImpactEntry(
+    string Id,
+    string Slug,
+    string Title,
+    string Type,
+    string Status);
+
 // Registers an immutable raw source: validates the category, hashes the
 // input file's content for integrity + dedup, writes raw/<id>.md (source
 // frontmatter + the original content as the body - the ONE sanctioned write
@@ -127,6 +161,117 @@ public sealed class SourceService
         LogFile.Append(v, utcIso, "source-add", id, $"category={category} sha256={sha256}");
 
         return new SourceAddResult(id, relPath, sha256, category);
+    }
+
+    // `wiki source list [--status] [--category]`: enumerate raw/*.md,
+    // parsing each one's SOURCE frontmatter, keeping the ones matching both
+    // filters if given. Read-only - raw/ is immutable and this never writes
+    // anything, matching PageService.List's shape/discipline exactly.
+    public IReadOnlyList<SourceSummary> List(Vault v, SourceStatus? status, string? category)
+    {
+        var result = new List<SourceSummary>();
+        foreach (var (_, front) in EnumerateSources(v))
+        {
+            if (status is not null && front.Status != status.Value) continue;
+            if (category is not null && !string.Equals(front.Category, category, StringComparison.Ordinal)) continue;
+
+            result.Add(new SourceSummary(
+                front.Id,
+                front.Title,
+                front.Category,
+                SourceStatusX.ToWire(front.Status),
+                front.Added,
+                front.Sha256));
+        }
+        // Array (not List<T>) so the runtime type boxed into Envelope.Data
+        // matches WikiJsonContext's [JsonSerializable(typeof(SourceSummary[]))]
+        // registration, same reasoning as PageService.List.
+        return result.ToArray();
+    }
+
+    // `wiki source show <id>`: the source's full frontmatter, plus its raw
+    // body unless --frontmatter-only. Read-only. `not-found` if the id isn't
+    // a registered source - same code PageService.Show uses for an
+    // unresolvable page id/slug, since this is the same kind of "does this
+    // thing exist" lookup, just for the raw/ side of the vault.
+    public SourceView Show(Vault v, string id, bool frontmatterOnly)
+    {
+        var (front, body, _) = ResolveSource(v, id);
+        return new SourceView(
+            front.Id,
+            front.Title,
+            front.Category,
+            SourceStatusX.ToWire(front.Status),
+            front.Added,
+            front.Sha256,
+            front.Origin,
+            frontmatterOnly ? null : body);
+    }
+
+    // `wiki source impact <id>`: the provenance query - every PAGE whose
+    // frontmatter `sources` array cites this source id. Read-only: scans
+    // page frontmatter only (PageStore.Enumerate), never touches raw/ or
+    // writes anything. `not-found` if the id isn't a registered source
+    // (mirrors Show's guard) so a typo'd id fails clearly rather than
+    // silently returning an empty list.
+    public IReadOnlyList<SourceImpactEntry> Impact(Vault v, string id)
+    {
+        var (front, _, _) = ResolveSource(v, id);
+
+        var result = new List<SourceImpactEntry>();
+        foreach (var (slug, pageFront) in PageStore.Enumerate(v))
+        {
+            if (Array.IndexOf(pageFront.Sources, front.Id) < 0)
+                continue;
+
+            result.Add(new SourceImpactEntry(
+                pageFront.Id,
+                slug,
+                pageFront.Title,
+                PageTypeX.ToWire(pageFront.Type),
+                PageStatusX.ToWire(pageFront.Status)));
+        }
+        return result.ToArray();
+    }
+
+    // Resolves a source id via the idmap to its parsed frontmatter + raw
+    // body + full path. Shared by Show and Impact - both need "does this id
+    // resolve to a real raw/ source" as their first guard.
+    private static (SourceFrontmatter Front, string Body, string FullPath) ResolveSource(Vault v, string id)
+    {
+        var idmap = new IdMap();
+        idmap.Load(v);
+
+        var relPath = idmap.PathFor(id);
+        if (relPath is null || !relPath.StartsWith("raw/", StringComparison.Ordinal))
+            throw new ValidationException("not-found", $"no source found for id '{id}'");
+
+        var fullPath = Path.Combine(v.Root, relPath);
+        if (!File.Exists(fullPath))
+            throw new ValidationException("not-found", $"no source found for id '{id}'");
+
+        var (scalars, lists, body) = Frontmatter.ReadBlock(File.ReadAllText(fullPath));
+        var front = SourceFrontmatter.FromRaw(scalars, lists);
+        return (front, body, fullPath);
+    }
+
+    // Scans raw/*.md (TopDirectoryOnly - raw/assets/ is a subdirectory and is
+    // never visited), sorted for deterministic order, same shape as
+    // FindExistingSourceIdBySha / ReindexService.EnumerateRawSources.
+    private static IEnumerable<(string Id, SourceFrontmatter Front)> EnumerateSources(Vault v)
+    {
+        if (!Directory.Exists(v.RawDir))
+            yield break;
+
+        var files = new List<string>(Directory.EnumerateFiles(v.RawDir, "*.md", SearchOption.TopDirectoryOnly));
+        files.Sort(StringComparer.Ordinal);
+
+        foreach (var f in files)
+        {
+            var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(f));
+            var front = SourceFrontmatter.FromRaw(scalars, lists);
+            yield return (front.Id, front);
+        }
     }
 
     // Scans raw/*.md (TopDirectoryOnly - raw/assets/ is a subdirectory and is
