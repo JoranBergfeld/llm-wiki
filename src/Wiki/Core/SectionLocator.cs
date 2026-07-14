@@ -67,17 +67,36 @@ public static class SectionLocator
 
         var target = headingText.Trim();
         var headingLine = -1;
+        var matchCount = 0;
 
+        // Fail CLOSED on ambiguity. AGENTS.md is hand/agent-editable (not a
+        // CLI-only artifact), so it can legitimately end up with two `###
+        // Ingest` headings. Breaking on the first match would let `schema
+        // approve` silently overwrite one of them and return exit 0 - the
+        // exact "wrong section silently mutated" failure this locator exists
+        // to prevent. So scan ALL lines (no early break), count eligible
+        // matches, and throw `ambiguous-section` on 2+. This lives in the
+        // shared locate path so BOTH propose (early reject) and approve
+        // (re-check, since the file may have gained a duplicate since propose)
+        // fail closed.
         for (var i = 0; i < lines.Count; i++)
         {
             var (level, text) = ParseHeading(lines[i]);
             if ((level == 2 || level == 3) && text == target)
             {
-                headingLine = i;
-                headingLevel = level;
-                break;
+                matchCount++;
+                if (headingLine < 0)
+                {
+                    headingLine = i;
+                    headingLevel = level;
+                }
             }
         }
+
+        if (matchCount > 1)
+            throw new ValidationException("ambiguous-section",
+                $"{matchCount} '##'/'###' section headings match '{target}' in AGENTS.md; " +
+                "resolve the duplicate heading before proposing/approving an amendment to it");
 
         if (headingLine < 0)
             return false;

@@ -165,24 +165,79 @@ public class SchemaProposalTests
         // Heading kept verbatim; new body present.
         Assert.Contains("### Session start\n1. Run `wiki ingest status`.\n2. Run `wiki issues list --status open`.\n", after);
 
-        // The old Session-start body is gone...
+        // The old Session-start body is gone.
         Assert.DoesNotContain("finish interrupted work before anything else", after);
 
-        // ...but everything else survives untouched: the h1 preamble, the
-        // whole Conventions section, and every OTHER Playbooks subsection
-        // (proving the replacement stopped at the very next heading and
-        // didn't bleed into siblings).
-        Assert.Contains("## Conventions", after);
-        Assert.Contains("- Page types: summary (one per source), entity (nameable thing), concept", after);
-        Assert.Contains("### Retrieval (answering questions)", after);
-        Assert.Contains("Never scan bodies to discover relevance.", after);
-        Assert.Contains("### Ingest", after);
-        Assert.Contains("### Reflect", after);
-        Assert.Contains("Never edit this file directly.", after);
+        // Byte-exact boundary lock: everything OUTSIDE the replaced section
+        // must be identical byte-for-byte. Compute the prefix (up to and
+        // INCLUDING the target heading line) and the suffix (from the next
+        // equal-or-higher heading - here the sibling `### Retrieval ...` -
+        // onward) from the ORIGINAL file, and assert those exact ranges
+        // survive verbatim. This catches an off-by-one that would eat one
+        // line of an adjacent section, which `Contains`/`DoesNotContain`
+        // alone could miss.
+        var beforeNorm = before.Replace("\r\n", "\n");
+        var prefix = beforeNorm.Substring(0, beforeNorm.IndexOf("### Session start\n", System.StringComparison.Ordinal) + "### Session start\n".Length);
+        var suffix = beforeNorm.Substring(beforeNorm.IndexOf("### Retrieval (answering questions)", System.StringComparison.Ordinal));
+
+        var afterNorm = after.Replace("\r\n", "\n");
+        Assert.StartsWith(prefix, afterNorm);
+        Assert.EndsWith(suffix, afterNorm);
+
+        // And the reconstructed file is EXACTLY prefix + new body + suffix -
+        // no bytes anywhere but inside the section body changed.
+        Assert.Equal(prefix + "1. Run `wiki ingest status`.\n2. Run `wiki issues list --status open`.\n" + suffix, afterNorm);
 
         // And proposals persists the decision across a fresh invocation.
         var show = tv.Run("schema", "proposals", "--status", "approved", "--json");
         Assert.Equal(1, Data(show).GetArrayLength());
+    }
+
+    // -------------------- ambiguous section (fail closed) --------------------
+
+    [Fact]
+    public void Propose_AmbiguousSection_FailsClosed_FileUnchanged()
+    {
+        // AGENTS.md is hand/agent-editable, so it can legitimately grow a
+        // duplicate heading. A duplicate must fail closed (not silently pick
+        // the first), or `approve` would overwrite the wrong section at
+        // exit 0.
+        using var tv = new TempVault(); Init(tv);
+
+        // Scaffold has one `### Ingest`; append a second so "Ingest" is
+        // ambiguous.
+        var path = AgentsPath(tv);
+        File.WriteAllText(path, File.ReadAllText(path) + "\n### Ingest\nA duplicate Ingest section.\n");
+        var before = File.ReadAllText(path);
+
+        var r = Propose(tv, "Ingest", "new ingest body\n");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "ambiguous-section");
+
+        // Nothing landed: file byte-unchanged, no proposal filed.
+        Assert.Equal(before, File.ReadAllText(path));
+        Assert.Equal(0, Data(tv.Run("schema", "proposals", "--json")).GetArrayLength());
+    }
+
+    [Fact]
+    public void Approve_SectionBecameAmbiguous_FailsClosed_FileUnchanged()
+    {
+        // Proposal made when "Ingest" was unique; AGENTS.md then gains a
+        // duplicate before approve. Approve re-checks and fails closed.
+        using var tv = new TempVault(); Init(tv);
+        var id = Data(Propose(tv, "Ingest", "new ingest body\n")).GetProperty("id").GetString()!;
+
+        var path = AgentsPath(tv);
+        File.WriteAllText(path, File.ReadAllText(path) + "\n### Ingest\nA duplicate Ingest section.\n");
+        var before = File.ReadAllText(path);
+
+        var r = tv.Run("schema", "approve", id, "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "ambiguous-section");
+
+        // AGENTS.md untouched; proposal still open (nothing written).
+        Assert.Equal(before, File.ReadAllText(path));
+        Assert.Equal(1, Data(tv.Run("schema", "proposals", "--status", "open", "--json")).GetArrayLength());
     }
 
     [Fact]
