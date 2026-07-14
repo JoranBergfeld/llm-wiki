@@ -22,6 +22,7 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(SourceView))]
 [JsonSerializable(typeof(SourceImpactEntry))]
 [JsonSerializable(typeof(SourceImpactEntry[]))]
+[JsonSerializable(typeof(RetractResult))]
 [JsonSerializable(typeof(LedgerEntryData))]
 [JsonSerializable(typeof(LedgerEntryData[]))]
 [JsonSerializable(typeof(ResumePlanView))]

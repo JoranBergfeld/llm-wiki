@@ -55,6 +55,25 @@ public sealed record SourceImpactEntry(
     string Type,
     string Status);
 
+// `wiki source retract <id>` result (spec §14). ArchivedSummaries is
+// (almost always one, but not schema-enforced) the summary-type page(s)
+// citing this source id, each flipped to `archived`. AffectedPages is every
+// OTHER citing page, flipped to `needs-review` with a `retraction` issue
+// filed per page - that's the punch list `wiki issues list --kind
+// retraction` hands the agent. Purged mirrors the `--purge` flag the caller
+// passed, so a JSON consumer doesn't have to separately re-check.
+public sealed record RetractResult(
+    string Id,
+    string Status,
+    string[] ArchivedSummaries,
+    string[] AffectedPages,
+    bool Purged) : IHumanRenderable
+{
+    public string HumanSummary() =>
+        $"Retracted source {Id}: {ArchivedSummaries.Length} summary page(s) archived, " +
+        $"{AffectedPages.Length} page(s) flagged needs-review" + (Purged ? ", raw content purged" : "");
+}
+
 // Registers an immutable raw source: validates the category, hashes the
 // input file's content for integrity + dedup, writes raw/<id>.md (source
 // frontmatter + the original content as the body - the ONE sanctioned write
@@ -232,6 +251,143 @@ public sealed class SourceService
                 PageStatusX.ToWire(pageFront.Status)));
         }
         return result.ToArray();
+    }
+
+    // `wiki source retract <id> --reason "…" [--purge]` (spec §14). Runs the
+    // retraction cascade in the exact order the spec lists:
+    //
+    //   1. Source frontmatter -> retracted. The closed source schema
+    //      (id/type/title/category/added/sha256/origin/status) has no field
+    //      for reason/timestamp - adding one would be an unapproved
+    //      frontmatter key, which Frontmatter.ValidateKeys would then reject
+    //      on every future read of this exact file. So the reason lives in
+    //      the log line and in each filed issue's detail instead; the
+    //      timestamp is the log line's own `utcIso`.
+    //   2. Every page whose `sources` cites this id AND is itself a
+    //      `summary`-type page -> `archived` via SetStatus. No issue filed
+    //      for these - the archived summary IS the human-readable record of
+    //      what the retracted source said (spec §14's own words: "readable
+    //      in the archived summary").
+    //   3. Every OTHER citing page -> `needs-review` via SetStatus, plus a
+    //      `retraction` issue filed per page (Issues.Upsert, kind=Retraction)
+    //      carrying the reason - the punch list `wiki issues list --kind
+    //      retraction` hands the agent (spec §14's repair loop).
+    //   4. Index regenerated (each SetStatus call above already does this -
+    //      archived pages drop out of index.md, so there is nothing left to
+    //      regenerate beyond what the per-page calls already did) and a
+    //      `retract` log line written.
+    //   5. `--purge`: AFTER 1-4, the raw file's body is replaced with an
+    //      empty body while its (now-retracted) frontmatter is kept intact -
+    //      the file at the SAME path is rewritten via AtomicFile.Write, so
+    //      the id keeps resolving through the idmap and Show/Impact/a repeat
+    //      `retract` guard all keep working. This is the "metadata stub":
+    //      id/type/title/category/added/sha256/origin/status survive,
+    //      the raw content that prompted the compliance request does not.
+    //      Without --purge the raw file (frontmatter + full body) is left
+    //      exactly as step 1 wrote it.
+    //
+    // Already-retracted is rejected outright (own error code, no write) -
+    // spec §14 doesn't say what a second retract on the same id should do,
+    // and silently re-running the cascade would re-archive an
+    // already-archived summary, re-file/bump the same retraction issues a
+    // second time on unrelated pages, and (worse, under --purge) overwrite
+    // an already-purged stub with a no-op write. Rejecting is the safer
+    // default; a caller who really wants a fresh reason recorded can `page
+    // set-status` by hand.
+    public RetractResult Retract(Vault v, string id, string reason, bool purge)
+    {
+        // --- Blocking validation: ALL of it runs before anything below touches disk. ---
+
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ValidationException("reason-required", "--reason is required to retract a source");
+        GuardScalar(reason, "reason");
+
+        var (front, body, fullPath) = ResolveSource(v, id);
+
+        if (front.Status == SourceStatus.Retracted)
+            throw new ValidationException("already-retracted", $"source '{id}' is already retracted");
+
+        // Snapshot every citing page BEFORE any write - same "gather first,
+        // mutate after validation" discipline as every other service here.
+        var citingPages = new List<(string Slug, PageFrontmatter Front)>();
+        foreach (var (slug, pageFront) in PageStore.Enumerate(v))
+        {
+            if (Array.IndexOf(pageFront.Sources, front.Id) >= 0)
+                citingPages.Add((slug, pageFront));
+        }
+
+        var retractedFront = new SourceFrontmatter
+        {
+            Id = front.Id,
+            Title = front.Title,
+            Category = front.Category,
+            Added = front.Added,
+            Sha256 = front.Sha256,
+            Origin = front.Origin,
+            Status = SourceStatus.Retracted,
+        };
+        var serialized = retractedFront.ToBlock() + "\n" + body;
+        // Frontmatter schema gate proper: must round-trip through the same
+        // closed-schema parser real raw/ files are read back with.
+        var (roundTripScalars, roundTripLists, _) = Frontmatter.ReadBlock(serialized);
+        SourceFrontmatter.FromRaw(roundTripScalars, roundTripLists);
+
+        // --- Validation complete. Everything from here on is the write. ---
+
+        var nowMs = _nowUnixMs();
+        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
+            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+
+        // Step 1: source frontmatter -> retracted.
+        AtomicFile.Write(fullPath, serialized);
+
+        // Steps 2 + 3: cascade over every citing page.
+        var pageService = new PageService(_nowUnixMs);
+        var archivedSummaries = new List<string>();
+        var affectedPages = new List<string>();
+
+        var issues = new Issues();
+        issues.Load(v);
+
+        foreach (var (slug, pageFront) in citingPages)
+        {
+            if (pageFront.Type == PageType.Summary)
+            {
+                pageService.SetStatus(v, pageFront.Id, PageStatus.Archived);
+                archivedSummaries.Add(slug);
+            }
+            else
+            {
+                pageService.SetStatus(v, pageFront.Id, PageStatus.NeedsReview);
+                var detail = $"source '{id}' was retracted (reason: {reason}); page cites it and needs repair " +
+                    "(rewrite the body to drop claims resting on it, remove the id from 'sources', upsert)";
+                issues.Upsert(IssueKind.Retraction, slug, detail, utcIso);
+                affectedPages.Add(slug);
+            }
+        }
+        issues.Save(v);
+
+        // Step 4: log line. (Index regeneration already happened inside each
+        // SetStatus call above; there is no page-independent index state left
+        // to regenerate here.)
+        LogFile.Append(v, utcIso, "retract", id,
+            $"reason=\"{reason}\" archived_summaries={archivedSummaries.Count} affected_pages={affectedPages.Count}" +
+            (purge ? " purge=true" : ""));
+
+        // Step 5: --purge - rewrite the raw file at the same path with the
+        // retracted frontmatter but an empty body (the metadata stub).
+        if (purge)
+        {
+            var stub = retractedFront.ToBlock() + "\n";
+            AtomicFile.Write(fullPath, stub);
+        }
+
+        return new RetractResult(
+            front.Id,
+            SourceStatusX.ToWire(SourceStatus.Retracted),
+            archivedSummaries.ToArray(),
+            affectedPages.ToArray(),
+            purge);
     }
 
     // Resolves a source id via the idmap to its parsed frontmatter + raw

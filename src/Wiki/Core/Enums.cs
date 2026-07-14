@@ -112,6 +112,15 @@ public enum IssueKind
     // on the same page's slug - which would overwrite the lint issue's detail
     // and corrupt its occurrence count, the reflect-loop signal.
     ReviewRejected,
+
+    // Workflow kind, NOT a lint check (spec amendment H, spec §14). Filed by
+    // `wiki source retract` once per page that cites the retracted source id
+    // (excluding that source's own summary page, which is archived instead -
+    // see SourceService.Retract). Its own kind for the same collision reason
+    // as ReviewRejected above: Issues.Upsert merges on (kind, subject), so a
+    // retraction on a page that already carries some other open lint finding
+    // for that slug must not overwrite that finding's detail/occurrences.
+    Retraction,
 }
 
 public static class IssueKindX
@@ -128,6 +137,7 @@ public static class IssueKindX
         IssueKind.NeedsReviewBacklog => "needs-review-backlog",
         IssueKind.PendingBacklog => "pending-backlog",
         IssueKind.ReviewRejected => "review-rejected",
+        IssueKind.Retraction => "retraction",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
     };
 
@@ -143,6 +153,7 @@ public static class IssueKindX
         "needs-review-backlog" => IssueKind.NeedsReviewBacklog,
         "pending-backlog" => IssueKind.PendingBacklog,
         "review-rejected" => IssueKind.ReviewRejected,
+        "retraction" => IssueKind.Retraction,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }

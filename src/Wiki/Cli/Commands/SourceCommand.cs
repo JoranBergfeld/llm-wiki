@@ -6,10 +6,10 @@ using Wiki.Services;
 
 namespace Wiki.Cli.Commands;
 
-// `wiki source ...` command group. Task 16 wired up `add`; this task (20)
-// adds the read-only query trio `list`/`show`/`impact` - raw/ is immutable,
-// so none of these three ever write anything. `retract` lands in a later M3
-// task as a further sibling under the same `source` group.
+// `wiki source ...` command group. Task 16 wired up `add`; Task 20 added the
+// read-only query trio `list`/`show`/`impact` - raw/ is immutable, so none
+// of those three ever write anything. Task 24 adds `retract`, the one
+// command in this group that DOES mutate raw/ (spec §14 cascade).
 public static class SourceCommand
 {
     public static Command Build(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
@@ -19,6 +19,7 @@ public static class SourceCommand
         source.Add(BuildList(vaultOption, jsonOption, stdout, stdin));
         source.Add(BuildShow(vaultOption, jsonOption, stdout, stdin));
         source.Add(BuildImpact(vaultOption, jsonOption, stdout, stdin));
+        source.Add(BuildRetract(vaultOption, jsonOption, stdout, stdin));
         return source;
     }
 
@@ -183,6 +184,46 @@ public static class SourceCommand
         }));
 
         return impact;
+    }
+
+    private static Command BuildRetract(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var idArgument = new Argument<string>("id")
+        {
+            Description = "Source id (ULID) to retract",
+        };
+        var reasonOption = new Option<string>("--reason")
+        {
+            Required = true,
+            Description = "Why the source is being retracted (recorded on the log line and every filed retraction issue)",
+        };
+        var purgeOption = new Option<bool>("--purge")
+        {
+            Description = "Also strip the raw file's body content (compliance/deletion case), keeping a metadata stub so the id still resolves",
+        };
+
+        var retract = new Command("retract",
+            "Retract a source: source -> retracted; its summary page -> archived; every other citing page -> needs-review + a filed 'retraction' issue (spec §14)")
+        {
+            idArgument,
+            reasonOption,
+            purgeOption,
+        };
+
+        retract.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var id = parseResult.GetRequiredValue(idArgument);
+            var reason = parseResult.GetRequiredValue(reasonOption);
+            var purge = parseResult.GetValue(purgeOption);
+
+            var vault = ctx.ResolveVault();
+            var service = new SourceService();
+            var result = service.Retract(vault, id, reason, purge);
+            ctx.EmitOk(result);
+            return 0;
+        }));
+
+        return retract;
     }
 
     private static void RenderListTable(TextWriter output, System.Collections.Generic.IReadOnlyList<SourceSummary> sources)
