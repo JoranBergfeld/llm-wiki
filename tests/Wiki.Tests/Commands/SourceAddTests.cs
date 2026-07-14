@@ -63,6 +63,41 @@ public class SourceAddTests
     }
 
     [Fact]
+    public void Add_StoredSha256_IsHashOfInputContent()
+    {
+        using var tv = new TempVault(); Init(tv);
+        // Known content, deliberately including a non-ASCII char so a wrong
+        // encoding (e.g. Latin-1/UTF-16) would produce a different hash than
+        // the UTF-8 one the implementation computes.
+        const string content = "known content é\nsecond line";
+        var src = Path.Combine(tv.Path, "known.md");
+        File.WriteAllText(src, content);
+
+        var r = tv.Run("source", "add", src, "--category", "article", "--title", "Known", "--json");
+        Assert.Equal(0, r.ExitCode);
+
+        // Independent hash: UTF-8 bytes -> SHA-256 -> lowercase hex, matching
+        // SourceService.ComputeSha256Hex exactly (which casing is verified
+        // below via ToLowerInvariant - it produces lowercase hex).
+        var expected = System.Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
+
+        // Result DTO sha256 field.
+        var storedInDto = ((JsonElement)r.Envelope.Data!).GetProperty("sha256").GetString();
+        Assert.Equal(expected, storedInDto);
+
+        // And the sha256 persisted in the raw frontmatter on disk.
+        var raw = File.ReadAllText(Directory.GetFiles(RawDir(tv), "*.md")[0]);
+        var (scalars, lists, _) = Wiki.Core.Frontmatter.ReadBlock(raw);
+        var front = Wiki.Core.SourceFrontmatter.FromRaw(scalars, lists);
+        Assert.Equal(expected, front.Sha256);
+
+        // Lowercase-hex sanity: no uppercase hex digits leaked through.
+        Assert.Equal(front.Sha256.ToLowerInvariant(), front.Sha256);
+    }
+
+    [Fact]
     public void Add_UnknownCategory_Rejected()
     {
         using var tv = new TempVault(); Init(tv);
