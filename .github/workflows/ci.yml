@@ -1,0 +1,116 @@
+name: CI
+
+# Every push to main: run the tests, and if they pass, build the native-AOT
+# distributable for all five targets and publish them to a rolling "latest"
+# prerelease. Native AOT cannot cross-compile across OSes, so each target
+# builds on its own runner.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # release job creates/updates the rolling release + tag
+
+# A newer commit supersedes an in-flight run so the rolling release always
+# reflects the newest green commit (and two runs never race on the tag).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Restore
+        run: dotnet restore LlmWiki.sln
+      - name: Test
+        run: dotnet test tests/Wiki.Tests/Wiki.Tests.csproj -c Release --no-restore
+
+  build:
+    name: Build ${{ matrix.rid }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            os: ubuntu-latest
+          - rid: linux-arm64
+            os: ubuntu-24.04-arm
+          - rid: win-x64
+            os: windows-latest
+          - rid: osx-x64
+            os: macos-13
+          - rid: osx-arm64
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # Native-AOT link prerequisites. Linux needs clang + zlib headers.
+      - name: Linux AOT prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      # macOS AOT links against OpenSSL (crypto) and brotli (compression),
+      # which Homebrew keeps keg-only and off the default linker path.
+      - name: macOS AOT prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew install openssl@3 brotli || true
+          echo "LIBRARY_PATH=$(brew --prefix openssl@3)/lib:$(brew --prefix brotli)/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Publish (native AOT)
+        run: dotnet publish src/Wiki/Wiki.csproj -c Release -r ${{ matrix.rid }} -o publish/${{ matrix.rid }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: tar -czf wiki-${{ matrix.rid }}.tar.gz -C publish/${{ matrix.rid }} wiki
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path publish/${{ matrix.rid }}/wiki.exe -DestinationPath wiki-${{ matrix.rid }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wiki-${{ matrix.rid }}
+          path: wiki-${{ matrix.rid }}.*
+          if-no-files-found: error
+
+  release:
+    name: Rolling release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish rolling 'latest' release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sha_short="${GITHUB_SHA:0:7}"
+          # Recreate the 'latest' tag/release at this commit so it always
+          # points at the newest green main build.
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest dist/* \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Latest main build ($sha_short)" \
+            --notes "Automated native-AOT build from main @ $sha_short (run #${GITHUB_RUN_NUMBER}).
+
+          Binaries: linux-x64, linux-arm64, win-x64, osx-x64, osx-arm64. Unix targets are \`.tar.gz\` (contains \`wiki\`); Windows is \`.zip\` (contains \`wiki.exe\`)."
