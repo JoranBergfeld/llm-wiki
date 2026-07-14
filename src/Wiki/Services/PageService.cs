@@ -31,6 +31,36 @@ public sealed record UpsertResult(
     public string HumanSummary() => $"Upserted [[{Slug}]] ({Status}) -> {Path}";
 }
 
+// `wiki page list` row shape. Deliberately flat/scalar (wire strings for
+// Type/Status, not the enums) - it's a query result meant to be read straight
+// off the wire, same spirit as UpsertResult. SourcesCount stands in for the
+// full Sources array: list is a scanning/routing view, not a detail view -
+// that's what `show` is for.
+public sealed record PageSummary(
+    string Id,
+    string Slug,
+    string Type,
+    string Title,
+    string Status,
+    string Summary,
+    int SourcesCount);
+
+// `wiki page show` result: full frontmatter plus (optionally) the body.
+// Body is null - and so omitted from JSON via WikiJsonContext's
+// WhenWritingNull default - when the caller passed --frontmatter-only.
+public sealed record PageView(
+    string Id,
+    string Slug,
+    string Type,
+    string Title,
+    string Status,
+    string Created,
+    string Updated,
+    string Summary,
+    string[] Sources,
+    string[] Tags,
+    string? Body);
+
 // `wiki page upsert`. This task (12) implements only the create path (no
 // --id); Task 13 slots the update branch into Upsert() alongside it.
 //
@@ -54,6 +84,84 @@ public sealed class PageService
 
     public UpsertResult Upsert(Vault v, VaultConfig cfg, UpsertRequest req)
         => req.Id is null ? Create(v, cfg, req) : Update(v, cfg, req);
+
+    // `wiki page list`: scan every page in the vault (PageStore.Enumerate,
+    // already deterministically sorted) and keep the ones matching both
+    // filters, if given. Purely additive/read-only - no idmap, no disk write.
+    public IReadOnlyList<PageSummary> List(Vault v, PageType? type, PageStatus? status)
+    {
+        var result = new List<PageSummary>();
+        foreach (var (slug, front) in PageStore.Enumerate(v))
+        {
+            if (type is not null && front.Type != type.Value) continue;
+            if (status is not null && front.Status != status.Value) continue;
+
+            result.Add(new PageSummary(
+                front.Id,
+                slug,
+                PageTypeX.ToWire(front.Type),
+                front.Title,
+                PageStatusX.ToWire(front.Status),
+                front.Summary,
+                front.Sources.Length));
+        }
+        // Returned as an array (not List<T>) so the runtime type boxed into
+        // Envelope.Data matches WikiJsonContext's [JsonSerializable(typeof(PageSummary[]))]
+        // registration - source-gen resolves Data's `object` property by the
+        // boxed value's exact runtime type.
+        return result.ToArray();
+    }
+
+    // `wiki page show <id|name>`: resolve `idOrName` as an id (WikiUlid
+    // shape -> idmap lookup) or, failing that, as a slug (PageStore scan for
+    // an exact slug match). Either branch re-parses the resolved file fresh
+    // off disk - read-only, no idmap write, no index/log touch.
+    public PageView Show(Vault v, string idOrName, bool frontmatterOnly)
+    {
+        string fullPath;
+
+        if (WikiUlid.IsValid(idOrName))
+        {
+            var idmap = new IdMap();
+            idmap.Load(v);
+            var relPath = idmap.PathFor(idOrName);
+            // Same "not a page" cases as Upsert --id's unknown-id guard: no
+            // idmap entry, a raw/ source id (valid entry, not a page), or a
+            // stale entry whose file is gone - all collapse to not-found here.
+            if (relPath is null || !relPath.StartsWith("wiki/", StringComparison.Ordinal))
+                throw new ValidationException("not-found", $"no page found for id '{idOrName}'");
+            fullPath = System.IO.Path.Combine(v.Root, relPath);
+            if (!System.IO.File.Exists(fullPath))
+                throw new ValidationException("not-found", $"no page found for id '{idOrName}'");
+        }
+        else
+        {
+            var match = PageStore.Enumerate(v).FirstOrDefault(p => p.Slug == idOrName);
+            if (match.Front is null)
+                throw new ValidationException("not-found", $"no page found for slug '{idOrName}'");
+
+            fullPath = match.Front.Type == PageType.Overview
+                ? System.IO.Path.Combine(v.WikiDir, "overview.md")
+                : System.IO.Path.Combine(v.PageDir(match.Front.Type), match.Slug + ".md");
+        }
+
+        var doc = PageDoc.Parse(System.IO.File.ReadAllText(fullPath));
+        var slug = System.IO.Path.GetFileNameWithoutExtension(fullPath);
+        var front = doc.Front;
+
+        return new PageView(
+            front.Id,
+            slug,
+            PageTypeX.ToWire(front.Type),
+            front.Title,
+            PageStatusX.ToWire(front.Status),
+            front.Created,
+            front.Updated,
+            front.Summary,
+            front.Sources,
+            front.Tags,
+            frontmatterOnly ? null : doc.Body);
+    }
 
     // Full-body update: id/created/title/type/status are preserved from the
     // page already on disk; summary/sources/tags/body come from the request.

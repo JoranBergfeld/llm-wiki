@@ -10,4 +10,7 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(System.Collections.Generic.Dictionary<string, string>))]
 [JsonSerializable(typeof(InitResult))]
 [JsonSerializable(typeof(UpsertResult))]
+[JsonSerializable(typeof(PageSummary))]
+[JsonSerializable(typeof(PageSummary[]))]
+[JsonSerializable(typeof(PageView))]
 public partial class WikiJsonContext : JsonSerializerContext { }
