@@ -468,11 +468,13 @@ public sealed class PageService
             ? System.IO.Path.Combine(v.WikiDir, "overview.md")
             : System.IO.Path.Combine(v.PageDir(front.Type), slug + ".md");
 
-    // Full-body update: id/created/title/type/status are preserved from the
-    // page already on disk; summary/sources/tags/body come from the request.
-    // Slug and file path never change here - renames are Task 20's job, not
-    // this one's. `cfg` is unused today (mirrors Create; the review-gate
-    // wiring in Task 23 will need it for both branches).
+    // Full-body update: id/created/title/type are preserved from the page
+    // already on disk; summary/sources/tags/body come from the request.
+    // Status is preserved too UNLESS the review gate is on, in which case
+    // every update lands back at pending-review regardless of what it was
+    // before (spec §15) - a revision needs re-approval same as a fresh
+    // create. Slug and file path never change here - renames are Task 20's
+    // job, not this one's.
     private UpsertResult Update(Vault v, VaultConfig cfg, UpsertRequest req)
     {
         // --- Blocking validation: ALL of it runs before anything below touches disk. ---
@@ -491,7 +493,8 @@ public sealed class PageService
         if (relPath is null || !relPath.StartsWith("wiki/", StringComparison.Ordinal) || !System.IO.File.Exists(fullPath))
             throw new ValidationException("unknown-id", $"unknown page id '{req.Id}'");
 
-        var existingFront = PageDoc.Parse(System.IO.File.ReadAllText(fullPath)).Front;
+        var existingDoc = PageDoc.Parse(System.IO.File.ReadAllText(fullPath));
+        var existingFront = existingDoc.Front;
 
         // A page's type is fixed at creation; update never migrates it
         // between directories. Silently keeping the stored type while
@@ -556,7 +559,7 @@ public sealed class PageService
             Id = existingFront.Id,
             Type = existingFront.Type,
             Title = existingFront.Title,
-            Status = existingFront.Status,
+            Status = cfg.ReviewGate ? PageStatus.PendingReview : existingFront.Status,
             Created = existingFront.Created,
             Updated = today,
             Summary = req.Summary,
@@ -571,6 +574,17 @@ public sealed class PageService
         PageDoc.Parse(serialized);
 
         // --- Validation complete. Everything from here on is the write. ---
+
+        // Review gate (spec §15): BEFORE the new body overwrites the page on
+        // disk, stash the CURRENT (about-to-be-replaced) body as a shadow
+        // copy under .wiki/review/<id>.prev.md - the one place the CLI keeps
+        // a shadow copy. `review list` diffs against it; `review reject`
+        // restores it. Only written when the gate is on; an update under a
+        // gate-off vault never accrues shadow state.
+        if (cfg.ReviewGate)
+        {
+            ReviewShadow.Save(v, existingFront.Id, existingDoc.Body);
+        }
 
         AtomicFile.Write(fullPath, serialized);
 
@@ -672,7 +686,7 @@ public sealed class PageService
             Id = id,
             Type = req.Type,
             Title = req.Title,
-            Status = PageStatus.Active, // review gate lands in Task 23; every create is `active` for now
+            Status = cfg.ReviewGate ? PageStatus.PendingReview : PageStatus.Active, // spec §15
             Created = today,
             Updated = today,
             Summary = req.Summary,

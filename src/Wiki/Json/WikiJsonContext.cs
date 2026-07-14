@@ -32,5 +32,7 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(IssueData))]
 [JsonSerializable(typeof(IssueData[]))]
 [JsonSerializable(typeof(LintReport))]
+[JsonSerializable(typeof(PendingView))]
+[JsonSerializable(typeof(PendingView[]))]
 [JsonSerializable(typeof(string[]))]
 public partial class WikiJsonContext : JsonSerializerContext { }
