@@ -28,7 +28,7 @@ public static class IssuesCommand
     {
         var kindOption = new Option<string?>("--kind")
         {
-            Description = "Filter to a single issue kind (orphan | dangling-link | stale | coverage-gap | index-drift | oversize | rename-drift | needs-review-backlog | pending-backlog)",
+            Description = "Filter to a single issue kind (orphan | dangling-link | stale | coverage-gap | index-drift | oversize | rename-drift | needs-review-backlog | pending-backlog | review-rejected)",
         };
         var statusOption = new Option<string?>("--status")
         {

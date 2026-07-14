@@ -103,6 +103,15 @@ public enum IssueKind
     RenameDrift,
     NeedsReviewBacklog,
     PendingBacklog,
+
+    // Workflow kind, NOT a lint check (spec amendment H: IssueKind covers
+    // non-lint workflow kinds too - cf. §14's `retraction`, likewise absent
+    // from §11's lint table). Filed by `wiki review reject` (spec §15). It
+    // gets its own kind precisely so Issues.Upsert's (kind, subject) merge
+    // can never collide a rejection with the `pending-backlog` LINT finding
+    // on the same page's slug - which would overwrite the lint issue's detail
+    // and corrupt its occurrence count, the reflect-loop signal.
+    ReviewRejected,
 }
 
 public static class IssueKindX
@@ -118,6 +127,7 @@ public static class IssueKindX
         IssueKind.RenameDrift => "rename-drift",
         IssueKind.NeedsReviewBacklog => "needs-review-backlog",
         IssueKind.PendingBacklog => "pending-backlog",
+        IssueKind.ReviewRejected => "review-rejected",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
     };
 
@@ -132,6 +142,7 @@ public static class IssueKindX
         "rename-drift" => IssueKind.RenameDrift,
         "needs-review-backlog" => IssueKind.NeedsReviewBacklog,
         "pending-backlog" => IssueKind.PendingBacklog,
+        "review-rejected" => IssueKind.ReviewRejected,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }

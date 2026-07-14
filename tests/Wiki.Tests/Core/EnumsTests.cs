@@ -77,6 +77,7 @@ public class EnumsTests
     [InlineData(IssueKind.RenameDrift, "rename-drift")]
     [InlineData(IssueKind.NeedsReviewBacklog, "needs-review-backlog")]
     [InlineData(IssueKind.PendingBacklog, "pending-backlog")]
+    [InlineData(IssueKind.ReviewRejected, "review-rejected")]
     public void IssueKind_AllMembersRoundTrip(IssueKind value, string wire)
     {
         Assert.Equal(wire, IssueKindX.ToWire(value));

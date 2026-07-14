@@ -71,16 +71,23 @@ public sealed class ReviewService
     // already-active or needs-review page.
     public void Approve(Vault v, string pageId)
     {
-        ResolvePending(v, pageId);
+        var (_, _, slug) = ResolvePending(v, pageId);
 
         new PageService(_nowUnixMs).SetStatus(v, pageId, PageStatus.Active);
         ReviewShadow.Clear(v, pageId);
+
+        // SetStatus already appended its own `set-status` log line; add a
+        // distinct `review-approve` line too so grepping the log for review
+        // decisions is symmetric with `review-reject` (Reject's own line).
+        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(_nowUnixMs()).UtcDateTime
+            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        LogFile.Append(v, utcIso, "review-approve", slug, $"id={pageId} status=active");
     }
 
     // pending-review -> active (update: shadow restored) or archived (create:
-    // no shadow, nothing to restore). Either way a `pending-backlog` issue is
-    // filed with the rejection reason - see the class doc below for why that
-    // kind, of the closed nine, is the rejection signal.
+    // no shadow, nothing to restore). Either way a `review-rejected` issue is
+    // filed with the rejection reason - see the Issues.Upsert call below for
+    // why it's its own kind and not `pending-backlog`.
     //
     // The update-restore path can't reuse SetStatus (that only ever touches
     // status/updated, never the body), so it re-implements the same
@@ -130,17 +137,15 @@ public sealed class ReviewService
 
         ReviewShadow.Clear(v, pageId);
 
-        // Issue filed on every reject (task brief): none of the 9 closed
-        // IssueKind values is a dedicated "rejection" kind (spec §15's own
-        // command reference names a `retraction` kind that doesn't exist in
-        // the enum either - out of scope here). Of the nine, `pending-backlog`
-        // is the closest fit: the page WAS in the review-gate's
-        // pending-review lifecycle right up until this call, so a reject is
-        // a review-gate-lifecycle event on that same subject, same as a
-        // pending page aging out. It's an imperfect match (this fires
-        // immediately, not after a 14-day backlog), but it's the only kind of
-        // the nine tied to the pending-review status at all - see the task
-        // report for the alternatives considered and why they fit worse.
+        // Issue filed on every reject (task brief), under the dedicated
+        // `review-rejected` workflow kind (spec amendment H). It MUST be its
+        // own kind, not `pending-backlog`: Issues.Upsert merges on
+        // (kind, subject), and the lint `pending-backlog` check files under
+        // exactly (PendingBacklog, slug) for the same page. Sharing the kind
+        // would let a reject silently merge into - and overwrite the detail
+        // and bump the occurrences of - a real lint issue on the same slug,
+        // corrupting the reflect-loop signal. A distinct kind keeps the two
+        // records separate.
         var issues = new Issues();
         issues.Load(v);
         var detail = isUpdate
@@ -148,7 +153,7 @@ public sealed class ReviewService
             : $"rejected create of '{slug}' (id={pageId}); no prior version to restore, status set to archived";
         if (!string.IsNullOrWhiteSpace(note))
             detail += $"; note: {note}";
-        issues.Upsert(IssueKind.PendingBacklog, slug, detail, utcIso);
+        issues.Upsert(IssueKind.ReviewRejected, slug, detail, utcIso);
         issues.Save(v);
 
         var noteDetail = note is null ? "" : $" note=\"{note}\"";

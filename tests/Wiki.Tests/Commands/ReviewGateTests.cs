@@ -151,6 +151,7 @@ public class ReviewGateTests
         Assert.True(issueData.GetArrayLength() >= 1);
         Assert.Contains(issueData.EnumerateArray(), i =>
             i.GetProperty("subject").GetString() == "fabrikam" &&
+            i.GetProperty("kind").GetString() == "review-rejected" &&
             i.GetProperty("detail").GetString()!.Contains("not accurate"));
     }
 
@@ -175,7 +176,76 @@ public class ReviewGateTests
 
         var issues = tv.Run("issues", "list", "--json");
         var issueData = Data(issues);
-        Assert.Contains(issueData.EnumerateArray(), i => i.GetProperty("subject").GetString() == "initech");
+        Assert.Contains(issueData.EnumerateArray(), i =>
+            i.GetProperty("subject").GetString() == "initech" &&
+            i.GetProperty("kind").GetString() == "review-rejected");
+    }
+
+    // -------------------- reject files review-rejected, never collides with lint --------------------
+
+    [Fact]
+    public void Reject_FilesReviewRejectedKind_NotPendingBacklog()
+    {
+        using var tv = new TempVault(); InitGated(tv);
+        var created = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Contoso", "--summary", "s", "--json");
+        var id = ExtractId(created);
+
+        var reject = tv.Run("review", "reject", id, "--note", "no good", "--json");
+        Assert.Equal(0, reject.ExitCode);
+
+        var rr = tv.Run("issues", "list", "--kind", "review-rejected", "--json");
+        Assert.Equal(0, rr.ExitCode);
+        Assert.Equal(1, Data(rr).GetArrayLength());
+        Assert.Equal("contoso", Data(rr)[0].GetProperty("subject").GetString());
+
+        var pb = tv.Run("issues", "list", "--kind", "pending-backlog", "--json");
+        Assert.Equal(0, Data(pb).GetArrayLength());
+    }
+
+    // The corruption regression: a REAL pending-backlog LINT issue already
+    // exists on the same page's slug when reject fires. reject must file a
+    // SEPARATE review-rejected issue and leave the lint record byte-for-byte
+    // untouched (Issues.Upsert merges on (kind, subject), so a shared kind
+    // would silently overwrite the lint issue's detail and bump its count).
+    [Fact]
+    public void Reject_DoesNotMergeInto_ExistingPendingBacklogLintIssue()
+    {
+        using var tv = new TempVault(); InitGated(tv);
+        var created = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Contoso", "--summary", "s", "--json");
+        var id = ExtractId(created);
+
+        // Simulate the lint pending-backlog finding on this exact slug, filed
+        // directly through the production Issues store (same technique
+        // IssuesCommandTests uses to seed issues.json).
+        var vault = Vault.Resolve(tv.Path, _ => null, tv.Path);
+        var store = new Wiki.State.Issues();
+        store.Load(vault);
+        var lintIssue = store.Upsert(IssueKind.PendingBacklog, "contoso",
+            "page has been 'pending-review' for 20d (based on 'updated'; threshold 14d)",
+            "2024-01-01T00:00:00Z");
+        store.Save(vault);
+        var lintId = lintIssue.Id;
+
+        var reject = tv.Run("review", "reject", id, "--note", "rejected reason", "--json");
+        Assert.Equal(0, reject.ExitCode);
+
+        // The lint issue is untouched: same detail, occurrences still 1, still open.
+        var show = tv.Run("issues", "show", lintId, "--json");
+        Assert.Equal(0, show.ExitCode);
+        var lintNow = Data(show);
+        Assert.Equal("pending-backlog", lintNow.GetProperty("kind").GetString());
+        Assert.Equal(1, lintNow.GetProperty("occurrences").GetInt32());
+        Assert.Equal("open", lintNow.GetProperty("status").GetString());
+        Assert.Contains("20d", lintNow.GetProperty("detail").GetString());
+        Assert.DoesNotContain("rejected reason", lintNow.GetProperty("detail").GetString());
+
+        // A separate review-rejected issue now exists on the same slug.
+        var rr = tv.Run("issues", "list", "--kind", "review-rejected", "--json");
+        Assert.Equal(1, Data(rr).GetArrayLength());
+        Assert.NotEqual(lintId, Data(rr)[0].GetProperty("id").GetString());
+        Assert.Equal("contoso", Data(rr)[0].GetProperty("subject").GetString());
     }
 
     // -------------------- gate OFF: regression --------------------
