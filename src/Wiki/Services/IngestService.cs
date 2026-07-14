@@ -2,11 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Text.Json;
 using Wiki.Cli;
 using Wiki.Core;
 using Wiki.Docs;
-using Wiki.Json;
 using Wiki.State;
 
 namespace Wiki.Services;
@@ -39,15 +37,6 @@ public sealed record ResumePlanView(
 public sealed record IngestAdvanceResult(string SourceId, string State) : IHumanRenderable
 {
     public string HumanSummary() => $"Advanced {SourceId} -> {State}";
-}
-
-// Minimal read-only shape for `.wiki/lint.json`'s `lastRun` field (amendment
-// D). `wiki lint` (Task 22) is the writer and owns the full shape; this is
-// just enough to read the timestamp back for the `linted` precondition
-// below. Deliberately not over-built - Task 22 may extend/relocate this.
-public sealed class LintStateData
-{
-    public string? LastRun { get; set; }
 }
 
 // The ingest state-machine CLI backing service (spec §10): validates every
@@ -231,22 +220,12 @@ public sealed class IngestService
     private static void CheckLintPrecondition(Vault v, LedgerEntry entry)
     {
         var lintPath = Path.Combine(v.StateDir, "lint.json");
-        if (!File.Exists(lintPath))
-            throw new ValidationException("precondition-lint",
-                $"no lint run recorded yet ('{lintPath}' does not exist); run 'wiki lint' first");
 
-        LintStateData? data;
-        try
-        {
-            data = JsonSerializer.Deserialize(File.ReadAllText(lintPath), WikiJsonContext.Default.LintStateData);
-        }
-        catch (JsonException)
-        {
-            data = null;
-        }
+        var lintState = new LintState();
+        lintState.Load(v);
 
-        if (string.IsNullOrEmpty(data?.LastRun) ||
-            !DateTimeOffset.TryParse(data.LastRun, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var lastRun) ||
+        if (string.IsNullOrEmpty(lintState.LastRun) ||
+            !DateTimeOffset.TryParse(lintState.LastRun, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var lastRun) ||
             entry.IntegratedAt is null ||
             !DateTimeOffset.TryParse(entry.IntegratedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var integratedAt) ||
             lastRun <= integratedAt)

@@ -228,7 +228,12 @@ public sealed class PageService
     // trivially correct with no cache-invalidation story to get wrong.
     // SortedSet dedups a page linking to the same target twice and gives a
     // deterministic (ordinal) order for free.
-    private static Dictionary<string, SortedSet<string>> BuildInboundMap(Vault v)
+    //
+    // `internal` (not `private`) so LintService's `orphan` check (Task 22)
+    // reuses this exact inbound-link map instead of re-implementing it - both
+    // types live in this assembly (Wiki.Services), so no InternalsVisibleTo
+    // is needed.
+    internal static Dictionary<string, SortedSet<string>> BuildInboundMap(Vault v)
     {
         var map = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
         foreach (var (slug, _, body) in PageStore.EnumerateWithBody(v))
