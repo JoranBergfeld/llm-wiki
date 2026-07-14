@@ -84,7 +84,36 @@ public class RenameTests
     }
 
     [Fact]
-    public void Rename_ToTakenSlug_Rejected_NothingMoves()
+    public void Rename_SharedPrefixSlug_Untouched_ExactMatchOnly()
+    {
+        // Renaming `contoso` must rewrite `[[contoso]]` but leave
+        // `[[contoso-deal]]` (a different slug that merely shares the prefix)
+        // alone. Wikilinks.Rewrite is exact-match at the unit level; this
+        // locks that behavior in at the rename-command level.
+        using var tv = new TempVault(); Init(tv);
+
+        var contoso = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Contoso", "--summary", "s1", "--json");
+        var contosoId = ExtractId(contoso);
+        // contoso-deal must exist as a real page so X's link to it isn't dangling.
+        tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Contoso Deal", "--summary", "s2", "--json");
+        tv.RunStdin("Refs [[contoso]] and [[contoso-deal]].", "page", "upsert", "--type", "entity",
+            "--title", "Xavier", "--summary", "s3", "--json");
+
+        var r = tv.Run("page", "rename", contosoId, "acme", "--json");
+        Assert.Equal(0, r.ExitCode);
+
+        var xBody = File.ReadAllText(EntityPath(tv, "xavier"));
+        Assert.Contains("[[acme]]", xBody);
+        Assert.Contains("[[contoso-deal]]", xBody);
+        Assert.DoesNotContain("[[contoso]]", xBody);
+        // contoso-deal's own file is untouched by the contoso rename.
+        Assert.True(File.Exists(EntityPath(tv, "contoso-deal")));
+    }
+
+    [Fact]
+    public void Rename_ToTakenSlug_Rejected_NothingMoves_InboundLinksUnrewritten()
     {
         using var tv = new TempVault(); Init(tv);
 
@@ -92,11 +121,20 @@ public class RenameTests
             "--title", "Contoso", "--summary", "s1", "--json");
         var contosoId = ExtractId(contoso);
         tv.RunStdin("Body.", "page", "upsert", "--type", "entity", "--title", "Acme", "--summary", "s2", "--json");
+        // Page C carries a REAL inbound link to the page being renamed. On a
+        // slug-taken rejection the inbound-rewrite loop must never fire, so
+        // C's body must stay byte-identical (still [[contoso]]) - proving the
+        // validation gate runs to completion before any write, and catching
+        // a validation/write reordering regression that non-linking pages
+        // alone couldn't.
+        tv.RunStdin("Cites [[contoso]] heavily.", "page", "upsert", "--type", "entity",
+            "--title", "Charlie", "--summary", "s3", "--json");
 
         var idmapSnapshot = File.ReadAllText(IdMapPath(tv));
         var indexSnapshot = File.ReadAllText(IndexPath(tv));
         var logSnapshot = File.ReadAllText(LogPath(tv));
         var contosoSnapshot = File.ReadAllText(EntityPath(tv, "contoso"));
+        var charlieSnapshot = File.ReadAllText(EntityPath(tv, "charlie"));
 
         var r = tv.Run("page", "rename", contosoId, "acme", "--json");
         Assert.Equal(1, r.ExitCode);
@@ -105,6 +143,9 @@ public class RenameTests
         Assert.True(File.Exists(EntityPath(tv, "contoso")));
         Assert.True(File.Exists(EntityPath(tv, "acme")));
         Assert.Equal(contosoSnapshot, File.ReadAllText(EntityPath(tv, "contoso")));
+        // The whole point of this test: C's inbound link was NOT rewritten.
+        Assert.Equal(charlieSnapshot, File.ReadAllText(EntityPath(tv, "charlie")));
+        Assert.Contains("[[contoso]]", File.ReadAllText(EntityPath(tv, "charlie")));
         Assert.Equal(idmapSnapshot, File.ReadAllText(IdMapPath(tv)));
         Assert.Equal(indexSnapshot, File.ReadAllText(IndexPath(tv)));
         Assert.Equal(logSnapshot, File.ReadAllText(LogPath(tv)));

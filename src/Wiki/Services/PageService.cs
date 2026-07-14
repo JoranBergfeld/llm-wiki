@@ -31,11 +31,13 @@ public sealed record UpsertResult(
     public string HumanSummary() => $"Upserted [[{Slug}]] ({Status}) -> {Path}";
 }
 
-// `wiki page rename` result. LinksRewritten counts the number of OTHER pages
-// whose body contained at least one `[[oldSlug]]`/`[[oldSlug|display]]`
-// wikilink and got rewritten to `[[newSlug...]]` - i.e. the size of the
-// inbound-link set that had to follow the move, the same "who points at
-// this slug" notion `page backlinks` reports.
+// `wiki page rename` result. LinksRewritten counts EVERY page whose body
+// contained at least one `[[oldSlug]]`/`[[oldSlug|display]]` wikilink and got
+// rewritten to `[[newSlug...]]`. The rewrite loop runs over all pages AFTER
+// the move, so this includes the renamed page's own body if it self-linked
+// to its old slug - not just the inbound links from OTHER pages. (A page that
+// links to the same target twice still counts once: the counter is
+// per-page-rewritten, not per-`[[...]]`-occurrence.)
 public sealed record RenameResult(
     string Id,
     string OldSlug,
