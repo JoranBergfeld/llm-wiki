@@ -13,4 +13,5 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(PageSummary))]
 [JsonSerializable(typeof(PageSummary[]))]
 [JsonSerializable(typeof(PageView))]
+[JsonSerializable(typeof(ReindexReport))]
 public partial class WikiJsonContext : JsonSerializerContext { }
