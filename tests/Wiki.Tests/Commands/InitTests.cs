@@ -94,4 +94,31 @@ public class InitTests
         var config = VaultConfig.Load(Path.Combine(tv.Path, "wiki.yaml"));
         Assert.False(config.ReviewGate);
     }
+
+    // Fix 1: our YAML parser has no quote-escaping, so a `"` in --name would
+    // corrupt the scaffolded wiki.yaml and silently mis-parse. Reject it at
+    // the boundary before any filesystem writes happen.
+    [Fact]
+    public void Init_NameWithDoubleQuote_RejectedBeforeAnyWrites()
+    {
+        using var tv = new TempVault();
+        var r = tv.Run("init", tv.Path, "--name", "a\"b", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "invalid-name");
+
+        Assert.False(File.Exists(Path.Combine(tv.Path, "wiki.yaml")));
+    }
+
+    // Fix 2: `--vault` and the positional <path> silently diverging means
+    // init scaffolds one directory while --vault points somewhere else.
+    // Guard it explicitly instead of quietly ignoring --vault.
+    [Fact]
+    public void Init_VaultFlagDivergesFromPath_RejectedAsConflict()
+    {
+        using var tv = new TempVault();
+        using var other = new TempVault();
+        var r = tv.Run("init", tv.Path, "--vault", other.Path, "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "vault-flag-conflict");
+    }
 }

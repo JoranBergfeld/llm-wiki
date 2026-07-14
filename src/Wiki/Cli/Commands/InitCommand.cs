@@ -40,11 +40,23 @@ public static class InitCommand
             var name = parseResult.GetValue(nameOption) ?? DeriveName(path);
             var reviewGate = parseResult.GetValue(reviewGateOption);
 
-            var result = Run(path, name, reviewGate);
+            var result = Run(path, name, reviewGate, ctx.VaultFlag);
             ctx.EmitOk(result);
             return 0;
         }));
         return command;
+    }
+
+    private static bool ContainsDisallowedChar(string name)
+    {
+        foreach (var c in name)
+        {
+            if (c == '"' || c == '\n' || c == '\r' || char.IsControl(c))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static string DeriveName(string path)
@@ -54,8 +66,22 @@ public static class InitCommand
         return string.IsNullOrEmpty(name) ? full : name;
     }
 
-    internal static InitResult Run(string path, string name, bool reviewGate)
+    internal static InitResult Run(string path, string name, bool reviewGate, string? vaultFlag = null)
     {
+        if (vaultFlag is not null && Path.GetFullPath(vaultFlag) != Path.GetFullPath(path))
+        {
+            throw new ValidationException(
+                "vault-flag-conflict",
+                $"'init' creates the vault at the positional <path> ('{path}'); --vault ('{vaultFlag}') must match it or be omitted");
+        }
+
+        if (ContainsDisallowedChar(name))
+        {
+            throw new ValidationException(
+                "invalid-name",
+                "vault name may not contain double quotes or control characters");
+        }
+
         var vault = Vault.Resolve(path, _ => null, Directory.GetCurrentDirectory());
 
         if (File.Exists(vault.ConfigPath))
