@@ -18,4 +18,7 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(SourceAddResult))]
 [JsonSerializable(typeof(LedgerEntryData))]
 [JsonSerializable(typeof(LedgerEntryData[]))]
+[JsonSerializable(typeof(ResumePlanView))]
+[JsonSerializable(typeof(IngestAdvanceResult))]
+[JsonSerializable(typeof(LintStateData))]
 public partial class WikiJsonContext : JsonSerializerContext { }

@@ -99,6 +99,7 @@ public static class App
         root.Add(PageCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(ReindexCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(SourceCommand.Build(vaultOption, jsonOption, stdout, stdin));
+        root.Add(IngestCommand.Build(vaultOption, jsonOption, stdout, stdin));
 
         return root;
     }

@@ -42,10 +42,16 @@ public sealed class Ledger
     // records the timestamp of the most recent `integrated` transition, which
     // is exactly what the `linted` precondition (spec §10) compares against
     // `.wiki/lint.json`.
+    //
+    // Error code reconciliation (Task 17): "unknown-source" - not
+    // "unknown-source-id" - matching PageService's page-sources check
+    // (Create/Update's `unknown-source` when a `--sources` id isn't
+    // registered). Both are the same underlying condition, "a source id that
+    // doesn't exist", so they share one code.
     public void Advance(string sourceId, LedgerState to, string[] touched, string utcIso)
     {
         var existing = Get(sourceId)
-            ?? throw new ValidationException("unknown-source-id", $"no ledger entry for source id '{sourceId}'; register it first with 'wiki source add'");
+            ?? throw new ValidationException("unknown-source", $"no ledger entry for source id '{sourceId}'; register it first with 'wiki source add'");
 
         _byId[sourceId] = new LedgerEntry
         {
