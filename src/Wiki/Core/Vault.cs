@@ -26,6 +26,20 @@ public sealed class Vault
         AgentsPath = System.IO.Path.Combine(root, "AGENTS.md");
     }
 
+    // The one way to turn an absolute path inside this vault into the
+    // forward-slashed, vault-relative form everything on disk stores
+    // (idmap.json keys, `path` fields in the JSON envelope, search hits).
+    //
+    // Centralised (issue #5) because the `.Replace('\\', '/')` that makes it
+    // portable was previously repeated at six call sites: one of them
+    // forgetting it would emit a Windows-only path into a vault that is
+    // explicitly meant to be shared across machines through git, and nothing
+    // would fail loudly - the idmap would just stop resolving on the other OS.
+    // A separator convention is a property of the vault format, so it belongs
+    // on the type that models the vault.
+    public string RelativePath(string fullPath)
+        => System.IO.Path.GetRelativePath(Root, fullPath).Replace('\\', '/');
+
     public string PageDir(PageType t) => t switch
     {
         PageType.Summary => System.IO.Path.Combine(WikiDir, "summaries"),

@@ -63,7 +63,8 @@ public static class SchemaCommand
             var section = parseResult.GetRequiredValue(sectionOption);
             var rationale = parseResult.GetValue(rationaleOption) ?? "";
             var bodyFile = parseResult.GetValue(bodyFileOption);
-            var newText = ResolveBody(ctx, bodyFile);
+            var useStdin = parseResult.GetValue(stdinOption);
+            var newText = BodyInput.Resolve(ctx, bodyFile, useStdin);
 
             var vault = ctx.ResolveVault();
             var service = new SchemaService();
@@ -253,16 +254,5 @@ public static class SchemaCommand
 
         console.Write(table);
         console.MarkupLine($"[grey]{rows.Count} proposal(s)[/]");
-    }
-
-    private static string ResolveBody(CommandContext ctx, string? bodyFile)
-    {
-        if (!string.IsNullOrEmpty(bodyFile))
-        {
-            if (!File.Exists(bodyFile))
-                throw new ValidationException("body-file-not-found", $"--body-file '{bodyFile}' does not exist", bodyFile);
-            return File.ReadAllText(bodyFile);
-        }
-        return ctx.In.ReadToEnd();
     }
 }

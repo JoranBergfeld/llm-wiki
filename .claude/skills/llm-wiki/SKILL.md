@@ -227,7 +227,9 @@ summarized | integrated | linted` · source status `active | retracted`.
 | `state-conflict` (exit 3) | Already done. Move on. |
 | `dangling-link` | Create the targets, or re-run with `--allow-dangling` and own the filed issue. |
 | `duplicate-title` | A page with this title exists. Update it with `--id` instead of creating. |
-| `duplicate-source` | Identical content already registered. Not an error — reuse the existing id. |
+| `duplicate-source` | Identical content already registered. Not an error — reuse the existing id. Line endings do not matter; the hash is newline-insensitive. |
+| `source-not-text` | The file is binary (PDF, image, `.docx`) or not valid UTF-8. Nothing was registered. Convert it to text first — do not retry as-is. |
+| `body-source-conflict` | You passed both `--stdin` and `--body-file`. Pick one. |
 | `summary-required` | Pass `--summary`. It is the routing description the index shows. |
 | `frontmatter-schema` | Unknown key or bad enum value. Correct it against the enums above. |
 | `not-found` / `id-or-name` | Bad id or slug. Re-route via `index show` or `search`. |

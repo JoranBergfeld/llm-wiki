@@ -119,7 +119,12 @@ public sealed class SourceService
         var resolvedOrigin = string.IsNullOrWhiteSpace(origin) ? "manual" : origin;
         Scalar.GuardSingleLineQuotable(resolvedOrigin, "origin", "frontmatter-schema");
 
-        var content = File.ReadAllText(file);
+        // Content gate (issue #4) + newline canonicalisation (issue #5), in
+        // that order and both before anything touches disk. ReadTextFile
+        // rejects binary input outright; the text it returns is already
+        // LF-normalised, so the hash below is newline-insensitive and the
+        // bytes written to raw/ are canonical.
+        var content = ReadTextFile(file);
         var sha256 = ComputeSha256Hex(content);
 
         var existingId = FindExistingSourceIdBySha(v, sha256);
@@ -161,7 +166,7 @@ public sealed class SourceService
         // input, which is how the "no other write path under raw/" rule holds.
         AtomicFile.Write(targetPath, serialized);
 
-        var relPath = Path.GetRelativePath(v.Root, targetPath).Replace('\\', '/');
+        var relPath = v.RelativePath(targetPath);
 
         var idmap = new IdMap();
         idmap.Load(v);
@@ -434,22 +439,111 @@ public sealed class SourceService
 
     // Scans raw/*.md for a source whose sha256 matches - the dedup check on
     // `source add`. Walk order and skip rules live in SourceStore.
+    //
+    // Two comparisons per existing source, because of the newline change
+    // (issue #5). The stored `sha256` is authoritative for anything
+    // registered by a build that already normalises. For a source registered
+    // by an OLDER build the stored hash is of the raw CRLF bytes, so it can
+    // never match a normalised candidate - and dedup would silently miss,
+    // registering the same document twice. Rather than migrate raw/ (it is
+    // immutable content, and rewriting every source's frontmatter to fix a
+    // cache-like field is a much bigger hammer than the problem), the scan
+    // falls back to hashing the stored body the NEW way and comparing that.
+    // Legacy entries therefore dedup correctly without their bytes changing;
+    // the cost is one hash per raw file on `source add`, which is a rare,
+    // already-IO-bound command. See docs/spec.md amendment Q.
     private static string? FindExistingSourceIdBySha(Vault v, string sha256)
     {
-        foreach (var (front, _) in SourceStore.Enumerate(v))
+        foreach (var (front, fullPath) in SourceStore.Enumerate(v))
         {
             if (string.Equals(front.Sha256, sha256, StringComparison.OrdinalIgnoreCase))
+                return front.Id;
+
+            var (_, _, storedBody) = Frontmatter.ReadBlock(File.ReadAllText(fullPath));
+            if (string.Equals(ComputeSha256Hex(NormalizeNewlines(storedBody)), sha256, StringComparison.OrdinalIgnoreCase))
                 return front.Id;
         }
         return null;
     }
 
-    // Hashes the file's text content (read via File.ReadAllText, same as
-    // every other file this codebase touches - it's all string-based, no
-    // byte-level handling elsewhere). Consistency matters more than matching
-    // some external hash here: the CLI is the only writer/reader of this
-    // hash, so as long as every registration hashes the same way, dedup and
-    // integrity both hold.
+    // Reads a registered source's file as TEXT, rejecting anything that is
+    // not (issue #4), and canonicalises its line endings (issue #5).
+    //
+    // Binary rejection is a CONTENT check, never an extension allowlist: an
+    // extension tells you nothing useful, and a `.md` file containing a
+    // pasted PDF blob should still be rejected. Two cheap, boring heuristics:
+    // a NUL byte in the first 8 KB (which correctly catches PDF, ZIP-based
+    // formats like .docx, and images), and a strict UTF-8 decode. Without
+    // this, `File.ReadAllText` happily produced mojibake, hashed it, wrapped
+    // it in source frontmatter and entered it in the ledger as `registered` -
+    // and the agent then wrote a summary page from the garbage. `wiki lint`
+    // cannot see that, because the failure is semantic rather than
+    // structural. The guard matters most for bulk registration
+    // (`wiki source scan`), where one stray PDF in an inbox would otherwise
+    // become a silently-poisoned page.
+    //
+    // Newline normalisation to LF happens here so both the hash and the bytes
+    // written to raw/ are canonical: content-addressed dedup that is sensitive
+    // to invisible whitespace is not really content-addressed. `raw/` is
+    // immutable *content*, not a byte-for-byte forensic copy, and the vault is
+    // already committed to markdown-on-disk portability.
+    private static string ReadTextFile(string file)
+    {
+        byte[] bytes;
+        try
+        {
+            bytes = File.ReadAllBytes(file);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new ValidationException("source-file-not-found", $"cannot read source file '{file}': {ex.Message}", file);
+        }
+
+        var probe = Math.Min(bytes.Length, 8192);
+        for (var i = 0; i < probe; i++)
+        {
+            if (bytes[i] != 0) continue;
+            throw new ValidationException("source-not-text",
+                $"source file '{file}' is not text (NUL byte at offset {i}); convert it to text before registering it", file);
+        }
+
+        // Strip a UTF-8 BOM if present - it is an encoding artefact of the
+        // producer, not content, and leaving it in would put a U+FEFF at the
+        // top of the stored body and into the hash.
+        var start = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+
+        string text;
+        try
+        {
+            text = StrictUtf8.GetString(bytes, start, bytes.Length - start);
+        }
+        catch (DecoderFallbackException)
+        {
+            throw new ValidationException("source-not-text",
+                $"source file '{file}' is not valid UTF-8 text; convert it to UTF-8 before registering it", file);
+        }
+
+        return NormalizeNewlines(text);
+    }
+
+    // Strict: invalid byte sequences throw rather than becoming U+FFFD.
+    // Registration is the one place in the CLI where silently accepting
+    // replacement characters would permanently corrupt immutable content.
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    // CRLF and lone CR both collapse to LF. Lone CR is included deliberately:
+    // the point is a canonical form, and leaving one of the three conventions
+    // out would reopen the same dedup hole for a narrower set of inputs.
+    private static string NormalizeNewlines(string text)
+        => text.Replace("\r\n", "\n").Replace("\r", "\n");
+
+    // Hashes the source's canonical (LF-normalised, UTF-8) text. The CLI is
+    // the only writer/reader of this hash, so what matters is that every
+    // registration hashes the same way - which is exactly what the
+    // normalisation above buys: the same document produces the same sha256
+    // whether it arrived with CRLF from Windows or LF from Linux, so the
+    // `duplicate-source` guard survives git's core.autocrlf, a vault shared
+    // between machines, and any inbox pipeline that rewrites line endings.
     private static string ComputeSha256Hex(string content)
     {
         var bytes = Encoding.UTF8.GetBytes(content);

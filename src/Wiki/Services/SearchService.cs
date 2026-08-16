@@ -105,7 +105,7 @@ public sealed class SearchService
         // in the vault is a complete result, not a truncated one.
         bool ScanFile(string fullPath, SearchKind hitKind, string id, string title)
         {
-            var relPath = Path.GetRelativePath(v.Root, fullPath).Replace('\\', '/');
+            var relPath = v.RelativePath(fullPath);
             var lines = File.ReadAllText(fullPath).Replace("\r\n", "\n").Split('\n');
             scanned++;
 

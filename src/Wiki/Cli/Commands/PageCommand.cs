@@ -96,8 +96,9 @@ public static class PageCommand
             var tags = SplitCsv(parseResult.GetValue(tagsOption));
             var allowDangling = parseResult.GetValue(allowDanglingOption);
             var bodyFile = parseResult.GetValue(bodyFileOption);
+            var useStdin = parseResult.GetValue(stdinOption);
 
-            var body = ResolveBody(ctx, bodyFile);
+            var body = BodyInput.Resolve(ctx, bodyFile, useStdin);
 
             var vault = ctx.ResolveVault();
             var cfg = ctx.LoadConfig();
@@ -377,17 +378,6 @@ public static class PageCommand
 
         foreach (var slug in slugs)
             console.MarkupLine(Markup.Escape($"[[{slug}]]"));
-    }
-
-    private static string ResolveBody(CommandContext ctx, string? bodyFile)
-    {
-        if (!string.IsNullOrEmpty(bodyFile))
-        {
-            if (!File.Exists(bodyFile))
-                throw new ValidationException("body-file-not-found", $"--body-file '{bodyFile}' does not exist", bodyFile);
-            return File.ReadAllText(bodyFile);
-        }
-        return ctx.In.ReadToEnd();
     }
 
     private static string[] SplitCsv(string? raw)

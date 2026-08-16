@@ -138,7 +138,7 @@ public sealed class PageService
         AtomicFile.Write(newPath, doc.Serialize());
         System.IO.File.Delete(fullPath);
 
-        var newRelPath = System.IO.Path.GetRelativePath(v.Root, newPath).Replace('\\', '/');
+        var newRelPath = v.RelativePath(newPath);
         idmap.Put(front.Id, newRelPath);
         idmap.Save(v);
 
@@ -471,7 +471,7 @@ public sealed class PageService
 
         AtomicFile.Write(targetPath, serialized);
 
-        var relPath = System.IO.Path.GetRelativePath(v.Root, targetPath).Replace('\\', '/');
+        var relPath = v.RelativePath(targetPath);
         idmap.Put(id, relPath);
         idmap.Save(v);
 

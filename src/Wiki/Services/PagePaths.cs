@@ -23,5 +23,5 @@ public static class PagePaths
     // Forward-slashed and vault-relative: the form idmap.json stores and the
     // JSON envelope reports, stable across platforms (spec §16).
     public static string Relative(Vault v, string slug, PageFrontmatter front)
-        => Path.GetRelativePath(v.Root, Full(v, slug, front)).Replace('\\', '/');
+        => v.RelativePath(Full(v, slug, front));
 }
