@@ -57,8 +57,4 @@ public sealed class CommandContext
         console.MarkupLine($"[green]OK[/] {Markup.Escape(message)}");
     }
 
-    public void EmitError(string code, string message, string? path = null)
-    {
-        OutputMode.Emit(Out, Envelope.Failure(new WikiError { Code = code, Message = message, Path = path }));
-    }
 }
