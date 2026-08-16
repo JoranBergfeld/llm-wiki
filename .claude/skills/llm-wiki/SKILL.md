@@ -110,6 +110,20 @@ not go looking for files to add.
 per-file outcomes (`registered`, `skipped-duplicate`, `skipped-empty`,
 `rejected` with a `code`). Report the rejections; do not retry them blind.
 
+**Choosing a category needs no new command.** `wiki category list --json` plus
+the source content is enough to pick an existing one — do that first. Only when
+nothing fits, propose one and stop:
+
+```bash
+wiki category propose <id> --description "…" \
+  --rationale "why nothing existing fits" \
+  --sources <the source ids that fit nothing> --json
+```
+
+A human approves or rejects it (`wiki category approve|reject`). You may never
+run `wiki category add`. Cite the source ids — they are the evidence that makes
+the decision reviewable instead of an argument about a name in the abstract.
+
 **Step 1 — read it.** `wiki source show <source-id> --json`.
 
 **Step 2 — summarize.** One summary page per source.
@@ -199,7 +213,8 @@ Do these **never**; surface them and stop:
   what belongs in the vault, and you may not scan a directory nobody named.
 - `wiki review approve` / `reject` — the review gate is theirs.
 - `wiki schema approve` / `reject` — you may *propose*, they dispose.
-- `wiki category add` — categories are schema.
+- `wiki category add` — categories are schema. You may `wiki category
+  propose`; they dispose.
 - `wiki source retract` — destructive and cascading.
 
 Running unattended, collect these into one clear report at the end of the tick
@@ -230,6 +245,8 @@ Every command accepts `--json` and `--vault`.
 | Outstanding repairs | `wiki issues list [--kind <k>] [--status open\|resolved]` |
 | Close a repair | `wiki issues resolve <id> --note "…"` |
 | Rebuild derived state | `wiki reindex` |
+| List categories | `wiki category list` |
+| Propose a new category | `wiki category propose <id> --description "…" --rationale "…" --sources <ids>` |
 | Propose an AGENTS.md change | `wiki schema propose --section "<heading>" --rationale "…" --stdin` |
 
 Enums: page type `summary | entity | concept | overview` · page status `active |
@@ -253,7 +270,9 @@ summarized | integrated | linted` · source status `active | retracted`.
 | `frontmatter-schema` | Unknown key or bad enum value. Correct it against the enums above. |
 | `not-found` / `id-or-name` | Bad id or slug. Re-route via `index show` or `search`. |
 | `overview-exists` | Only one overview page. Update it with `--id`. |
-| `invalid-category-id` | Category is not in `wiki.yaml`. Human-gated — report it. |
+| `invalid-category-id` | Not a kebab-case id. Fix the id. |
+| `unknown-category` | Category is not in `wiki.yaml`. Pick an existing one from `category list`, or `wiki category propose` a new one and stop. |
+| `duplicate-category` | The category already exists. Use it. |
 | `unknown-command` | You invented a command. Check the reference above. |
 | `io-error` (exit 2) | Environment problem. Do not retry; report. |
 
