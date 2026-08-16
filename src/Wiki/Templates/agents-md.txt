@@ -13,17 +13,59 @@ parse the result. On exit code 1, read errors[].code, fix your input, retry once
 - Never cite pages with status pending-review.
 
 ## Playbooks
+
 ### Session start
 1. `wiki ingest status` — finish interrupted work before anything else.
 2. `wiki issues list --status open` — know the outstanding repairs.
 
 ### Retrieval (answering questions)
 1. `wiki index show --json` and/or `wiki search <terms>` to route.
-2. Select at most 10 candidate pages. 3. Read only those bodies.
+2. Select at most 10 candidate pages.
+3. Read only those bodies.
 Never scan bodies to discover relevance.
 
+### Tool selection
+| Intent | Command |
+|---|---|
+| What work is unfinished? | `wiki ingest status` |
+| What do I do next for this source? | `wiki ingest resume <source-id>` |
+| Route to candidate pages | `wiki index show [--type <t>]` |
+| Find a term across the vault | `wiki search <terms> [--kind page\|source] [--regex]` |
+| What links here? | `wiki page backlinks <id\|name>` |
+| Read one page | `wiki page show <id\|name> [--frontmatter-only]` |
+| Read a raw source | `wiki source show <id>` |
+| Which pages cite this source? | `wiki source impact <id>` |
+| Write or replace a page body | `wiki page upsert --type <t> --title "…" [--id <id>] --summary "…" --sources <ids> --stdin` |
+| Record ingest progress | `wiki ingest advance <source-id> --to <state> [--touched <ids>]` |
+| Check vault health | `wiki lint` |
+| See outstanding repairs | `wiki issues list --status open [--kind <k>]` |
+| Close a repair | `wiki issues resolve <issue-id> --note "…"` |
+| Amend these instructions | `wiki schema propose --section "<heading>" --stdin` |
+
+Always pass `--json`. Exit codes: 0 success · 1 your input was rejected — read
+`errors[].code`, correct it, retry once, never retry blind · 2 environment/IO
+problem, do not retry · 3 state conflict, the world is already how you asked,
+treat as a no-op and move on.
+
 ### Ingest
-(§10 sequence of the spec, verbatim.)
+1. The human registers the source:
+   `wiki source add <file> --category <id> --title "…"` → state `registered`.
+2. Read it: `wiki source show <source-id>` (reading is unrestricted; only
+   writing is mediated).
+3. Write the summary page, then record the step:
+   `wiki page upsert --type summary --title "…" --summary "…" --sources <source-id> --stdin`
+   `wiki ingest advance <source-id> --to summarized`
+4. Find the entities/concepts this source affects via `wiki index show` and
+   `wiki search`; upsert each one — new page or edit per the heuristic above —
+   extending `--sources` with the new source id. Then:
+   `wiki ingest advance <source-id> --to integrated --touched <id1,id2,…>`
+5. Update `overview.md` if the source changes the top-level picture, then:
+   `wiki lint`
+   `wiki ingest advance <source-id> --to linted`
+
+Never skip a state: transitions advance one step at a time and each is
+precondition-checked. If you lose the thread mid-ingest, `wiki ingest resume
+<source-id>` reports exactly what remains.
 
 ### Reflect
 If an issue kind recurs across lints, draft the new full text for the relevant
