@@ -266,4 +266,103 @@ public class CategoryTests
         Assert.Equal(90, cfg.StalenessDays);
         Assert.Equal(400, cfg.MaxPageLines);
     }
+
+    // -------------------- amendment N: removing an in-use category is blocking --------------------
+
+    // Registers a source under `meeting-transcript`, then deletes that
+    // category from wiki.yaml by hand - the exact thing §5 has always called
+    // a blocking config error, and which nothing used to detect.
+    private static string RegisterSourceThenDropItsCategory(TempVault tv)
+    {
+        var srcFile = Path.Combine(tv.Path, "s.md");
+        File.WriteAllText(srcFile, "content");
+        var add = tv.Run("source", "add", srcFile, "--category", "meeting-transcript", "--title", "S", "--json");
+        Assert.Equal(0, add.ExitCode);
+        var id = ((JsonElement)add.Envelope.Data!).GetProperty("id").GetString()!;
+
+        var text = File.ReadAllText(ConfigPath(tv));
+        text = text.Replace("  - id: meeting-transcript\n    description: \"Customer meeting transcripts\"\n", "");
+        File.WriteAllText(ConfigPath(tv), text);
+        Assert.DoesNotContain("meeting-transcript", Wiki.Core.VaultConfig.Load(ConfigPath(tv)).Categories.ConvertAll(c => c.Id));
+
+        return id;
+    }
+
+    [Fact]
+    public void RemovingInUseCategory_BlocksConfigReadingCommands()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        RegisterSourceThenDropItsCategory(tv);
+
+        // A mutation command that reads config now fails, naming the problem.
+        var upsert = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Acme", "--summary", "s", "--json");
+        Assert.Equal(1, upsert.ExitCode);
+        var err = Assert.Single(upsert.Envelope.Errors);
+        Assert.Equal("category-in-use", err.Code);
+        Assert.Contains("meeting-transcript", err.Message);
+
+        Assert.Equal(1, tv.Run("lint", "--json").ExitCode);
+    }
+
+    // The carve-out that keeps the rule from being a trap: `wiki category
+    // add` is how you put the category back, so it must not be blocked by
+    // the very condition it repairs.
+    [Fact]
+    public void RemovingInUseCategory_LeavesCategoryCommandUsable_AsTheRepairPath()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        RegisterSourceThenDropItsCategory(tv);
+
+        // list still works, so you can see what you have.
+        Assert.Equal(0, tv.Run("category", "list", "--json").ExitCode);
+
+        // and add is the documented repair.
+        var repair = tv.Run("category", "add", "meeting-transcript", "--description", "Customer meeting transcripts", "--json");
+        Assert.Equal(0, repair.ExitCode);
+
+        // Once repaired, the previously-blocked command works again.
+        var upsert = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Acme", "--summary", "s", "--json");
+        Assert.Equal(0, upsert.ExitCode);
+    }
+
+    [Fact]
+    public void RetractedSourcesStillCount_ACategoryTheyReferenceCannotBeDropped()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        var id = RegisterSourceThenDropItsCategory(tv);
+
+        // Put it back so we can retract through the normal path.
+        Assert.Equal(0, tv.Run("category", "add", "meeting-transcript", "--description", "d", "--json").ExitCode);
+        Assert.Equal(0, tv.Run("source", "retract", id, "--reason", "r", "--json").ExitCode);
+
+        // A retracted source's raw file is still on disk carrying the
+        // category, so the reference is still real.
+        var text = File.ReadAllText(ConfigPath(tv));
+        File.WriteAllText(ConfigPath(tv), text.Replace("  - id: meeting-transcript\n    description: \"d\"\n", ""));
+
+        var lint = tv.Run("lint", "--json");
+        Assert.Equal(1, lint.ExitCode);
+        Assert.Contains(lint.Envelope.Errors, e => e.Code == "category-in-use");
+    }
+
+    // No sources at all: dropping an unused category is perfectly legal.
+    [Fact]
+    public void RemovingUnusedCategory_IsAllowed()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+
+        var text = File.ReadAllText(ConfigPath(tv));
+        File.WriteAllText(ConfigPath(tv),
+            text.Replace("  - id: meeting-transcript\n    description: \"Customer meeting transcripts\"\n", ""));
+
+        var upsert = tv.RunStdin("Body.", "page", "upsert", "--type", "entity",
+            "--title", "Acme", "--summary", "s", "--json");
+        Assert.Equal(0, upsert.ExitCode);
+    }
 }

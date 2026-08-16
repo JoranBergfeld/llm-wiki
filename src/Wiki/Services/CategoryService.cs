@@ -59,6 +59,62 @@ public sealed class CategoryService
         return new CategoryAddResult(id, description);
     }
 
+    // Spec §5 / amendment N: "removing a category that sources still
+    // reference is a blocking config error". Enforced here rather than inside
+    // VaultConfig.Load, which parses a file path and has no vault to scan.
+    //
+    // Called from CommandContext.LoadConfig, so it gates every command that
+    // reads config - which is the mutation surface (`page upsert`,
+    // `source add`, `lint`, `ingest advance`) plus `category`. The `category`
+    // command deliberately bypasses it: `wiki category add <dropped-id>` is
+    // the repair, and a check that blocks its own fix is a trap.
+    //
+    // Retracted sources count. Their raw/ file is still on disk carrying the
+    // category (retraction flips `status`, it does not delete the record), so
+    // the reference is real and the category is still load-bearing.
+    //
+    // Cost is one frontmatter scan of raw/*.md per config-reading invocation -
+    // the same scan `source list` already does on every call.
+    public static void EnsureCategoriesCoverSources(Vault v, VaultConfig cfg)
+    {
+        // Which sources reference each missing category - collected rather
+        // than short-circuited so the error can name them. A human who
+        // deleted a category needs to know what they broke, not just that
+        // they broke something.
+        var missing = new SortedDictionary<string, List<string>>(System.StringComparer.Ordinal);
+
+        // Tolerant read: this runs on every config-reading command, so an
+        // unparseable stray file under raw/ must not brick the CLI with a
+        // frontmatter error unrelated to what the caller asked for. Strict
+        // readers (dedup, reindex) still surface those loudly.
+        foreach (var (front, _) in SourceStore.Enumerate(v, skipUnparseable: true))
+        {
+            if (cfg.HasCategory(front.Category))
+                continue;
+
+            if (!missing.TryGetValue(front.Category, out var ids))
+            {
+                ids = new List<string>();
+                missing[front.Category] = ids;
+            }
+            ids.Add(front.Id);
+        }
+
+        if (missing.Count == 0)
+            return;
+
+        var parts = new List<string>();
+        foreach (var (category, ids) in missing)
+            parts.Add($"'{category}' (referenced by {ids.Count} source(s): {string.Join(", ", ids)})");
+
+        var first = System.Linq.Enumerable.First(missing.Keys);
+        throw new ValidationException("category-in-use",
+            $"wiki.yaml is missing {parts.Count} category/categories that registered sources still reference: " +
+            $"{string.Join("; ", parts)}. Restore it with " +
+            $"'wiki category add {first} --description \"...\"', or retract and purge the sources that use it.",
+            v.ConfigPath);
+    }
+
     public IReadOnlyList<CategoryData> List(VaultConfig cfg)
     {
         var result = new List<CategoryData>();

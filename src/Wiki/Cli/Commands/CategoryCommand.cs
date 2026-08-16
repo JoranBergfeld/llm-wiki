@@ -47,7 +47,7 @@ public static class CategoryCommand
             var description = parseResult.GetRequiredValue(descriptionOption);
 
             var vault = ctx.ResolveVault();
-            var cfg = ctx.LoadConfig();
+            var cfg = ctx.LoadConfigWithoutCategoryCrossCheck();
 
             var service = new CategoryService();
             var result = service.Add(vault, cfg, id, description);
@@ -64,7 +64,7 @@ public static class CategoryCommand
 
         list.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
         {
-            var cfg = ctx.LoadConfig();
+            var cfg = ctx.LoadConfigWithoutCategoryCrossCheck();
             var service = new CategoryService();
             var results = service.List(cfg);
 

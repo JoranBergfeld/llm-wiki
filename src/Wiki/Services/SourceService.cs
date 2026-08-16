@@ -189,7 +189,7 @@ public sealed class SourceService
     public IReadOnlyList<SourceSummary> List(Vault v, SourceStatus? status, string? category)
     {
         var result = new List<SourceSummary>();
-        foreach (var (_, front) in EnumerateSources(v))
+        foreach (var (front, _) in SourceStore.Enumerate(v))
         {
             if (status is not null && front.Status != status.Value) continue;
             if (category is not null && !string.Equals(front.Category, category, StringComparison.Ordinal)) continue;
@@ -433,43 +433,14 @@ public sealed class SourceService
         return (front, body, fullPath);
     }
 
-    // Scans raw/*.md (TopDirectoryOnly - raw/assets/ is a subdirectory and is
-    // never visited), sorted for deterministic order, same shape as
-    // FindExistingSourceIdBySha / ReindexService.EnumerateRawSources.
-    private static IEnumerable<(string Id, SourceFrontmatter Front)> EnumerateSources(Vault v)
-    {
-        if (!Directory.Exists(v.RawDir))
-            yield break;
-
-        var files = new List<string>(Directory.EnumerateFiles(v.RawDir, "*.md", SearchOption.TopDirectoryOnly));
-        files.Sort(StringComparer.Ordinal);
-
-        foreach (var f in files)
-        {
-            var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(f));
-            var front = SourceFrontmatter.FromRaw(scalars, lists);
-            yield return (front.Id, front);
-        }
-    }
-
-    // Scans raw/*.md (TopDirectoryOnly - raw/assets/ is a subdirectory and is
-    // never visited) looking for a source frontmatter whose sha256 matches.
-    // Sorted for deterministic scan order, matching ReindexService's
-    // EnumerateRawSources / PageStore's directory sorts.
+    // Scans raw/*.md for a source whose sha256 matches - the dedup check on
+    // `source add`. Walk order and skip rules live in SourceStore.
     private static string? FindExistingSourceIdBySha(Vault v, string sha256)
     {
-        if (!Directory.Exists(v.RawDir))
-            return null;
-
-        var files = new List<string>(Directory.EnumerateFiles(v.RawDir, "*.md", SearchOption.TopDirectoryOnly));
-        files.Sort(StringComparer.Ordinal);
-
-        foreach (var f in files)
+        foreach (var (front, _) in SourceStore.Enumerate(v))
         {
-            var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(f));
-            var existingFront = SourceFrontmatter.FromRaw(scalars, lists);
-            if (string.Equals(existingFront.Sha256, sha256, StringComparison.OrdinalIgnoreCase))
-                return existingFront.Id;
+            if (string.Equals(front.Sha256, sha256, StringComparison.OrdinalIgnoreCase))
+                return front.Id;
         }
         return null;
     }
