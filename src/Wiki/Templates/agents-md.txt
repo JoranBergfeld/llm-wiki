@@ -36,6 +36,8 @@ Never scan bodies to discover relevance.
 | Read a raw source | `wiki source show <id>` |
 | Which pages cite this source? | `wiki source impact <id>` |
 | Register a configured inbox | `wiki source scan <dir> --category <id> [--dry-run]` |
+| List categories | `wiki category list` |
+| Propose a new category | `wiki category propose <id> --description "…" --rationale "…" --sources <ids>` |
 | Write or replace a page body | `wiki page upsert --type <t> --title "…" [--id <id>] --summary "…" --sources <ids> --stdin` |
 | Record ingest progress | `wiki ingest advance <source-id> --to <state> [--touched <ids>]` |
 | Check vault health | `wiki lint` |
@@ -58,6 +60,11 @@ treat as a no-op and move on.
      already registered. Idempotent (content is hash-deduped), so re-running is
      free. Only ever scan a directory the human has named as an inbox; never go
      looking for files to add.
+
+   Choosing a category needs no new command: read `wiki category list --json`
+   and pick the one that fits. Only when nothing fits, propose one —
+   `wiki category propose <id> --description "…" --rationale "…" --sources <the
+   source ids that fit nothing>` — and stop; a human approves or rejects it.
 2. Read it: `wiki source show <source-id>` (reading is unrestricted; only
    writing is mediated).
 3. Write the summary page, then record the step:
