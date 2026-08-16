@@ -135,6 +135,19 @@ public enum IssueKind
     // current bytes and has no access to the body a write replaced. Only the
     // upsert holds both versions, so only the upsert can see the loss.
     ContentLoss,
+
+    // Workflow kind, NOT a lint check (spec amendment H's carve-out, spec
+    // amendment X). Filed by `wiki audit record --verdict unsupported`
+    // (issue #12): an adversarial re-read found a claim on a page that no
+    // cited source supports. Its own kind for the usual collision reason, and
+    // because it is the one finding in the system produced by SEMANTIC
+    // judgement rather than by counting bytes - conflating it with a
+    // structural finding on the same slug would corrupt both.
+    //
+    // A verdict is a finding for a human to weigh, not a fact: false
+    // positives are expected, nothing gates on it, and it is resolvable with
+    // a note like any other kind.
+    UnsupportedClaim,
 }
 
 public static class IssueKindX
@@ -153,6 +166,7 @@ public static class IssueKindX
         IssueKind.ReviewRejected => "review-rejected",
         IssueKind.Retraction => "retraction",
         IssueKind.ContentLoss => "content-loss",
+        IssueKind.UnsupportedClaim => "unsupported-claim",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
     };
 
@@ -170,6 +184,7 @@ public static class IssueKindX
         "review-rejected" => IssueKind.ReviewRejected,
         "retraction" => IssueKind.Retraction,
         "content-loss" => IssueKind.ContentLoss,
+        "unsupported-claim" => IssueKind.UnsupportedClaim,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }

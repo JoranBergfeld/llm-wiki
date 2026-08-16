@@ -72,11 +72,13 @@ work, do that one unit, then stop.
    `occurrences` count and fix it (see Issue kinds).
 4. **Detect.** No open issues? `wiki lint --json` to file fresh findings. If
    `filed` or `refreshed` is non-zero, the next tick handles them.
-5. **Reflect.** A clean lint, but an issue kind keeps recurring across ticks?
+5. **Audit.** Clean lint and nothing to detect? Run one faithfulness audit —
+   see the Audit playbook. One page, then stop.
+6. **Reflect.** A clean lint, but an issue kind keeps recurring across ticks?
    Draft an amendment: `wiki schema propose --section "<exact heading>"
    --rationale "<cite issue ids>" --stdin`. A human approves it. Never edit
    `AGENTS.md` directly.
-6. **Nothing to do.** Say so plainly and stop. Do not invent work — a quiet
+7. **Nothing to do.** Say so plainly and stop. Do not invent work — a quiet
    vault is a healthy one.
 
 **Why one unit per tick:** each tick stays bounded and context-sized, and a
@@ -180,6 +182,36 @@ that do not exist yet are rejected with `dangling-link`. Two ways forward:
   `dangling-link` issue listing the targets in `data.danglingFiled`. **You now
   owe those pages.** Create them, then close the issue.
 
+## Audit playbook
+
+Checking that a page's claims are actually supported by the sources it cites.
+The CLI selects and records; **you are the judge**.
+
+1. `wiki audit next --json`. `hasTarget: false` means there is nothing to
+   audit — stop. Otherwise you get the page body, and the **ids** of the
+   sources it cites (not their text).
+2. Read each cited source with `wiki source show <id> --json`.
+3. Judge **adversarially and cold**. Try to *refute* the page, not confirm it.
+   Do not reason from what you remember writing — you will agree with yourself.
+   Ask: which sentence on this page asserts something no cited source says?
+   Does every listed source actually contribute anything? Does the page carry a
+   thesis, or does it only restate its own wikilinks?
+4. Record exactly one verdict:
+
+```bash
+wiki audit record <page-id> --verdict supported --json
+wiki audit record <page-id> --verdict unsupported --note "asserts a Q3 launch date; neither cited source mentions a date" --json
+```
+
+`--note` is required for `unsupported`: name the claim and the source that
+fails to support it. A vague note is a finding nobody can act on.
+
+**One page per tick.** This is the most expensive thing you do — it is a full
+re-read of a page and all its sources. Never sweep the vault.
+
+**Your verdict is a finding, not a fact.** It gates nothing. A human weighs it,
+and `unsupported-claim` is resolvable with a note like any other issue kind.
+
 ## Retrieval playbook
 
 Answering a question from the vault:
@@ -214,6 +246,7 @@ them. After fixing one, close it yourself:
 | `review-rejected` | Read the rejection, rewrite the page, resubmit. |
 | `retraction` | A cited source was retracted: revise each citing page to drop it. |
 | `content-loss` | An update dropped a large share of a page's links/sources. Restore what should not have gone, or resolve with a note if the removal was deliberate. |
+| `unsupported-claim` | An audit found a claim no cited source supports. Revise the page, or resolve with a note explaining why it stands. |
 
 ## What needs a human
 
@@ -254,6 +287,9 @@ Every command accepts `--json` and `--vault`.
 | Who cites this source? | `wiki source impact <id>` |
 | Check vault health | `wiki lint [--fix-links]` |
 | Score retrieval quality | `wiki eval [--k N] [--fail-under N]` (needs a human-owned `eval.yaml`) |
+| Pick a page to audit | `wiki audit next` |
+| Record an audit verdict | `wiki audit record <page-id> --verdict supported\|unsupported --note "…"` |
+| Past audit verdicts | `wiki audit list [--verdict <v>]` |
 | Outstanding repairs | `wiki issues list [--kind <k>] [--status open\|resolved]` |
 | Close a repair | `wiki issues resolve <id> --note "…"` |
 | Rebuild derived state | `wiki reindex` |
