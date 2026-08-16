@@ -14,6 +14,12 @@ public sealed class Vault
     public string LogPath { get; }
     public string AgentsPath { get; }
 
+    // The human-owned golden-question file (issue #11 part A). Sits next to
+    // wiki.yaml at the vault root, and is optional - `wiki eval` is the only
+    // thing that reads it, and its absence is that command's problem, not
+    // every command's.
+    public string EvalPath { get; }
+
     private Vault(string root)
     {
         Root = root;
@@ -24,6 +30,7 @@ public sealed class Vault
         IndexPath = System.IO.Path.Combine(WikiDir, "index.md");
         LogPath = System.IO.Path.Combine(WikiDir, "log.md");
         AgentsPath = System.IO.Path.Combine(root, "AGENTS.md");
+        EvalPath = System.IO.Path.Combine(root, "eval.yaml");
     }
 
     // The one way to turn an absolute path inside this vault into the

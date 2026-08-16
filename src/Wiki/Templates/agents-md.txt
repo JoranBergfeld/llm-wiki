@@ -11,6 +11,9 @@ parse the result. On exit code 1, read errors[].code, fix your input, retry once
 - First mention of any entity in a body must be a [[wikilink]].
 - Keep pages under 400 lines; propose splits via lint issues.
 - Never cite pages with status pending-review.
+- A `page upsert --id` replaces the whole body. Read `data.contentLoss` on the
+  result: it reports the wikilinks and source ids the update dropped. Restore
+  anything you did not mean to drop.
 
 ## Playbooks
 
@@ -41,6 +44,7 @@ Never scan bodies to discover relevance.
 | Write or replace a page body | `wiki page upsert --type <t> --title "…" [--id <id>] --summary "…" --sources <ids> --stdin` |
 | Record ingest progress | `wiki ingest advance <source-id> --to <state> [--touched <ids>]` |
 | Check vault health | `wiki lint` |
+| Score retrieval quality | `wiki eval [--k N]` (needs a human-owned eval.yaml) |
 | See outstanding repairs | `wiki issues list --status open [--kind <k>]` |
 | Close a repair | `wiki issues resolve <issue-id> --note "…"` |
 | Amend these instructions | `wiki schema propose --section "<heading>" --stdin` |

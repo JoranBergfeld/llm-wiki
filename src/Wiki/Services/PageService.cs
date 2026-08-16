@@ -21,14 +21,49 @@ public sealed record UpsertRequest(
     string Body,
     bool AllowDangling);
 
+// What a full-body replacement REMOVED (issue #11 part C). Null on create -
+// there is no previous body to lose anything from.
+//
+// The measure is deliberately structural rather than textual: which wikilink
+// targets and which cited source ids the page carried before and no longer
+// carries. A naive line diff scores every legitimate rewrite as near-total
+// deletion, which would make the signal useless; counting references maps
+// directly onto "this page used to connect to X and no longer does", is
+// cheap, and is exactly the kind of dumb structural proxy the existing lint
+// checks already trade in (amendment F).
+//
+// It does NOT claim to catch a fact stated in prose that quietly evaporates
+// with no link attached. Nothing deterministic can. What it catches is the
+// version of that failure that leaves a footprint, which is most of the ones
+// that matter in a graph the agent navigates by link.
+//
+// OldLines/NewLines are reported alongside as raw context - not thresholded,
+// just shown, because "this page went from 300 lines to 40" is worth an
+// agent's attention even when every link survived.
+public sealed record ContentLossReport(
+    string[] RemovedLinks,
+    string[] RemovedSources,
+    int OldReferences,
+    int OldLines,
+    int NewLines,
+    int LossPercent,
+    bool IssueFiled);
+
 public sealed record UpsertResult(
     string Id,
     string Slug,
     string Path,
     string Status,
-    string[] DanglingFiled) : IHumanRenderable
+    string[] DanglingFiled,
+    ContentLossReport? ContentLoss = null) : IHumanRenderable
 {
-    public string HumanSummary() => $"Upserted [[{Slug}]] ({Status}) -> {Path}";
+    public string HumanSummary()
+    {
+        var msg = $"Upserted [[{Slug}]] ({Status}) -> {Path}";
+        if (ContentLoss is { LossPercent: > 0 } loss)
+            msg += $"; dropped {loss.RemovedLinks.Length} link(s) and {loss.RemovedSources.Length} source(s) ({loss.LossPercent}% of references)";
+        return msg;
+    }
 }
 
 // `wiki page rename` result. LinksRewritten counts EVERY page whose body
@@ -365,8 +400,83 @@ public sealed class PageService
         LogFile.Append(v, utcIso, "upsert", slug, $"update id={existingFront.Id} type={PageTypeX.ToWire(existingFront.Type)}");
 
         var filedDangling = FileDanglingIssues(v, slug, danglingTargets, req.AllowDangling, utcIso);
-        return new UpsertResult(existingFront.Id, slug, relPath, PageStatusX.ToWire(front.Status), filedDangling);
+
+        // Content-loss accounting runs AFTER the write, like the dangling
+        // filing above: it is a consequence of a completed replacement, never
+        // a precondition for it. A large deletion is a signal, not an error -
+        // splitting an oversize page is a legitimate reason for one - so it
+        // must never block the write.
+        var contentLoss = ReportContentLoss(
+            v, cfg, slug, existingDoc.Body, req.Body, existingFront.Sources, req.Sources, utcIso);
+
+        return new UpsertResult(existingFront.Id, slug, relPath, PageStatusX.ToWire(front.Status), filedDangling, contentLoss);
     }
+
+    // Issue #11 part C: `page upsert --id` already holds the old body and the
+    // new one, so it is the only place in the system that can see generation
+    // loss at all. `wiki lint` cannot - it is a pure function of the vault's
+    // CURRENT bytes and the replaced body is gone by the time it runs.
+    //
+    // Why this matters: every re-integration is a full rewrite by a model
+    // holding the old body plus one new source, so a fact from the first
+    // source can evaporate on the pass that integrates the seventh. In a
+    // retrieval-first vault that surfaces as a FALSE NEGATIVE - the right page
+    // is returned and the fact you needed is silently gone - and "the vault
+    // never knew that" is indistinguishable from "the vault forgot it on
+    // Tuesday" at the point of use.
+    //
+    // The report goes in the envelope so the agent sees it in the same tick
+    // that caused it and can self-correct immediately; that feedback loop is
+    // most of the value. An issue is filed only above the configured
+    // threshold, for the human to weigh later.
+    private static ContentLossReport ReportContentLoss(
+        Vault v, VaultConfig cfg, string slug,
+        string oldBody, string newBody, string[] oldSources, string[] newSources, string utcIso)
+    {
+        var oldLinks = DistinctTargets(oldBody);
+        var newLinks = DistinctTargets(newBody);
+        var removedLinks = oldLinks.Where(t => !newLinks.Contains(t)).OrderBy(t => t, StringComparer.Ordinal).ToArray();
+
+        var newSourceSet = new HashSet<string>(newSources, StringComparer.Ordinal);
+        var removedSources = oldSources
+            .Where(s => !newSourceSet.Contains(s))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(s => s, StringComparer.Ordinal)
+            .ToArray();
+
+        var oldReferences = oldLinks.Count + new HashSet<string>(oldSources, StringComparer.Ordinal).Count;
+        var removed = removedLinks.Length + removedSources.Length;
+
+        // A page that had no references to begin with cannot lose any. 0%
+        // rather than a division by zero, and no issue either way.
+        var lossPercent = oldReferences == 0 ? 0 : (int)Math.Round(removed * 100.0 / oldReferences);
+
+        var oldLines = oldBody.Split('\n').Length;
+        var newLines = newBody.Split('\n').Length;
+
+        var fileIssue = removed > 0 && lossPercent >= cfg.ContentLossPercent;
+        if (fileIssue)
+        {
+            var parts = new List<string>();
+            if (removedLinks.Length > 0) parts.Add($"wikilink(s) {string.Join(", ", removedLinks)}");
+            if (removedSources.Length > 0) parts.Add($"source id(s) {string.Join(", ", removedSources)}");
+
+            var issues = new Issues();
+            issues.Load(v);
+            issues.Upsert(IssueKind.ContentLoss, slug,
+                $"a full-body update dropped {lossPercent}% of this page's references " +
+                $"({removed} of {oldReferences}): {string.Join("; ", parts)}. " +
+                $"Body went from {oldLines} to {newLines} line(s). " +
+                "If the removal was deliberate (a split, a retraction repair), resolve this with a note.",
+                utcIso);
+            issues.Save(v);
+        }
+
+        return new ContentLossReport(removedLinks, removedSources, oldReferences, oldLines, newLines, lossPercent, fileIssue);
+    }
+
+    private static HashSet<string> DistinctTargets(string body)
+        => new(Wikilinks.Extract(body).Select(l => l.Target), StringComparer.Ordinal);
 
     private UpsertResult Create(Vault v, VaultConfig cfg, UpsertRequest req)
     {

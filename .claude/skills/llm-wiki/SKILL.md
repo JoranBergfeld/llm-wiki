@@ -50,6 +50,7 @@ code, then on `errors[].code`:
 | 1 | Your input was rejected | Read `errors[].code`, correct it, retry **once**. Never retry blind. |
 | 2 | Environment/IO problem | Do not retry. Report to the human and stop. |
 | 3 | State conflict | The world is already how you asked. Treat as a no-op and move on — this is not an error. |
+| 4 | A measurement came in under a threshold you asked for | Only `wiki eval --fail-under`. The report is still in `data`. Not an error; read the score. |
 
 ## The Tick
 
@@ -160,6 +161,15 @@ wiki ingest advance <source-id> --to linted --json
 with `wiki page show <id> --json` first and send back the complete new text.
 Sending only your addition silently destroys the rest of the page.
 
+Every update reports what it **removed** in `data.contentLoss`:
+`removedLinks`, `removedSources`, `lossPercent`, and the old/new line counts.
+Read it in the same tick that produced it. If you dropped a link or a source
+you did not mean to drop, upsert again with the complete text — that is far
+cheaper than the alternative, which is a fact silently disappearing from a page
+that still looks fine. Above the vault's threshold the CLI files a
+`content-loss` issue (`issueFiled: true`). If the removal was deliberate — a
+split, a retraction repair — resolve that issue with a note saying so.
+
 ### Wikilinks
 
 First mention of any entity in a body must be a `[[wikilink]]`. Links to pages
@@ -203,6 +213,7 @@ them. After fixing one, close it yourself:
 | `needs-review-backlog`, `pending-backlog` | Human-gated — report, don't act. |
 | `review-rejected` | Read the rejection, rewrite the page, resubmit. |
 | `retraction` | A cited source was retracted: revise each citing page to drop it. |
+| `content-loss` | An update dropped a large share of a page's links/sources. Restore what should not have gone, or resolve with a note if the removal was deliberate. |
 
 ## What needs a human
 
@@ -242,6 +253,7 @@ Every command accepts `--json` and `--vault`.
 | Register a configured inbox | `wiki source scan <dir> --category <id> [--dry-run]` |
 | Who cites this source? | `wiki source impact <id>` |
 | Check vault health | `wiki lint [--fix-links]` |
+| Score retrieval quality | `wiki eval [--k N] [--fail-under N]` (needs a human-owned `eval.yaml`) |
 | Outstanding repairs | `wiki issues list [--kind <k>] [--status open\|resolved]` |
 | Close a repair | `wiki issues resolve <id> --note "…"` |
 | Rebuild derived state | `wiki reindex` |

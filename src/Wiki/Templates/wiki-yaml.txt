@@ -9,3 +9,4 @@ categories:                      # source categories - fully user-defined
 lint:
   staleness_days: 90              # advisory: summaries older than this with newer related sources
   max_page_lines: 400             # advisory: pages larger than this flagged for splitting
+  content_loss_percent: 25        # advisory: a full-body update dropping this share of a page's wikilinks + cited sources files a content-loss issue
