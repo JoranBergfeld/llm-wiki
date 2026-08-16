@@ -372,7 +372,7 @@ public sealed class LintService
         var result = new List<RenameDrift>();
         foreach (var (slug, front, _) in pages)
         {
-            var actualRelPath = RelPathFor(v, slug, front);
+            var actualRelPath = PagePaths.Relative(v, slug, front);
             var idmapPath = idmap.PathFor(front.Id);
             if (idmapPath == actualRelPath) continue;
 
@@ -427,7 +427,7 @@ public sealed class LintService
 
                 if (string.Equals(rewritten, body, StringComparison.Ordinal)) continue;
 
-                AtomicFile.Write(FullPathFor(v, slug, front), new PageDoc(front, rewritten).Serialize());
+                AtomicFile.Write(PagePaths.Full(v, slug, front), new PageDoc(front, rewritten).Serialize());
                 bodiesRewritten++;
             }
         }
@@ -435,14 +435,4 @@ public sealed class LintService
         return (drifts.Count, bodiesRewritten);
     }
 
-    // Mirrors PageService.FullPathFor / ReindexService.RelPathFor's slug ->
-    // path reconstruction: overview is the fixed-path singleton
-    // `wiki/overview.md`, everything else lives at `wiki/<type-dir>/<slug>.md`.
-    private static string FullPathFor(Vault v, string slug, PageFrontmatter front)
-        => front.Type == PageType.Overview
-            ? Path.Combine(v.WikiDir, "overview.md")
-            : Path.Combine(v.PageDir(front.Type), slug + ".md");
-
-    private static string RelPathFor(Vault v, string slug, PageFrontmatter front)
-        => Path.GetRelativePath(v.Root, FullPathFor(v, slug, front)).Replace('\\', '/');
 }

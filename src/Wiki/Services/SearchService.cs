@@ -131,11 +131,7 @@ public sealed class SearchService
             {
                 if (type is not null && front.Type != type.Value) continue;
 
-                var fullPath = front.Type == PageType.Overview
-                    ? Path.Combine(v.WikiDir, "overview.md")
-                    : Path.Combine(v.PageDir(front.Type), slug + ".md");
-
-                if (!ScanFile(fullPath, SearchKind.Page, front.Id, front.Title))
+                if (!ScanFile(PagePaths.Full(v, slug, front), SearchKind.Page, front.Id, front.Title))
                     return new SearchReport(hits.ToArray(), truncated, scanned);
             }
         }

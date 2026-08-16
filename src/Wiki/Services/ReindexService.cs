@@ -50,7 +50,7 @@ public sealed class ReindexService
         var pages = PageStore.Enumerate(v);
         foreach (var (slug, front) in pages)
         {
-            idmap.Put(front.Id, RelPathFor(v, slug, front));
+            idmap.Put(front.Id, PagePaths.Relative(v, slug, front));
         }
 
         idmap.Save(v);
@@ -110,14 +110,4 @@ public sealed class ReindexService
             yield return (front.Id, Path.GetRelativePath(v.Root, fullPath).Replace('\\', '/'));
     }
 
-    // Mirrors PageService.Show's slug->path reconstruction: overview is the
-    // fixed-path singleton `wiki/overview.md`, everything else lives at
-    // `wiki/<type-dir>/<slug>.md`.
-    private static string RelPathFor(Vault v, string slug, PageFrontmatter front)
-    {
-        var full = front.Type == PageType.Overview
-            ? Path.Combine(v.WikiDir, "overview.md")
-            : Path.Combine(v.PageDir(front.Type), slug + ".md");
-        return Path.GetRelativePath(v.Root, full).Replace('\\', '/');
-    }
 }

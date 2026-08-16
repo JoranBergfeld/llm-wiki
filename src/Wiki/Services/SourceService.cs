@@ -113,11 +113,11 @@ public sealed class SourceService
 
         // Frontmatter schema gate: reject a title that would corrupt the
         // closed-schema quoting round-trip (a stray '"' or newline) - same
-        // rationale/shape as PageService.GuardScalar for page title/summary.
-        GuardScalar(title, "title");
+        // rationale/shape as the page title/summary guard.
+        Scalar.GuardSingleLineQuotable(title, "title", "frontmatter-schema");
 
         var resolvedOrigin = string.IsNullOrWhiteSpace(origin) ? "manual" : origin;
-        GuardScalar(resolvedOrigin, "origin");
+        Scalar.GuardSingleLineQuotable(resolvedOrigin, "origin", "frontmatter-schema");
 
         var content = File.ReadAllText(file);
         var sha256 = ComputeSha256Hex(content);
@@ -156,10 +156,9 @@ public sealed class SourceService
 
         // --- Validation complete. Everything from here on is the write. ---
 
-        // This is the one sanctioned write under raw/: called directly, NOT
-        // through AtomicFile.GuardWritable (that guard is the caller-invoked
-        // policy check every other command must pass before writing user
-        // content; source-add IS the allowed producer of raw/<id>.md).
+        // The one sanctioned write under raw/ (spec §11.5). The target path
+        // is derived from the id this method just minted, never from caller
+        // input, which is how the "no other write path under raw/" rule holds.
         AtomicFile.Write(targetPath, serialized);
 
         var relPath = Path.GetRelativePath(v.Root, targetPath).Replace('\\', '/');
@@ -300,7 +299,7 @@ public sealed class SourceService
 
         if (string.IsNullOrWhiteSpace(reason))
             throw new ValidationException("reason-required", "--reason is required to retract a source");
-        GuardScalar(reason, "reason");
+        Scalar.GuardSingleLineQuotable(reason, "reason", "frontmatter-schema");
 
         var (front, body, fullPath) = ResolveSource(v, id);
 
@@ -458,14 +457,6 @@ public sealed class SourceService
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
-    private static void GuardScalar(string value, string field)
-    {
-        foreach (var c in value)
-        {
-            if (c == '"' || c == '\n' || c == '\r')
-                throw new ValidationException("frontmatter-schema", $"'{field}' may not contain quotes or newlines");
-        }
-    }
 
     private static byte[] DefaultRandomBytes()
     {

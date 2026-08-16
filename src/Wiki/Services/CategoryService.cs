@@ -42,7 +42,7 @@ public sealed class CategoryService
         if (cfg.HasCategory(id))
             throw new ValidationException("duplicate-category", $"category '{id}' already exists in wiki.yaml");
 
-        GuardScalar(description, "description");
+        Scalar.GuardSingleLineQuotable(description, "description", "invalid-description");
 
         var text = System.IO.File.ReadAllText(v.ConfigPath);
         var updated = InsertCategory(v.ConfigPath, text, id, description);
@@ -144,10 +144,10 @@ public sealed class CategoryService
         var i = categoriesLine + 1;
         while (i < lines.Count)
         {
-            if (!IsListItemStart(lines[i]) || !StripComment(lines[i]).Trim().StartsWith("- id:", System.StringComparison.Ordinal))
+            if (!IsListItemStart(lines[i]) || !VaultConfig.StripInlineComment(lines[i]).Trim().StartsWith("- id:", System.StringComparison.Ordinal))
                 break;
             if (i + 1 >= lines.Count || !IsIndentedContinuation(lines[i + 1]) ||
-                !StripComment(lines[i + 1]).Trim().StartsWith("description:", System.StringComparison.Ordinal))
+                !VaultConfig.StripInlineComment(lines[i + 1]).Trim().StartsWith("description:", System.StringComparison.Ordinal))
                 break;
             i += 2;
             insertAt = i;
@@ -174,7 +174,7 @@ public sealed class CategoryService
             var line = lines[i];
             if (line.Length > 0 && (line[0] == ' ' || line[0] == '\t'))
                 continue;
-            if (StripComment(line).Trim() == key)
+            if (VaultConfig.StripInlineComment(line).Trim() == key)
                 return i;
         }
         return -1;
@@ -196,40 +196,5 @@ public sealed class CategoryService
         return trimmed.Length > 0 && !trimmed.StartsWith("- ", System.StringComparison.Ordinal);
     }
 
-    // Same quote-aware inline-comment stripper as VaultConfig - duplicated
-    // (not shared) because it's a five-line leaf helper and pulling it out
-    // into a shared utility for one caller isn't worth the indirection.
-    private static string StripComment(string line)
-    {
-        var inQuotes = false;
-        for (var i = 0; i < line.Length; i++)
-        {
-            var c = line[i];
-            if (c == '"')
-            {
-                inQuotes = !inQuotes;
-            }
-            else if (c == '#' && !inQuotes && (i == 0 || char.IsWhiteSpace(line[i - 1])))
-            {
-                return line[..i].TrimEnd();
-            }
-        }
-        return line.TrimEnd();
-    }
 
-    // wiki.yaml is config, not frontmatter: a description with a stray '"' or
-    // newline would corrupt the single-line quoted value this inserts (the
-    // parser has no quote-escaping), so it's rejected here. Code is
-    // `invalid-description` - a config-appropriate code, NOT the
-    // `frontmatter-schema` code SourceService/PageService use, since an agent
-    // branching on errors[].code shouldn't be told a wiki.yaml edit failed a
-    // page/source frontmatter rule.
-    private static void GuardScalar(string value, string field)
-    {
-        foreach (var c in value)
-        {
-            if (c == '"' || c == '\n' || c == '\r')
-                throw new ValidationException("invalid-description", $"'{field}' may not contain quotes or newlines");
-        }
-    }
 }

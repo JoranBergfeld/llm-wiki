@@ -16,11 +16,9 @@ namespace Wiki.Services;
 // proposal; Approve is the one path that ever writes AGENTS.md, and it only
 // runs when a human invokes it.
 //
-// AGENTS.md is deliberately NOT behind AtomicFile.GuardWritable - unlike
-// raw/, index.md, and log.md, it isn't a CLI-generated artifact; it is
-// human/agent-authored content the CLI amends on explicit approval, so
-// Approve() calls AtomicFile.Write directly (same "sanctioned producer"
-// carve-out AtomicFile's own doc comment describes for source-add/index/log).
+// AGENTS.md is not a protected path the way raw/, index.md and log.md are:
+// it isn't a CLI-generated artifact but human/agent-authored content the CLI
+// amends on explicit human approval, so Approve() writes it directly.
 //
 // Clock/RNG seam mirrors Issues/ReviewService/IngestService: defaults to the
 // real clock and RandomNumberGenerator so production code just does

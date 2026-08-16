@@ -386,7 +386,7 @@ public sealed class PageService
             if (string.Equals(rewritten, body, StringComparison.Ordinal))
                 continue;
 
-            AtomicFile.Write(FullPathFor(v, slug, pFront), new PageDoc(pFront, rewritten).Serialize());
+            AtomicFile.Write(PagePaths.Full(v, slug, pFront), new PageDoc(pFront, rewritten).Serialize());
             rewrittenCount++;
         }
 
@@ -459,15 +459,6 @@ public sealed class PageService
         LogFile.Append(v, utcIso, "set-status", slug, $"id={existingFront.Id} status={PageStatusX.ToWire(status)}");
     }
 
-    // Full path for a page's file on disk from its (slug, frontmatter) pair
-    // - mirrors ReindexService.RelPathFor / PageService.Show's slug->path
-    // reconstruction: overview is the fixed-path singleton `wiki/overview.md`,
-    // everything else lives at `wiki/<type-dir>/<slug>.md`.
-    private static string FullPathFor(Vault v, string slug, PageFrontmatter front)
-        => front.Type == PageType.Overview
-            ? System.IO.Path.Combine(v.WikiDir, "overview.md")
-            : System.IO.Path.Combine(v.PageDir(front.Type), slug + ".md");
-
     // Full-body update: id/created/title/type are preserved from the page
     // already on disk; summary/sources/tags/body come from the request.
     // Status is preserved too UNLESS the review gate is on, in which case
@@ -520,7 +511,7 @@ public sealed class PageService
         if (string.IsNullOrWhiteSpace(req.Summary))
             throw new ValidationException("summary-required", "--summary is required when updating a page");
 
-        GuardScalar(req.Summary, "summary");
+        Scalar.GuardSingleLineQuotable(req.Summary, "summary", "frontmatter-schema");
 
         foreach (var sourceId in req.Sources)
         {
@@ -619,8 +610,8 @@ public sealed class PageService
 
         // Frontmatter schema gate: reject scalar values that would corrupt the
         // closed-schema quoting round-trip (a stray '"' or newline in title/summary).
-        GuardScalar(req.Title, "title");
-        GuardScalar(req.Summary, "summary");
+        Scalar.GuardSingleLineQuotable(req.Title, "title", "frontmatter-schema");
+        Scalar.GuardSingleLineQuotable(req.Summary, "summary", "frontmatter-schema");
 
         var existing = PageStore.Enumerate(v);
 
@@ -760,14 +751,6 @@ public sealed class PageService
         return danglingTargets;
     }
 
-    private static void GuardScalar(string value, string field)
-    {
-        foreach (var c in value)
-        {
-            if (c == '"' || c == '\n' || c == '\r')
-                throw new ValidationException("frontmatter-schema", $"'{field}' may not contain quotes or newlines");
-        }
-    }
 
     private static byte[] DefaultRandomBytes()
     {

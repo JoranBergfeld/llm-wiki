@@ -4,12 +4,18 @@ namespace Wiki.Core;
 // target path. Cross-file atomicity (e.g. writing a page + updating the log)
 // is explicitly NOT provided here - callers that need that coordinate it themselves.
 //
-// GuardWritable is a policy check, not a write guard baked into Write(). Commands
-// that write user-facing content (page create/edit, etc.) call GuardWritable(vault,
-// path) before calling Write(). The CLI's own allowed writers - the source-add
-// pipeline prepending frontmatter under raw/, and index/log generation - call
-// Write() directly without going through GuardWritable, since they are the
-// sanctioned producers of those paths.
+// Spec §11.5's "no write path under raw/ except source add; no edit to
+// index.md/log.md except by the CLI" is enforced STRUCTURALLY, not by a runtime
+// guard: no command accepts a write path from the user at all. Every target is
+// derived internally from a page's type and slug, a source's id, or a fixed
+// well-known path. There is no input that could name a protected file.
+//
+// A GuardWritable() policy check used to live here for that rule. It had no
+// callers in production - only tests - so it read as protection that wasn't
+// actually in the request path. Deleted rather than left in place: dead
+// safety code is worse than none, because it invites the assumption that
+// something is being checked. If a command ever does take a caller-supplied
+// write path, reintroduce the guard AND call it.
 public static class AtomicFile
 {
     // Note: creates any missing parent directories (mkdir -p) before writing, so
@@ -33,35 +39,4 @@ public static class AtomicFile
             throw;
         }
     }
-
-    public static void GuardWritable(Vault vault, string path)
-    {
-        var full = System.IO.Path.GetFullPath(path);
-        var rawDir = System.IO.Path.GetFullPath(vault.RawDir);
-        var indexPath = System.IO.Path.GetFullPath(vault.IndexPath);
-        var logPath = System.IO.Path.GetFullPath(vault.LogPath);
-
-        if (IsUnder(full, rawDir) || PathsEqual(full, indexPath) || PathsEqual(full, logPath))
-        {
-            throw new ValidationException("protected-path", $"'{path}' is a protected path and cannot be written directly", path);
-        }
-    }
-
-    // Comparisons are case-INsensitive on purpose. This guard is a write-refusal
-    // safety boundary: on APFS (macOS) and NTFS (Windows) - the default, case-
-    // insensitive filesystems on both target platforms - `RAW/a.md` resolves to the
-    // same file as `raw/a.md`, so a case-sensitive check would let a case-variant
-    // spelling slip past and let AtomicFile.Write clobber a protected file. Over-
-    // rejecting a case-variant path costs nothing (no legitimate caller writes to
-    // RAW/); under-rejecting risks silent data loss. This is deliberately separate
-    // from the spec's "case-sensitive internally" idmap/duplicate-detection rule.
-    private static bool IsUnder(string path, string dir)
-    {
-        var prefix = dir.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar)
-                     + System.IO.Path.DirectorySeparatorChar;
-        return path.StartsWith(prefix, System.StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool PathsEqual(string a, string b)
-        => string.Equals(a, b, System.StringComparison.OrdinalIgnoreCase);
 }
