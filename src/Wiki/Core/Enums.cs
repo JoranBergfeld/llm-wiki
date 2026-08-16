@@ -121,6 +121,20 @@ public enum IssueKind
     // retraction on a page that already carries some other open lint finding
     // for that slug must not overwrite that finding's detail/occurrences.
     Retraction,
+
+    // Workflow kind, NOT a lint check (spec amendment H's carve-out, spec
+    // amendment V). Filed by `page upsert --id` when a full-body replacement
+    // drops a large fraction of the page's structural references - the
+    // detectable signature of generation loss (issue #11). Its own kind for
+    // the same collision reason as ReviewRejected/Retraction: a content-loss
+    // finding on a page that already carries an `orphan` or `oversize` lint
+    // issue for that slug must not overwrite that finding's
+    // detail/occurrences.
+    //
+    // Deliberately NOT a lint check: lint is a pure function of the vault's
+    // current bytes and has no access to the body a write replaced. Only the
+    // upsert holds both versions, so only the upsert can see the loss.
+    ContentLoss,
 }
 
 public static class IssueKindX
@@ -138,6 +152,7 @@ public static class IssueKindX
         IssueKind.PendingBacklog => "pending-backlog",
         IssueKind.ReviewRejected => "review-rejected",
         IssueKind.Retraction => "retraction",
+        IssueKind.ContentLoss => "content-loss",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
     };
 
@@ -154,6 +169,7 @@ public static class IssueKindX
         "pending-backlog" => IssueKind.PendingBacklog,
         "review-rejected" => IssueKind.ReviewRejected,
         "retraction" => IssueKind.Retraction,
+        "content-loss" => IssueKind.ContentLoss,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }

@@ -25,6 +25,23 @@ public sealed class VaultConfig
     public required int StalenessDays { get; init; }
     public required int MaxPageLines { get; init; }
 
+    // `lint.content_loss_percent` (issue #11 / amendment V): the share of a
+    // page's structural references (wikilink targets + cited source ids) a
+    // single full-body replacement may drop before `page upsert --id` files a
+    // `content-loss` issue. Expressed as a whole-number percentage, matching
+    // the integer-scalar style of every other value in this file.
+    //
+    // OPTIONAL, unlike staleness_days/max_page_lines. Making it required
+    // would fail every wiki.yaml written before it existed - a config that
+    // was valid yesterday must not brick the CLI today - so it defaults
+    // instead. Default 25: dropping a quarter of a page's connections in one
+    // rewrite is already a strong signal, and a threshold that fires too
+    // rarely is worse than one that fires occasionally on a legitimate
+    // restructure, which is resolvable with a note like any other issue.
+    public int ContentLossPercent { get; init; } = DefaultContentLossPercent;
+
+    public const int DefaultContentLossPercent = 25;
+
     public bool HasCategory(string id)
     {
         foreach (var c in Categories)
@@ -59,6 +76,7 @@ public sealed class VaultConfig
         var categories = new List<Category>();
         string? stalenessDays = null;
         string? maxPageLines = null;
+        string? contentLossPercent = null;
 
         int i = 0;
         while (i < lines.Length)
@@ -105,6 +123,7 @@ public sealed class VaultConfig
                     var kv = lines[i].Trim();
                     if (TryScalarLine(kv, "staleness_days", out var sd)) stalenessDays = sd;
                     else if (TryScalarLine(kv, "max_page_lines", out var mpl)) maxPageLines = mpl;
+                    else if (TryScalarLine(kv, "content_loss_percent", out var clp)) contentLossPercent = clp;
                     else throw new ValidationException("config", $"unknown 'lint' key: '{kv}'", yamlPath);
                     i++;
                 }
@@ -138,6 +157,19 @@ public sealed class VaultConfig
         if (!int.TryParse(maxPageLines, NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxPageLinesNum))
             throw new ValidationException("config", $"'lint.max_page_lines' must be an integer, got '{maxPageLines}'", yamlPath);
 
+        var contentLossPercentNum = DefaultContentLossPercent;
+        if (contentLossPercent is not null)
+        {
+            if (!int.TryParse(contentLossPercent, NumberStyles.Integer, CultureInfo.InvariantCulture, out contentLossPercentNum))
+                throw new ValidationException("config", $"'lint.content_loss_percent' must be an integer, got '{contentLossPercent}'", yamlPath);
+            // 0 is meaningful (report every removal); 100 means "never file".
+            // Outside that range the value cannot express anything, so it is a
+            // typo rather than a preference.
+            if (contentLossPercentNum is < 0 or > 100)
+                throw new ValidationException("config",
+                    $"'lint.content_loss_percent' must be between 0 and 100, got {contentLossPercentNum}", yamlPath);
+        }
+
         var seenIds = new HashSet<string>();
         foreach (var category in categories)
         {
@@ -155,6 +187,7 @@ public sealed class VaultConfig
             Categories = categories,
             StalenessDays = stalenessDaysNum,
             MaxPageLines = maxPageLinesNum,
+            ContentLossPercent = contentLossPercentNum,
         };
     }
 
