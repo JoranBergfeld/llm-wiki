@@ -64,7 +64,9 @@ work, do that one unit, then stop.
    outranks new work.
 2. **Start new work.** All sources linted? `wiki source list --status active
    --json` for anything registered but absent from the ledger's active set —
-   begin its ingest at step 1 of the Ingest playbook.
+   begin its ingest at step 1 of the Ingest playbook. Nothing outstanding, and
+   the human has configured an inbox? `wiki source scan <inbox-dir> --category
+   <id> --json` first; anything it registers becomes this tick's work.
 3. **Repair.** `wiki issues list --status open --json`. Take the highest
    `occurrences` count and fix it (see Issue kinds).
 4. **Detect.** No open issues? `wiki lint --json` to file fresh findings. If
@@ -89,10 +91,24 @@ A source moves `registered → summarized → integrated → linted`, one step a
 time, each precondition-checked. Skipping a state fails with
 `precondition-order`.
 
-**Step 0 — registration is the human's.** `wiki source add <file> --category
-<id> --title "…"` copies the file into `raw/`, hashes and dedups it, and enters
-the ledger. If there is nothing registered, you have no ingest work; do not go
-looking for files to add.
+**Step 0 — registration.** The human decides *what* enters the vault. The
+*typing* is mechanical and can be yours:
+
+- The human registers one file at a time with `wiki source add <file>
+  --category <id> --title "…"`.
+- If they have named an **inbox directory**, you register it in bulk:
+  `wiki source scan <inbox-dir> --category <id> --json`. It copies each
+  not-yet-registered file into `raw/`, hashes and dedups it, and enters the
+  ledger. Content is hash-deduped, so re-running is a clean no-op — safe on
+  every tick. Use `--dry-run` the first time you point it at a new directory.
+
+Only ever scan a directory the human has explicitly named as an inbox. If no
+inbox is configured and nothing is registered, you have no ingest work — do
+not go looking for files to add.
+
+`scan` exits 0 even when individual files were rejected: read `entries[]` for
+per-file outcomes (`registered`, `skipped-duplicate`, `skipped-empty`,
+`rejected` with a `code`). Report the rejections; do not retry them blind.
 
 **Step 1 — read it.** `wiki source show <source-id> --json`.
 
@@ -178,7 +194,9 @@ them. After fixing one, close it yourself:
 
 Do these **never**; surface them and stop:
 
-- `wiki source add` — the human curates what enters the vault.
+- `wiki source add` — one-off registration is theirs. You may run `wiki source
+  scan` against an inbox directory they have configured; you may not decide
+  what belongs in the vault, and you may not scan a directory nobody named.
 - `wiki review approve` / `reject` — the review gate is theirs.
 - `wiki schema approve` / `reject` — you may *propose*, they dispose.
 - `wiki category add` — categories are schema.
@@ -206,6 +224,7 @@ Every command accepts `--json` and `--vault`.
 | Rename a page | `wiki page rename <id> <new-slug>` (rewrites inbound links) |
 | Read a raw source | `wiki source show <id>` |
 | List sources | `wiki source list [--status <s>] [--category <c>]` |
+| Register a configured inbox | `wiki source scan <dir> --category <id> [--dry-run]` |
 | Who cites this source? | `wiki source impact <id>` |
 | Check vault health | `wiki lint [--fix-links]` |
 | Outstanding repairs | `wiki issues list [--kind <k>] [--status open\|resolved]` |
