@@ -21,6 +21,43 @@ public sealed record SourceAddResult(
     public string HumanSummary() => $"Registered source {Id} ({Category}) -> {Path}";
 }
 
+// One file's outcome in a `wiki source scan` batch. `Outcome` is a closed
+// wire vocabulary - registered | would-register | skipped-duplicate |
+// skipped-empty | rejected - reported per file rather than aggregated,
+// because failure isolation is the whole point: a caller has to be able to
+// tell which file in an inbox of 200 was the PDF. `Code` carries the
+// error code the equivalent `source add` would have exited with, so an agent
+// branches on the same vocabulary it already knows.
+public sealed record SourceScanEntry(
+    string Path,
+    string Outcome,
+    string? Id,
+    string? Code,
+    string? Detail);
+
+// `wiki source scan <dir>` result. Counts are pre-tallied so a caller can
+// decide whether anything happened without walking Entries, which for a
+// large inbox is the bulk of the payload.
+public sealed record SourceScanResult(
+    string Directory,
+    string Category,
+    bool DryRun,
+    int Registered,
+    int WouldRegister,
+    int SkippedDuplicate,
+    int SkippedEmpty,
+    int Rejected,
+    SourceScanEntry[] Entries) : IHumanRenderable
+{
+    public string HumanSummary()
+    {
+        var head = DryRun
+            ? $"Dry run over {Directory}: {WouldRegister} file(s) would register"
+            : $"Scanned {Directory}: {Registered} source(s) registered";
+        return $"{head}, {SkippedDuplicate} already registered, {SkippedEmpty} empty, {Rejected} rejected";
+    }
+}
+
 // `wiki source list` row shape - a scanning/routing view, same spirit as
 // PageSummary: wire strings for Status (not the enum), no body.
 public sealed record SourceSummary(
@@ -100,6 +137,15 @@ public sealed class SourceService
     }
 
     public SourceAddResult Add(Vault v, VaultConfig cfg, string file, string category, string title, string? origin)
+        => Add(v, cfg, file, category, title, origin, BuildShaIndex(v));
+
+    // `shaIndex` is the dedup index (see BuildShaIndex). `Add` builds one per
+    // call; `Scan` builds ONE for the whole batch and keeps it current as it
+    // registers, which is what stops a 200-file inbox from re-reading every
+    // raw/ file 200 times.
+    private SourceAddResult Add(
+        Vault v, VaultConfig cfg, string file, string category, string title, string? origin,
+        Dictionary<string, string> shaIndex)
     {
         // --- Blocking validation: ALL of it runs before anything below touches disk. ---
 
@@ -127,8 +173,7 @@ public sealed class SourceService
         var content = ReadTextFile(file);
         var sha256 = ComputeSha256Hex(content);
 
-        var existingId = FindExistingSourceIdBySha(v, sha256);
-        if (existingId is not null)
+        if (shaIndex.TryGetValue(sha256, out var existingId))
             throw new ValidationException(
                 "duplicate-source",
                 $"source content already registered as '{existingId}' (matching sha256 '{sha256}')");
@@ -183,8 +228,220 @@ public sealed class SourceService
 
         LogFile.Append(v, utcIso, "source-add", id, $"category={category} sha256={sha256}");
 
+        // Keep the caller's index current so a batch dedups against what this
+        // same batch has already registered, not just against what was on
+        // disk when the batch started.
+        shaIndex[sha256] = id;
+
         return new SourceAddResult(id, relPath, sha256, category);
     }
+
+    // `wiki source scan <dir> --category <id> [--dry-run]` (issue #8):
+    // register every not-yet-registered file in a directory.
+    //
+    // Why this exists. Registration used to be manual and one-at-a-time,
+    // which conflated two different things: EDITORIAL JUDGEMENT (does this
+    // belong in my knowledge base - genuinely the human's) and MECHANICAL
+    // REGISTRATION (typing the command - pure friction with no gate value,
+    // because everything downstream already makes a bad registration cheap to
+    // detect and cheap to undo: sha256 dedup, the ledger, `source impact`,
+    // `source retract`). Scan moves the human UPSTREAM: they drop files into
+    // an inbox directory and curation becomes "what you put in the folder"
+    // rather than "what you type".
+    //
+    // Idempotent by construction. Content is already sha256-hashed and
+    // deduped, so re-scanning the same directory is a no-op - which is what
+    // makes it safe to run from cron, Task Scheduler, or every agent tick,
+    // and removes any need for a filesystem watcher (watchers are flaky
+    // across OSes and effectively untestable; a scan command is neither).
+    //
+    // Category and title are the design question the issue leaves open, and
+    // this is the conservative answer (spec amendment T): `--category` is
+    // REQUIRED and titles are derived deterministically from filenames. The
+    // alternative - registering under a placeholder "unresolved" category for
+    // the agent to propose later - needs a reserved category id that the
+    // human's closed taxonomy does not contain, which breaks
+    // `VaultConfig.HasCategory` and amendment N's category-in-use rule, and
+    // puts a CLI-owned magic value into a human-owned config file. It also
+    // does not actually reuse the review gate, which gates PAGES, not source
+    // registrations. So: one inbox directory per category. The directory IS
+    // the editorial decision, which is the same shape as the rest of the
+    // system - the human decides, the CLI records. A provisional title costs
+    // nothing, because the agent rewrites it into the summary page's title on
+    // the very next step of ingest.
+    //
+    // Failure isolation: one unreadable or rejected file must not abort the
+    // batch, so every per-file rejection is caught and reported as its own
+    // entry with the error code it would have produced from `source add`. The
+    // command itself exits 0 - the batch ran; what happened to each file is
+    // data, not a failure of the scan.
+    public SourceScanResult Scan(Vault v, VaultConfig cfg, string dir, string category, bool dryRun)
+    {
+        // --- Blocking validation for the SCAN ITSELF (per-file problems are
+        // reported, not thrown - see above). ---
+
+        if (!cfg.HasCategory(category))
+            throw new ValidationException(
+                "unknown-category",
+                $"unknown category '{category}'; add it first with 'wiki category add {category} --description \"...\"'");
+
+        if (!Directory.Exists(dir))
+            throw new ValidationException("scan-dir-not-found", $"scan directory '{dir}' does not exist", dir);
+
+        // An inbox inside the vault would let a scan re-register the vault's
+        // own raw/ files, its pages, and its generated index/log - each pass
+        // laundering CLI output back in as new source material. Nothing else
+        // downstream would notice, so block it here.
+        var fullDir = Path.GetFullPath(dir);
+        var fullRoot = Path.GetFullPath(v.Root);
+        if (fullDir.Equals(fullRoot, StringComparison.OrdinalIgnoreCase) ||
+            fullDir.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException("scan-dir-in-vault",
+                $"scan directory '{dir}' is inside the vault; an inbox must live outside the vault it feeds", dir);
+
+        var shaIndex = BuildShaIndex(v);
+        var entries = new List<SourceScanEntry>();
+
+        foreach (var file in EnumerateInbox(fullDir))
+        {
+            var relative = Path.GetRelativePath(fullDir, file).Replace('\\', '/');
+
+            try
+            {
+                var content = ReadTextFile(file);
+                if (string.IsNullOrWhiteSpace(content))
+                {
+                    entries.Add(new SourceScanEntry(relative, "skipped-empty", null, null,
+                        "file is empty or whitespace-only"));
+                    continue;
+                }
+
+                var sha256 = ComputeSha256Hex(content);
+                if (shaIndex.TryGetValue(sha256, out var existingId))
+                {
+                    entries.Add(new SourceScanEntry(relative, "skipped-duplicate", existingId, "duplicate-source",
+                        $"content already registered as '{existingId}'"));
+                    continue;
+                }
+
+                var title = DeriveTitle(file);
+                var origin = SanitizeScalar(relative);
+
+                if (dryRun)
+                {
+                    // Reserve the hash in the in-memory index so a second
+                    // identical file in the same inbox reports as a duplicate
+                    // rather than as a second would-register - the dry run has
+                    // to predict what the real run would do.
+                    shaIndex[sha256] = "(would-register)";
+                    entries.Add(new SourceScanEntry(relative, "would-register", null, null, title));
+                    continue;
+                }
+
+                var added = Add(v, cfg, file, category, title, origin, shaIndex);
+                entries.Add(new SourceScanEntry(relative, "registered", added.Id, null, title));
+            }
+            catch (ValidationException vex)
+            {
+                entries.Add(new SourceScanEntry(relative, "rejected", null, vex.Code, vex.Message));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Environment problems are isolated to their file too: one
+                // locked or permission-denied file must not cost the batch.
+                entries.Add(new SourceScanEntry(relative, "rejected", null, "io-error", ex.Message));
+            }
+        }
+
+        var result = new SourceScanResult(
+            fullDir.Replace('\\', '/'),
+            category,
+            dryRun,
+            Count(entries, "registered"),
+            Count(entries, "would-register"),
+            Count(entries, "skipped-duplicate"),
+            Count(entries, "skipped-empty"),
+            Count(entries, "rejected"),
+            entries.ToArray());
+
+        // A dry run writes nothing at all - including no log line. The whole
+        // point is that a human can point it at a new inbox and see what
+        // would happen without the vault changing.
+        if (!dryRun && result.Registered > 0)
+        {
+            var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(_nowUnixMs()).UtcDateTime
+                .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+            LogFile.Append(v, utcIso, "source-scan", category,
+                $"dir=\"{SanitizeScalar(fullDir.Replace('\\', '/'))}\" registered={result.Registered} " +
+                $"duplicates={result.SkippedDuplicate} rejected={result.Rejected}");
+        }
+
+        return result;
+    }
+
+    private static int Count(List<SourceScanEntry> entries, string outcome)
+    {
+        var n = 0;
+        foreach (var e in entries)
+            if (e.Outcome == outcome) n++;
+        return n;
+    }
+
+    // Recursive, deterministically ordered, dot-filtered.
+    //
+    // Recursive because real inboxes acquire subfolders on their own (browser
+    // downloads, sync clients, a human filing by month) and a scan that
+    // silently ignored them would look like it had registered everything.
+    // Dedup makes re-scanning free and `--dry-run` makes a first scan safe to
+    // inspect, so the blast radius of "it went deeper than I expected" is a
+    // list on screen.
+    //
+    // Dot-prefixed files and directories are skipped: `.git`, `.obsidian`,
+    // `.DS_Store` and friends are tooling artefacts, never inbox content, and
+    // no extension filter is applied beyond that because the binary-content
+    // guard (amendment R) is what decides whether a file is registrable.
+    private static IEnumerable<string> EnumerateInbox(string root)
+    {
+        var files = new List<string>();
+        Walk(root);
+        files.Sort(StringComparer.Ordinal);
+        return files;
+
+        void Walk(string dir)
+        {
+            foreach (var file in Directory.EnumerateFiles(dir))
+            {
+                if (Path.GetFileName(file).StartsWith('.')) continue;
+                files.Add(file);
+            }
+            foreach (var sub in Directory.EnumerateDirectories(dir))
+            {
+                if (Path.GetFileName(sub).StartsWith('.')) continue;
+                Walk(sub);
+            }
+        }
+    }
+
+    // Provisional title from the filename stem: separators become spaces,
+    // runs of whitespace collapse. Deliberately dumb and deterministic - the
+    // agent replaces it with a real title on the summary page one step later,
+    // so cleverness here would only be cleverness the human has to review.
+    private static string DeriveTitle(string file)
+    {
+        var stem = Path.GetFileNameWithoutExtension(file);
+        var spaced = stem.Replace('_', ' ').Replace('-', ' ');
+        var collapsed = string.Join(' ', spaced.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        var title = SanitizeScalar(collapsed);
+        return string.IsNullOrWhiteSpace(title) ? Path.GetFileName(file) : title;
+    }
+
+    // Frontmatter scalars are a closed, quoted schema (see
+    // Scalar.GuardSingleLineQuotable). A filename or inbox path may legally
+    // contain a double quote on Unix; rather than reject the whole file for a
+    // punctuation mark the CLI itself chose to put in the field, strip the
+    // characters that would break the round-trip.
+    private static string SanitizeScalar(string raw)
+        => raw.Replace("\"", "").Replace("\r", " ").Replace("\n", " ").Trim();
 
     // `wiki source list [--status] [--category]`: enumerate raw/*.md,
     // parsing each one's SOURCE frontmatter, keeping the ones matching both
@@ -437,33 +694,40 @@ public sealed class SourceService
         return (front, body, fullPath);
     }
 
-    // Scans raw/*.md for a source whose sha256 matches - the dedup check on
-    // `source add`. Walk order and skip rules live in SourceStore.
+    // The dedup index behind `duplicate-source`: content hash -> registering
+    // source id, built by scanning raw/*.md. Walk order and skip rules live
+    // in SourceStore.
     //
-    // Two comparisons per existing source, because of the newline change
-    // (issue #5). The stored `sha256` is authoritative for anything
-    // registered by a build that already normalises. For a source registered
-    // by an OLDER build the stored hash is of the raw CRLF bytes, so it can
-    // never match a normalised candidate - and dedup would silently miss,
-    // registering the same document twice. Rather than migrate raw/ (it is
-    // immutable content, and rewriting every source's frontmatter to fix a
-    // cache-like field is a much bigger hammer than the problem), the scan
-    // falls back to hashing the stored body the NEW way and comparing that.
-    // Legacy entries therefore dedup correctly without their bytes changing;
-    // the cost is one hash per raw file on `source add`, which is a rare,
-    // already-IO-bound command. See docs/spec.md amendment Q.
-    private static string? FindExistingSourceIdBySha(Vault v, string sha256)
+    // TWO entries per existing source, because of the newline change (issue
+    // #5). The stored `sha256` is authoritative for anything registered by a
+    // build that already normalises. For a source registered by an OLDER
+    // build the stored hash is of the raw CRLF bytes, so it can never match a
+    // normalised candidate - and dedup would silently miss, registering the
+    // same document twice. Rather than migrate raw/ (it is immutable content,
+    // and rewriting every source's frontmatter to fix a cache-like field is a
+    // much bigger hammer than the problem), the index ALSO carries a hash of
+    // the stored body computed the new way. Legacy entries therefore dedup
+    // correctly without their bytes changing. See docs/spec.md amendment Q.
+    //
+    // Case: hashes are written lowercase-hex by ComputeSha256Hex, but a
+    // hand-edited frontmatter could carry uppercase, so the dictionary is
+    // ordinal-ignore-case rather than trusting the producer.
+    private static Dictionary<string, string> BuildShaIndex(Vault v)
     {
+        var index = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (front, fullPath) in SourceStore.Enumerate(v))
         {
-            if (string.Equals(front.Sha256, sha256, StringComparison.OrdinalIgnoreCase))
-                return front.Id;
+            // First writer wins on a collision, matching the old linear
+            // scan's "return the first match in ordinal path order".
+            if (!index.ContainsKey(front.Sha256))
+                index[front.Sha256] = front.Id;
 
             var (_, _, storedBody) = Frontmatter.ReadBlock(File.ReadAllText(fullPath));
-            if (string.Equals(ComputeSha256Hex(NormalizeNewlines(storedBody)), sha256, StringComparison.OrdinalIgnoreCase))
-                return front.Id;
+            var normalizedSha = ComputeSha256Hex(NormalizeNewlines(storedBody));
+            if (!index.ContainsKey(normalizedSha))
+                index[normalizedSha] = front.Id;
         }
-        return null;
+        return index;
     }
 
     // Reads a registered source's file as TEXT, rejecting anything that is

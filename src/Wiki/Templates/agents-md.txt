@@ -35,6 +35,7 @@ Never scan bodies to discover relevance.
 | Read one page | `wiki page show <id\|name> [--frontmatter-only]` |
 | Read a raw source | `wiki source show <id>` |
 | Which pages cite this source? | `wiki source impact <id>` |
+| Register a configured inbox | `wiki source scan <dir> --category <id> [--dry-run]` |
 | Write or replace a page body | `wiki page upsert --type <t> --title "…" [--id <id>] --summary "…" --sources <ids> --stdin` |
 | Record ingest progress | `wiki ingest advance <source-id> --to <state> [--touched <ids>]` |
 | Check vault health | `wiki lint` |
@@ -48,8 +49,15 @@ problem, do not retry · 3 state conflict, the world is already how you asked,
 treat as a no-op and move on.
 
 ### Ingest
-1. The human registers the source:
-   `wiki source add <file> --category <id> --title "…"` → state `registered`.
+1. Registration. The human decides WHAT enters the vault; you may perform the
+   mechanical registration when they have set up an inbox.
+   - Human, one file at a time:
+     `wiki source add <file> --category <id> --title "…"` → state `registered`.
+   - You, from a configured inbox directory:
+     `wiki source scan <inbox-dir> --category <id>` → registers everything not
+     already registered. Idempotent (content is hash-deduped), so re-running is
+     free. Only ever scan a directory the human has named as an inbox; never go
+     looking for files to add.
 2. Read it: `wiki source show <source-id>` (reading is unrestricted; only
    writing is mediated).
 3. Write the summary page, then record the step:

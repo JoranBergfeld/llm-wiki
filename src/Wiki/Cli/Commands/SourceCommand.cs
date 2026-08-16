@@ -16,6 +16,7 @@ public static class SourceCommand
     {
         var source = new Command("source", "Register and query immutable raw sources");
         source.Add(BuildAdd(vaultOption, jsonOption, stdout, stdin));
+        source.Add(BuildScan(vaultOption, jsonOption, stdout, stdin));
         source.Add(BuildList(vaultOption, jsonOption, stdout, stdin));
         source.Add(BuildShow(vaultOption, jsonOption, stdout, stdin));
         source.Add(BuildImpact(vaultOption, jsonOption, stdout, stdin));
@@ -69,6 +70,61 @@ public static class SourceCommand
         }));
 
         return add;
+    }
+
+    // `wiki source scan <dir> --category <id> [--dry-run]` (issue #8): bulk,
+    // idempotent registration of an inbox directory. Exits 0 even when
+    // individual files were rejected - see SourceService.Scan on failure
+    // isolation. Only the scan's OWN preconditions (unknown category, missing
+    // directory, an inbox inside the vault) are exit-1 failures.
+    private static Command BuildScan(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var dirArgument = new Argument<string>("dir")
+        {
+            Description = "Inbox directory to register files from (scanned recursively; must live outside the vault)",
+        };
+        var categoryOption = new Option<string>("--category")
+        {
+            Required = true,
+            Description = "Category id every file in this inbox registers under (must already exist in wiki.yaml)",
+        };
+        var dryRunOption = new Option<bool>("--dry-run")
+        {
+            Description = "Report what would be registered without writing anything",
+        };
+
+        var scan = new Command("scan",
+            "Register every not-yet-registered file in a directory; re-running is a no-op (content is deduped by hash)")
+        {
+            dirArgument,
+            categoryOption,
+            dryRunOption,
+        };
+
+        scan.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var dir = parseResult.GetRequiredValue(dirArgument);
+            var category = parseResult.GetRequiredValue(categoryOption);
+            var dryRun = parseResult.GetValue(dryRunOption);
+
+            var vault = ctx.ResolveVault();
+            var cfg = ctx.LoadConfig();
+
+            var service = new SourceService();
+            var result = service.Scan(vault, cfg, dir, category, dryRun);
+
+            if (ctx.Json)
+            {
+                ctx.EmitOk(result);
+            }
+            else
+            {
+                RenderScanTable(ctx.Out, result);
+            }
+            return 0;
+        }));
+
+        return scan;
     }
 
     private static Command BuildList(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
@@ -251,6 +307,29 @@ public static class SourceCommand
 
         console.Write(table);
         console.MarkupLine($"[grey]{sources.Count} source(s)[/]");
+    }
+
+    private static void RenderScanTable(TextWriter output, SourceScanResult result)
+    {
+        var console = AnsiConsole.Create(new AnsiConsoleSettings { Out = new AnsiConsoleOutput(output) });
+
+        var table = new Table();
+        table.AddColumn("File");
+        table.AddColumn("Outcome");
+        table.AddColumn("Id / code");
+        table.AddColumn("Detail");
+
+        foreach (var e in result.Entries)
+        {
+            table.AddRow(
+                Markup.Escape(e.Path),
+                Markup.Escape(e.Outcome),
+                Markup.Escape(e.Id ?? e.Code ?? ""),
+                Markup.Escape(e.Detail ?? ""));
+        }
+
+        console.Write(table);
+        console.MarkupLine($"[grey]{Markup.Escape(result.HumanSummary())}[/]");
     }
 
     private static void RenderShowPanel(TextWriter output, SourceView view)
