@@ -83,6 +83,15 @@ public sealed record LinksCheckReport(
 // soft state is more honest than a false positive, and only definitive
 // failures earn a place in the queue an agent works.
 //
+// AOT COST, measured (spec amendment Y): pulling in HttpClient adds roughly
+// +1.5-1.8 MB compressed - about +50% - to every published binary. That is
+// paid by every user for one opt-in diagnostic, and it was accepted
+// deliberately: ~5 MB is still small for a single-file native binary with no
+// runtime to install, and hiding the command behind a build switch would mean
+// the shipped default and a locally-built binary disagree about which
+// commands exist, which is a worse contract for an agent than a larger
+// download. Worth revisiting if a second network-shaped feature ever wants in.
+//
 // RESULT CACHING is deliberately NOT implemented (see spec amendment Y).
 // A TTL cache in `.wiki/` would be derived state that `reindex` needs a story
 // for, and its correctness would hinge on wall-clock time - exactly the
