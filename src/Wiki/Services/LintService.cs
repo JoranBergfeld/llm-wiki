@@ -173,12 +173,12 @@ public sealed class LintService
     // `orphan` (spec §11): active page (excluding overview, and pending-review
     // by construction - Active/PendingReview are mutually exclusive
     // PageStatus values) with zero inbound wikilinks. Reuses
-    // PageService.BuildInboundMap (Task 19) verbatim rather than
+    // PageQuery.BuildInboundMap verbatim rather than
     // re-implementing the inbound-link scan - same map `page list --orphans`
     // and `page backlinks` already build.
     private static IEnumerable<LintFinding> CheckOrphans(Vault v, IReadOnlyList<(string Slug, PageFrontmatter Front, string Body)> pages)
     {
-        var inbound = PageService.BuildInboundMap(v);
+        var inbound = PageQuery.BuildInboundMap(v);
         foreach (var (slug, front, _) in pages)
         {
             if (front.Status != PageStatus.Active || front.Type == PageType.Overview)

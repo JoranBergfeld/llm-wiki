@@ -135,8 +135,7 @@ public static class PageCommand
             var frontmatterOnly = parseResult.GetValue(frontmatterOnlyOption);
 
             var vault = ctx.ResolveVault();
-            var service = new PageService();
-            var view = service.Show(vault, idOrName, frontmatterOnly);
+            var view = PageQuery.Show(vault, idOrName, frontmatterOnly);
 
             if (ctx.Json)
             {
@@ -183,8 +182,7 @@ public static class PageCommand
             var orphans = parseResult.GetValue(orphansOption);
 
             var vault = ctx.ResolveVault();
-            var service = new PageService();
-            var results = service.List(vault, type, status, orphans);
+            var results = PageQuery.List(vault, type, status, orphans);
 
             if (ctx.Json)
             {
@@ -217,8 +215,7 @@ public static class PageCommand
             var idOrName = parseResult.GetRequiredValue(idOrNameArgument);
 
             var vault = ctx.ResolveVault();
-            var service = new PageService();
-            var results = service.Backlinks(vault, idOrName);
+            var results = PageQuery.Backlinks(vault, idOrName);
 
             if (ctx.Json)
             {
@@ -301,7 +298,7 @@ public static class PageCommand
             // page via the existing read-only Show query so callers still get
             // the resulting frontmatter back, without a bespoke DTO. Mirrors
             // BuildShow's json/human split exactly.
-            var view = service.Show(vault, id, frontmatterOnly: true);
+            var view = PageQuery.Show(vault, id, frontmatterOnly: true);
             if (ctx.Json)
             {
                 ctx.EmitOk(view);
