@@ -8,7 +8,7 @@ public class IdMapTests
 {
     // A flag-rooted Vault doesn't require wiki.yaml to exist, so this is enough
     // to get a Vault pointed at a scratch directory for idmap.json round-trips.
-    static Vault MakeVault(string root) => Vault.Resolve(root, _ => null, root);
+    static Vault MakeVault(string root) => Vault.At(root);
 
     [Fact]
     public void Save_Load_RoundTrips_And_NormalizesSlashes()

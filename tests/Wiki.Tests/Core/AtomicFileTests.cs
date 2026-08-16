@@ -20,7 +20,7 @@ public class AtomicFileTests
     public void GuardWritable_RejectsRawAndGeneratedDocs()
     {
         using var tv = new Wiki.Tests.Support.TempVault();
-        var v = Wiki.Core.Vault.Resolve(tv.Path, _ => null, tv.Path);
+        var v = Wiki.Core.Vault.At(tv.Path);
         Assert.Throws<ValidationException>(() => AtomicFile.GuardWritable(v, System.IO.Path.Combine(v.RawDir, "a.md")));
         Assert.Throws<ValidationException>(() => AtomicFile.GuardWritable(v, v.IndexPath));
     }
@@ -29,7 +29,7 @@ public class AtomicFileTests
     public void GuardWritable_RejectsLogPath()
     {
         using var tv = new Wiki.Tests.Support.TempVault();
-        var v = Wiki.Core.Vault.Resolve(tv.Path, _ => null, tv.Path);
+        var v = Wiki.Core.Vault.At(tv.Path);
         var ex = Assert.Throws<ValidationException>(() => AtomicFile.GuardWritable(v, v.LogPath));
         Assert.Equal("protected-path", ex.Code);
     }
@@ -40,7 +40,7 @@ public class AtomicFileTests
         // On APFS/NTFS these resolve to the same protected files as their lowercase
         // spellings, so the guard must refuse them regardless of casing.
         using var tv = new Wiki.Tests.Support.TempVault();
-        var v = Wiki.Core.Vault.Resolve(tv.Path, _ => null, tv.Path);
+        var v = Wiki.Core.Vault.At(tv.Path);
 
         var rawVariant = System.IO.Path.Combine(v.Root, "RAW", "a.md");
         var indexVariant = System.IO.Path.Combine(v.WikiDir, "INDEX.md");

@@ -225,7 +225,7 @@ public class ReviewGateTests
         // Simulate the lint pending-backlog finding on this exact slug, filed
         // directly through the production Issues store (same technique
         // IssuesCommandTests uses to seed issues.json).
-        var vault = Vault.Resolve(tv.Path, _ => null, tv.Path);
+        var vault = Vault.At(tv.Path);
         var store = new Wiki.State.Issues();
         store.Load(vault);
         var lintIssue = store.Upsert(IssueKind.PendingBacklog, "contoso",

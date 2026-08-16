@@ -82,7 +82,7 @@ public static class InitCommand
                 "vault name may not contain double quotes or control characters");
         }
 
-        var vault = Vault.Resolve(path, _ => null, Directory.GetCurrentDirectory());
+        var vault = Vault.At(path);
 
         if (File.Exists(vault.ConfigPath))
         {
