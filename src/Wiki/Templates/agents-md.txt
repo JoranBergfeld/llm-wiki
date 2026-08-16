@@ -3,6 +3,12 @@ You maintain this wiki exclusively through the `wiki` CLI. You never create,
 edit, move, or delete files in this vault directly. Always pass --json and
 parse the result. On exit code 1, read errors[].code, fix your input, retry once.
 
+Page bodies go in a temp file outside the vault, passed as --body-file <path>;
+--stdin still works but a shell pipe is where quoting and encoding break, and
+this binary runs on Windows as well as Unix. Prefer --vault <path> over the
+WIKI_VAULT environment variable for the same reason: it reads the same in
+every shell.
+
 ## Conventions
 - Page types: summary (one per source), entity (nameable thing), concept
   (cross-source theme), overview (singleton).
@@ -41,7 +47,7 @@ Never scan bodies to discover relevance.
 | Register a configured inbox | `wiki source scan <dir> --category <id> [--dry-run]` |
 | List categories | `wiki category list` |
 | Propose a new category | `wiki category propose <id> --description "…" --rationale "…" --sources <ids>` |
-| Write or replace a page body | `wiki page upsert --type <t> --title "…" [--id <id>] --summary "…" --sources <ids> --stdin` |
+| Write or replace a page body | `wiki page upsert --type <t> --title "…" [--id <id>] --summary "…" --sources <ids> --body-file <path>` |
 | Record ingest progress | `wiki ingest advance <source-id> --to <state> [--touched <ids>]` |
 | Check vault health | `wiki lint` |
 | Score retrieval quality | `wiki eval [--k N]` (needs a human-owned eval.yaml) |
@@ -50,7 +56,7 @@ Never scan bodies to discover relevance.
 | Record an audit verdict | `wiki audit record <page-id> --verdict supported\|unsupported --note "…"` |
 | See outstanding repairs | `wiki issues list --status open [--kind <k>]` |
 | Close a repair | `wiki issues resolve <issue-id> --note "…"` |
-| Amend these instructions | `wiki schema propose --section "<heading>" --stdin` |
+| Amend these instructions | `wiki schema propose --section "<heading>" --body-file <path>` |
 
 Always pass `--json`. Exit codes: 0 success · 1 your input was rejected — read
 `errors[].code`, correct it, retry once, never retry blind · 2 environment/IO
@@ -75,7 +81,7 @@ treat as a no-op and move on.
 2. Read it: `wiki source show <source-id>` (reading is unrestricted; only
    writing is mediated).
 3. Write the summary page, then record the step:
-   `wiki page upsert --type summary --title "…" --summary "…" --sources <source-id> --stdin`
+   `wiki page upsert --type summary --title "…" --summary "…" --sources <source-id> --body-file <path>`
    `wiki ingest advance <source-id> --to summarized`
 4. Find the entities/concepts this source affects via `wiki index show` and
    `wiki search`; upsert each one — new page or edit per the heuristic above —
@@ -99,5 +105,5 @@ a human to weigh; it is a finding, not a fact. One page per tick at most.
 
 ### Reflect
 If an issue kind recurs across lints, draft the new full text for the relevant
-AGENTS.md section and submit via `wiki schema propose --section "<heading>" --stdin`
+AGENTS.md section and submit via `wiki schema propose --section "<heading>" --body-file <path>`
 with rationale citing issue IDs. Never edit this file directly.
