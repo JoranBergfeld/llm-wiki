@@ -1,0 +1,17 @@
+# Normalize every text file to LF in the repository AND in the working tree.
+#
+# Why eol=lf and not the git default: several test fixtures are C# raw string
+# literals (`"""..."""`) whose content includes the source file's own line
+# endings, and the tests then do `.Replace("...\n", "")` against them. Under a
+# CRLF checkout (Windows `core.autocrlf=true`) those literals contain \r\n, the
+# replace silently matches nothing, and the assertion fails - 7 tests in
+# FrontmatterTests/VaultConfigTests broke exactly this way. The CLI itself
+# normalizes \r\n on read everywhere, so LF working-tree files cost nothing and
+# keep the suite green on every platform, including the win-x64 target we ship.
+* text=auto eol=lf
+
+# Binary-ish assets that must never be line-ending converted.
+*.png binary
+*.gif binary
+*.jpg binary
+*.ico binary

@@ -37,8 +37,7 @@ public static class IndexCommand
             var type = string.IsNullOrEmpty(typeRaw) ? (PageType?)null : PageTypeX.Parse(typeRaw);
 
             var vault = ctx.ResolveVault();
-            var service = new PageService();
-            var results = service.IndexShow(vault, type);
+            var results = PageQuery.IndexShow(vault, type);
 
             if (ctx.Json)
             {

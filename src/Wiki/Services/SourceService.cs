@@ -113,11 +113,11 @@ public sealed class SourceService
 
         // Frontmatter schema gate: reject a title that would corrupt the
         // closed-schema quoting round-trip (a stray '"' or newline) - same
-        // rationale/shape as PageService.GuardScalar for page title/summary.
-        GuardScalar(title, "title");
+        // rationale/shape as the page title/summary guard.
+        Scalar.GuardSingleLineQuotable(title, "title", "frontmatter-schema");
 
         var resolvedOrigin = string.IsNullOrWhiteSpace(origin) ? "manual" : origin;
-        GuardScalar(resolvedOrigin, "origin");
+        Scalar.GuardSingleLineQuotable(resolvedOrigin, "origin", "frontmatter-schema");
 
         var content = File.ReadAllText(file);
         var sha256 = ComputeSha256Hex(content);
@@ -156,10 +156,9 @@ public sealed class SourceService
 
         // --- Validation complete. Everything from here on is the write. ---
 
-        // This is the one sanctioned write under raw/: called directly, NOT
-        // through AtomicFile.GuardWritable (that guard is the caller-invoked
-        // policy check every other command must pass before writing user
-        // content; source-add IS the allowed producer of raw/<id>.md).
+        // The one sanctioned write under raw/ (spec §11.5). The target path
+        // is derived from the id this method just minted, never from caller
+        // input, which is how the "no other write path under raw/" rule holds.
         AtomicFile.Write(targetPath, serialized);
 
         var relPath = Path.GetRelativePath(v.Root, targetPath).Replace('\\', '/');
@@ -189,7 +188,7 @@ public sealed class SourceService
     public IReadOnlyList<SourceSummary> List(Vault v, SourceStatus? status, string? category)
     {
         var result = new List<SourceSummary>();
-        foreach (var (_, front) in EnumerateSources(v))
+        foreach (var (front, _) in SourceStore.Enumerate(v))
         {
             if (status is not null && front.Status != status.Value) continue;
             if (category is not null && !string.Equals(front.Category, category, StringComparison.Ordinal)) continue;
@@ -300,7 +299,7 @@ public sealed class SourceService
 
         if (string.IsNullOrWhiteSpace(reason))
             throw new ValidationException("reason-required", "--reason is required to retract a source");
-        GuardScalar(reason, "reason");
+        Scalar.GuardSingleLineQuotable(reason, "reason", "frontmatter-schema");
 
         var (front, body, fullPath) = ResolveSource(v, id);
 
@@ -433,43 +432,14 @@ public sealed class SourceService
         return (front, body, fullPath);
     }
 
-    // Scans raw/*.md (TopDirectoryOnly - raw/assets/ is a subdirectory and is
-    // never visited), sorted for deterministic order, same shape as
-    // FindExistingSourceIdBySha / ReindexService.EnumerateRawSources.
-    private static IEnumerable<(string Id, SourceFrontmatter Front)> EnumerateSources(Vault v)
-    {
-        if (!Directory.Exists(v.RawDir))
-            yield break;
-
-        var files = new List<string>(Directory.EnumerateFiles(v.RawDir, "*.md", SearchOption.TopDirectoryOnly));
-        files.Sort(StringComparer.Ordinal);
-
-        foreach (var f in files)
-        {
-            var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(f));
-            var front = SourceFrontmatter.FromRaw(scalars, lists);
-            yield return (front.Id, front);
-        }
-    }
-
-    // Scans raw/*.md (TopDirectoryOnly - raw/assets/ is a subdirectory and is
-    // never visited) looking for a source frontmatter whose sha256 matches.
-    // Sorted for deterministic scan order, matching ReindexService's
-    // EnumerateRawSources / PageStore's directory sorts.
+    // Scans raw/*.md for a source whose sha256 matches - the dedup check on
+    // `source add`. Walk order and skip rules live in SourceStore.
     private static string? FindExistingSourceIdBySha(Vault v, string sha256)
     {
-        if (!Directory.Exists(v.RawDir))
-            return null;
-
-        var files = new List<string>(Directory.EnumerateFiles(v.RawDir, "*.md", SearchOption.TopDirectoryOnly));
-        files.Sort(StringComparer.Ordinal);
-
-        foreach (var f in files)
+        foreach (var (front, _) in SourceStore.Enumerate(v))
         {
-            var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(f));
-            var existingFront = SourceFrontmatter.FromRaw(scalars, lists);
-            if (string.Equals(existingFront.Sha256, sha256, StringComparison.OrdinalIgnoreCase))
-                return existingFront.Id;
+            if (string.Equals(front.Sha256, sha256, StringComparison.OrdinalIgnoreCase))
+                return front.Id;
         }
         return null;
     }
@@ -487,14 +457,6 @@ public sealed class SourceService
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
-    private static void GuardScalar(string value, string field)
-    {
-        foreach (var c in value)
-        {
-            if (c == '"' || c == '\n' || c == '\r')
-                throw new ValidationException("frontmatter-schema", $"'{field}' may not contain quotes or newlines");
-        }
-    }
 
     private static byte[] DefaultRandomBytes()
     {

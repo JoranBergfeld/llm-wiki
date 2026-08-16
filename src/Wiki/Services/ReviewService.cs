@@ -53,9 +53,9 @@ public sealed class ReviewService
             if (front.Status != PageStatus.PendingReview)
                 continue;
 
-            var prevBody = ReviewShadow.Load(v, front.Id);
-            var isUpdate = prevBody is not null;
-            var diff = isUpdate ? UnifiedDiff(prevBody!, body) : null;
+            var snapshot = ReviewShadow.Load(v, front.Id);
+            var isUpdate = snapshot is not null;
+            var diff = isUpdate ? UnifiedDiff(snapshot!.Body, body) : null;
 
             result.Add(new PendingView(front.Id, slug, front.Title, PageTypeX.ToWire(front.Type), isUpdate, diff));
         }
@@ -98,8 +98,8 @@ public sealed class ReviewService
     public void Reject(Vault v, string pageId, string? note)
     {
         var (fullPath, doc, slug) = ResolvePending(v, pageId);
-        var prevBody = ReviewShadow.Load(v, pageId);
-        var isUpdate = prevBody is not null;
+        var snapshot = ReviewShadow.Load(v, pageId);
+        var isUpdate = snapshot is not null;
 
         var nowMs = _nowUnixMs();
         var nowUtc = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime;
@@ -108,19 +108,27 @@ public sealed class ReviewService
 
         if (isUpdate)
         {
+            // Restore the status the page held before the gate captured it,
+            // not an unconditional `active` (amendment K): rejecting an edit
+            // to a `needs-review` page must leave it needing review. A
+            // body-only shadow from a pre-amendment build carries no status,
+            // so it falls back to `active` - the old behaviour, applied only
+            // where the information genuinely isn't there.
+            var restoredStatus = snapshot!.PreviousStatus ?? PageStatus.Active;
+
             var restoredFront = new PageFrontmatter
             {
                 Id = doc.Front.Id,
                 Type = doc.Front.Type,
                 Title = doc.Front.Title,
-                Status = PageStatus.Active,
+                Status = restoredStatus,
                 Created = doc.Front.Created,
                 Updated = today,
                 Summary = doc.Front.Summary,
                 Sources = doc.Front.Sources,
                 Tags = doc.Front.Tags,
             };
-            var serialized = new PageDoc(restoredFront, prevBody!).Serialize();
+            var serialized = new PageDoc(restoredFront, snapshot.Body).Serialize();
             // Frontmatter schema gate proper: must round-trip through the
             // same closed-schema parser real page files are read back with.
             PageDoc.Parse(serialized);
@@ -149,7 +157,8 @@ public sealed class ReviewService
         var issues = new Issues();
         issues.Load(v);
         var detail = isUpdate
-            ? $"rejected update to '{slug}' (id={pageId}); previous body restored, status set to active"
+            ? $"rejected update to '{slug}' (id={pageId}); previous body restored, status set to " +
+              PageStatusX.ToWire(snapshot!.PreviousStatus ?? PageStatus.Active)
             : $"rejected create of '{slug}' (id={pageId}); no prior version to restore, status set to archived";
         if (!string.IsNullOrWhiteSpace(note))
             detail += $"; note: {note}";

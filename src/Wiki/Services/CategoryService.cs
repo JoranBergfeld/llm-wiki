@@ -42,7 +42,7 @@ public sealed class CategoryService
         if (cfg.HasCategory(id))
             throw new ValidationException("duplicate-category", $"category '{id}' already exists in wiki.yaml");
 
-        GuardScalar(description, "description");
+        Scalar.GuardSingleLineQuotable(description, "description", "invalid-description");
 
         var text = System.IO.File.ReadAllText(v.ConfigPath);
         var updated = InsertCategory(v.ConfigPath, text, id, description);
@@ -57,6 +57,62 @@ public sealed class CategoryService
         VaultConfig.Load(v.ConfigPath);
 
         return new CategoryAddResult(id, description);
+    }
+
+    // Spec §5 / amendment N: "removing a category that sources still
+    // reference is a blocking config error". Enforced here rather than inside
+    // VaultConfig.Load, which parses a file path and has no vault to scan.
+    //
+    // Called from CommandContext.LoadConfig, so it gates every command that
+    // reads config - which is the mutation surface (`page upsert`,
+    // `source add`, `lint`, `ingest advance`) plus `category`. The `category`
+    // command deliberately bypasses it: `wiki category add <dropped-id>` is
+    // the repair, and a check that blocks its own fix is a trap.
+    //
+    // Retracted sources count. Their raw/ file is still on disk carrying the
+    // category (retraction flips `status`, it does not delete the record), so
+    // the reference is real and the category is still load-bearing.
+    //
+    // Cost is one frontmatter scan of raw/*.md per config-reading invocation -
+    // the same scan `source list` already does on every call.
+    public static void EnsureCategoriesCoverSources(Vault v, VaultConfig cfg)
+    {
+        // Which sources reference each missing category - collected rather
+        // than short-circuited so the error can name them. A human who
+        // deleted a category needs to know what they broke, not just that
+        // they broke something.
+        var missing = new SortedDictionary<string, List<string>>(System.StringComparer.Ordinal);
+
+        // Tolerant read: this runs on every config-reading command, so an
+        // unparseable stray file under raw/ must not brick the CLI with a
+        // frontmatter error unrelated to what the caller asked for. Strict
+        // readers (dedup, reindex) still surface those loudly.
+        foreach (var (front, _) in SourceStore.Enumerate(v, skipUnparseable: true))
+        {
+            if (cfg.HasCategory(front.Category))
+                continue;
+
+            if (!missing.TryGetValue(front.Category, out var ids))
+            {
+                ids = new List<string>();
+                missing[front.Category] = ids;
+            }
+            ids.Add(front.Id);
+        }
+
+        if (missing.Count == 0)
+            return;
+
+        var parts = new List<string>();
+        foreach (var (category, ids) in missing)
+            parts.Add($"'{category}' (referenced by {ids.Count} source(s): {string.Join(", ", ids)})");
+
+        var first = System.Linq.Enumerable.First(missing.Keys);
+        throw new ValidationException("category-in-use",
+            $"wiki.yaml is missing {parts.Count} category/categories that registered sources still reference: " +
+            $"{string.Join("; ", parts)}. Restore it with " +
+            $"'wiki category add {first} --description \"...\"', or retract and purge the sources that use it.",
+            v.ConfigPath);
     }
 
     public IReadOnlyList<CategoryData> List(VaultConfig cfg)
@@ -88,10 +144,10 @@ public sealed class CategoryService
         var i = categoriesLine + 1;
         while (i < lines.Count)
         {
-            if (!IsListItemStart(lines[i]) || !StripComment(lines[i]).Trim().StartsWith("- id:", System.StringComparison.Ordinal))
+            if (!IsListItemStart(lines[i]) || !VaultConfig.StripInlineComment(lines[i]).Trim().StartsWith("- id:", System.StringComparison.Ordinal))
                 break;
             if (i + 1 >= lines.Count || !IsIndentedContinuation(lines[i + 1]) ||
-                !StripComment(lines[i + 1]).Trim().StartsWith("description:", System.StringComparison.Ordinal))
+                !VaultConfig.StripInlineComment(lines[i + 1]).Trim().StartsWith("description:", System.StringComparison.Ordinal))
                 break;
             i += 2;
             insertAt = i;
@@ -118,7 +174,7 @@ public sealed class CategoryService
             var line = lines[i];
             if (line.Length > 0 && (line[0] == ' ' || line[0] == '\t'))
                 continue;
-            if (StripComment(line).Trim() == key)
+            if (VaultConfig.StripInlineComment(line).Trim() == key)
                 return i;
         }
         return -1;
@@ -140,40 +196,5 @@ public sealed class CategoryService
         return trimmed.Length > 0 && !trimmed.StartsWith("- ", System.StringComparison.Ordinal);
     }
 
-    // Same quote-aware inline-comment stripper as VaultConfig - duplicated
-    // (not shared) because it's a five-line leaf helper and pulling it out
-    // into a shared utility for one caller isn't worth the indirection.
-    private static string StripComment(string line)
-    {
-        var inQuotes = false;
-        for (var i = 0; i < line.Length; i++)
-        {
-            var c = line[i];
-            if (c == '"')
-            {
-                inQuotes = !inQuotes;
-            }
-            else if (c == '#' && !inQuotes && (i == 0 || char.IsWhiteSpace(line[i - 1])))
-            {
-                return line[..i].TrimEnd();
-            }
-        }
-        return line.TrimEnd();
-    }
 
-    // wiki.yaml is config, not frontmatter: a description with a stray '"' or
-    // newline would corrupt the single-line quoted value this inserts (the
-    // parser has no quote-escaping), so it's rejected here. Code is
-    // `invalid-description` - a config-appropriate code, NOT the
-    // `frontmatter-schema` code SourceService/PageService use, since an agent
-    // branching on errors[].code shouldn't be told a wiki.yaml edit failed a
-    // page/source frontmatter rule.
-    private static void GuardScalar(string value, string field)
-    {
-        foreach (var c in value)
-        {
-            if (c == '"' || c == '\n' || c == '\r')
-                throw new ValidationException("invalid-description", $"'{field}' may not contain quotes or newlines");
-        }
-    }
 }

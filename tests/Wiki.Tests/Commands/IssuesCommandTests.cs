@@ -25,7 +25,7 @@ public class IssuesCommandTests
     // A flag-rooted Vault doesn't require wiki.yaml (same trick IdMapTests/
     // IssuesTests use) - enough to point Issues.Save at the vault the CLI
     // will later resolve via --vault.
-    private static Vault MakeVault(string root) => Vault.Resolve(root, _ => null, root);
+    private static Vault MakeVault(string root) => Vault.At(root);
 
     private static string SeedOpenIssue(TempVault tv, IssueKind kind, string subject, string detail, string utcIso)
     {

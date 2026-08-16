@@ -206,7 +206,7 @@ public sealed class VaultConfig
     // by whitespace. So `name: "C# shop"  # note` keeps the internal `#`, `a#b` stays literal
     // (no space before `#`), and `categories:  # ...` / `staleness_days: 90  # ...` are cut.
     // Leading indentation is preserved; only from the comment onward (and trailing space) is dropped.
-    private static string StripInlineComment(string line)
+    internal static string StripInlineComment(string line)
     {
         bool inQuotes = false;
         for (int i = 0; i < line.Length; i++)

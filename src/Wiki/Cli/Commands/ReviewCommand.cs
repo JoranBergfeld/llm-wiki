@@ -66,7 +66,7 @@ public static class ReviewCommand
             var service = new ReviewService();
             service.Approve(vault, id);
 
-            var view = new PageService().Show(vault, id, frontmatterOnly: true);
+            var view = PageQuery.Show(vault, id, frontmatterOnly: true);
             if (ctx.Json)
             {
                 ctx.EmitOk(view);
@@ -108,7 +108,7 @@ public static class ReviewCommand
             var service = new ReviewService();
             service.Reject(vault, id, note);
 
-            var view = new PageService().Show(vault, id, frontmatterOnly: true);
+            var view = PageQuery.Show(vault, id, frontmatterOnly: true);
             if (ctx.Json)
             {
                 ctx.EmitOk(view);

@@ -16,8 +16,15 @@ public static class App
 
     public static int Main(string[] args, TextWriter stdout, TextReader stdin)
     {
-        var root = BuildRootCommand(stdout, stdin);
+        var (root, jsonOption) = BuildRootCommand(stdout, stdin);
         var parseResult = root.Parse(args);
+
+        // Whether failures render as JSON or as Spectre (amendment P). Taken
+        // from the parsed result when the parse succeeded; on a parse error
+        // there is nothing trustworthy to read the option off, so fall back
+        // to scanning argv directly - a user who typed --json still gets JSON
+        // back even when what they typed was otherwise garbage.
+        var json = parseResult.Errors.Count > 0 ? WantsJson(args) : parseResult.GetValue(jsonOption);
 
         // Risk #1: System.CommandLine's built-in parse-error handling (unknown
         // command, missing required argument, ...) prints usage text straight
@@ -28,11 +35,11 @@ public static class App
         {
             var message = string.Join("; ", parseResult.Errors.Select(e => e.Message));
             var badCommand = args.Length > 0 ? args[0] : "";
-            OutputMode.Emit(stdout, Envelope.Failure(new WikiError
+            OutputMode.EmitFailure(stdout, json, new WikiError
             {
                 Code = "unknown-command",
                 Message = string.IsNullOrEmpty(message) ? $"unknown command '{badCommand}'" : message,
-            }));
+            });
             return 1;
         }
 
@@ -53,19 +60,31 @@ public static class App
         }
         catch (ValidationException vex)
         {
-            OutputMode.Emit(stdout, Envelope.Failure(new WikiError { Code = vex.Code, Message = vex.Message, Path = vex.Path }));
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = vex.Code, Message = vex.Message, Path = vex.Path });
             return 1;
         }
         catch (StateConflictException scex)
         {
-            OutputMode.Emit(stdout, Envelope.Failure(new WikiError { Code = scex.Code, Message = scex.Message, Path = scex.Path }));
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = scex.Code, Message = scex.Message, Path = scex.Path });
             return 3;
         }
         catch (Exception ex)
         {
-            OutputMode.Emit(stdout, Envelope.Failure(new WikiError { Code = "io-error", Message = ex.Message }));
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = "io-error", Message = ex.Message });
             return 2;
         }
+    }
+
+    // argv fallback for the parse-error path. Matches the bare flag and the
+    // `--json=true` / `--json:true` forms System.CommandLine also accepts.
+    private static bool WantsJson(string[] args)
+    {
+        foreach (var a in args)
+        {
+            if (a == "--json" || a.StartsWith("--json=", StringComparison.Ordinal) || a.StartsWith("--json:", StringComparison.Ordinal))
+                return true;
+        }
+        return false;
     }
 
     // Builds the full command tree fresh on every call (cheap; System.CommandLine
@@ -76,7 +95,7 @@ public static class App
     // Extension point for later tasks: add more `root.Add(XCommand.Build(...))`
     // calls here as command groups land. Nothing else in this method needs to
     // change.
-    private static RootCommand BuildRootCommand(TextWriter stdout, TextReader stdin)
+    private static (RootCommand Root, Option<bool> JsonOption) BuildRootCommand(TextWriter stdout, TextReader stdin)
     {
         var vaultOption = new Option<string?>("--vault")
         {
@@ -108,6 +127,6 @@ public static class App
         root.Add(SchemaCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(CategoryCommand.Build(vaultOption, jsonOption, stdout, stdin));
 
-        return root;
+        return (root, jsonOption);
     }
 }

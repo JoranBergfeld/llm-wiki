@@ -82,7 +82,7 @@ public class IndexFileTests
     {
         using var tv = new Wiki.Tests.Support.TempVault();
         System.IO.File.WriteAllText(System.IO.Path.Combine(tv.Path, "wiki.yaml"), "version: 1");
-        var v = Vault.Resolve(tv.Path, _ => null, tv.Path);
+        var v = Vault.At(tv.Path);
 
         var pages = new List<(string Slug, PageFrontmatter Front)>
         {

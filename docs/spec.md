@@ -114,7 +114,7 @@ lint:
 
 Rules:
 - `categories[].id`: lowercase kebab-case, unique. Referenced by every source.
-- Removing a category that sources still reference is a blocking config error.
+- Removing a category that sources still reference is a blocking config error, enforced on every config load (amendment N). `wiki category …` is exempt so the human can repair the config with the CLI rather than by hand.
 - Adding categories: `wiki category add <id> --description "…"` or direct file edit. **The CLI never adds categories on its own; there is no code path by which ingest creates one.** An unknown category on `wiki source add` is a blocking error instructing the human to add it first.
 
 ---
@@ -187,8 +187,8 @@ Blocking validation (§11) rejects any write whose frontmatter deviates from the
 
 ### Binary and global conventions
 
-- Binary name: `wiki`. Vault resolution: `--vault <path>` flag, else `WIKI_VAULT` env var, else walk up from CWD looking for `wiki.yaml`.
-- **`--json` on every command** emits a stable, versioned JSON envelope: `{"ok": bool, "data": …, "errors": [{"code": "…", "message": "…", "path": "…"}]}`. This is the primary agent interface; human-facing output uses Spectre.Console rendering.
+- Binary name: `wiki`. Vault resolution: `--vault <path>` flag, else `WIKI_VAULT` env var, else walk up from CWD looking for `wiki.yaml`. **All three branches require a `wiki.yaml` at the resolved root** (amendment M) — an explicit path that isn't a vault is an error, never an empty vault.
+- **`--json` on every command** emits a stable, versioned JSON envelope: `{"ok": bool, "data": …, "errors": [{"code": "…", "message": "…", "path": "…"}]}`. This is the primary agent interface; human-facing output uses Spectre.Console rendering — **on the failure path as well as the success path** (amendment P). Exit codes are identical in both modes.
 - Exit codes: `0` success · `1` blocking validation failure (input rejected, nothing written) · `2` environment/IO error · `3` state conflict (e.g., resuming a ledger step already done — safe, idempotent no-op reported).
 - Page bodies always arrive via **stdin** (`--stdin`) or `--body-file <path>`; never as shell arguments (quoting/size hazards).
 - Every mutating command appends one line to `wiki/log.md` in the format `## [2026-07-13T14:02:11Z] <op> | <subject> | <one-line detail>` (grep-parseable, per the gist).
@@ -229,8 +229,10 @@ wiki page set-status <id> <status>              Gate/lint workflows use this int
 wiki page backlinks <id|name>                   Inbound links — the agent's graph-navigation primitive
 
 # Retrieval support (deterministic map-first navigation, §13)
-wiki search <terms> [--type …] [--limit N]      Plain-text/regex search over frontmatter + bodies; returns
-                                                id, path, title, matching line — never full bodies
+wiki search <terms> [--type …] [--limit N]      Plain-text/regex search over frontmatter + bodies of BOTH wiki
+                [--regex] [--kind page|source]   pages and raw/ sources (amendment O); returns kind, id, path,
+                                                title, matching line — never full bodies. The result reports
+                                                `truncated` when --limit cut the scan short.
 wiki index show [--type …]                      Emit index.md entries as JSON (routing without file read)
 
 # Lint & issues (§12)
@@ -298,7 +300,7 @@ The canonical agent flow (encoded in AGENTS.md, enforced by ledger preconditions
 1. Frontmatter schema violation (missing/unknown keys, bad enum values, malformed ULID).
 2. Unknown `category` on source add.
 3. Unknown source ID in a page's `sources` list.
-4. `[[wikilink]]` in a submitted body whose target resolves to no existing page **and** is not among pages created in the same upsert batch → error lists each dangling link. (The agent may pass `--allow-dangling` to permit forward references; these are then filed automatically as `dangling-link` issues rather than silently ignored.)
+4. `[[wikilink]]` in a submitted body whose target resolves to no existing page **and** is not among pages created in the same upsert batch → error lists each dangling link. (The agent may pass `--allow-dangling` to permit forward references; these are then filed automatically as `dangling-link` issues rather than silently ignored — **filed by the upsert itself, at write time, not deferred to the next lint** (amendment L). The upsert's `danglingFiled` envelope field names the targets actually filed.)
 5. Any write path under `raw/` other than via `source add`; any edit to `index.md`/`log.md` other than by the CLI itself.
 6. Duplicate source content hash; duplicate page title within a type (case-insensitive) without explicit `--id` (i.e., accidental near-duplicate creation).
 7. Missing `--summary` on page creation.
@@ -369,7 +371,8 @@ The agent then works through `wiki issues list --kind retraction`: for each page
 
 When `review_gate: true`:
 
-- Every `page upsert` (create or update) lands with `status: pending-review`. For updates, the CLI writes the new body to the page but preserves the previous body under `.wiki/review/<page-id>.prev.md` so `wiki review list` can show a diff; `reject` restores the previous body. (This is the one place the CLI keeps a shadow copy; it is derived state, cleared on approve/reject.)
+- Every `page upsert` (create or update) lands with `status: pending-review`. For updates, the CLI writes the new body to the page but preserves the **last reviewed** body under `.wiki/review/<page-id>.prev.md` so `wiki review list` can show a diff; `reject` restores it. The shadow is written only when none exists, so a run of consecutive un-reviewed updates keeps pointing at the last body a human actually signed off on (amendment K). (This is the one place the CLI keeps a shadow copy; it is derived state, cleared on approve/reject.)
+- `reject` on an update restores the shadow body **and the status the page held before the gate captured it**, not an unconditional `active` (amendment K) — rejecting an edit to a `needs-review` page must not silently clear its needs-review flag.
 - `wiki review list` shows pending pages with diffs; `approve` activates, `reject` restores/archives and files an issue.
 - Lint excludes `pending-review` from orphan checks; AGENTS.md forbids citing them.
 
@@ -406,6 +409,8 @@ SQLite FTS5 hybrid search (`.wiki/search.db`, rebuildable) · MCP server wrappin
 
 ## Appendix A — AGENTS.md template (scaffolded by `wiki init`)
 
+The authoritative copy lives at `src/Wiki/Templates/agents-md.txt` (embedded resource); this reproduces it. The **Tool selection** table and the fully-written **Ingest** playbook are mandatory per §13 — an earlier draft left Ingest as the placeholder `(§10 sequence of the spec, verbatim.)`, which shipped an empty playbook into every scaffolded vault.
+
 ```markdown
 # Wiki Agent Instructions
 You maintain this wiki exclusively through the `wiki` CLI. You never create,
@@ -422,17 +427,59 @@ parse the result. On exit code 1, read errors[].code, fix your input, retry once
 - Never cite pages with status pending-review.
 
 ## Playbooks
+
 ### Session start
 1. `wiki ingest status` — finish interrupted work before anything else.
 2. `wiki issues list --status open` — know the outstanding repairs.
 
 ### Retrieval (answering questions)
 1. `wiki index show --json` and/or `wiki search <terms>` to route.
-2. Select at most 10 candidate pages. 3. Read only those bodies.
+2. Select at most 10 candidate pages.
+3. Read only those bodies.
 Never scan bodies to discover relevance.
 
+### Tool selection
+| Intent | Command |
+|---|---|
+| What work is unfinished? | `wiki ingest status` |
+| What do I do next for this source? | `wiki ingest resume <source-id>` |
+| Route to candidate pages | `wiki index show [--type <t>]` |
+| Find a term across the vault | `wiki search <terms> [--kind page\|source] [--regex]` |
+| What links here? | `wiki page backlinks <id\|name>` |
+| Read one page | `wiki page show <id\|name> [--frontmatter-only]` |
+| Read a raw source | `wiki source show <id>` |
+| Which pages cite this source? | `wiki source impact <id>` |
+| Write or replace a page body | `wiki page upsert --type <t> --title "…" [--id <id>] --summary "…" --sources <ids> --stdin` |
+| Record ingest progress | `wiki ingest advance <source-id> --to <state> [--touched <ids>]` |
+| Check vault health | `wiki lint` |
+| See outstanding repairs | `wiki issues list --status open [--kind <k>]` |
+| Close a repair | `wiki issues resolve <issue-id> --note "…"` |
+| Amend these instructions | `wiki schema propose --section "<heading>" --stdin` |
+
+Always pass `--json`. Exit codes: 0 success · 1 your input was rejected — read
+`errors[].code`, correct it, retry once, never retry blind · 2 environment/IO
+problem, do not retry · 3 state conflict, the world is already how you asked,
+treat as a no-op and move on.
+
 ### Ingest
-(§10 sequence of the spec, verbatim.)
+1. The human registers the source:
+   `wiki source add <file> --category <id> --title "…"` → state `registered`.
+2. Read it: `wiki source show <source-id>` (reading is unrestricted; only
+   writing is mediated).
+3. Write the summary page, then record the step:
+   `wiki page upsert --type summary --title "…" --summary "…" --sources <source-id> --stdin`
+   `wiki ingest advance <source-id> --to summarized`
+4. Find the entities/concepts this source affects via `wiki index show` and
+   `wiki search`; upsert each one — new page or edit per the heuristic above —
+   extending `--sources` with the new source id. Then:
+   `wiki ingest advance <source-id> --to integrated --touched <id1,id2,…>`
+5. Update `overview.md` if the source changes the top-level picture, then:
+   `wiki lint`
+   `wiki ingest advance <source-id> --to linted`
+
+Never skip a state: transitions advance one step at a time and each is
+precondition-checked. If you lose the thread mid-ingest, `wiki ingest resume
+<source-id>` reports exactly what remains.
 
 ### Reflect
 If an issue kind recurs across lints, draft the new full text for the relevant
@@ -456,3 +503,9 @@ Resolved during a spec-validation pass before implementation. These override the
 - **J. `linted` precondition is "lint ran at-or-after integration", not strictly after.** §10's `linted` row says "A lint run newer than the `integrated` timestamp exists". Timestamps are second-granularity, and the canonical agent flow is integrate-then-lint back-to-back — so an integrate and a lint landing in the same wall-clock second (realistic when an agent scripts commands) would fail a strict `lastRun > integratedAt` check even though the lint genuinely ran after integration, and would keep failing for up to a second with no hint why. So the precondition rejects only `lastRun < integratedAt` (i.e. accepts `lastRun >= integratedAt`). Worst case (a lint in the same second but fractionally before the integrate) is negligible and self-corrects on the next lint.
 - **I. Retraction cascade skips `archived` citing pages; already-retracted is a state conflict.** §14 step 3 says "every other page whose `sources` include the ID → `needs-review`", but flipping an `archived` page (which §7 defines as excluded from index and lint) back to `needs-review` resurrects dead history into active scope, contradicting the archive's purpose. So the cascade flags only NON-archived citing pages (`active`/`pending-review`/`needs-review`) → `needs-review` + a `retraction` issue; `archived` citers are left untouched. Also: `wiki source retract` on an already-retracted source is a state conflict (exit 3, idempotent no-op reported via `StateConflictException`), NOT a blocking input error (exit 1) — consistent with re-advancing a ledger to its current state.
 - **H. `IssueKind` is a closed enum broader than the §11 lint table.** The §11 table lists the 9 *advisory lint* kinds. But the system also files issues from non-lint workflows: review `reject` (§15) and source `retract` (§14, which literally references `wiki issues list --kind retraction`). So the closed `IssueKind` vocabulary is those 9 lint kinds PLUS `review-rejected` (a human rejected a pending page; the agent must revise) and `retraction` (a cited source was retracted; the page needs repair). These MUST be distinct kinds — reusing a lint kind like `pending-backlog` for a rejection collides on the Issues merge key `(kind, subject)` and silently corrupts the unrelated lint record's detail/occurrences (the reflect-loop signal). `review-rejected` is added in Task 23; `retraction` in Task 24.
+- **K. The review shadow holds the last REVIEWED body, and reject restores the prior status.** §15 said `page upsert` under the gate "preserves the previous body" — implemented literally, that overwrote `.wiki/review/<id>.prev.md` on *every* gated update. Two updates before a review therefore left the shadow holding the first *un-approved* edit, and rejecting restored that: the page landed `active` carrying content no human ever approved, which is precisely the outcome the gate exists to prevent. So the shadow is written only when none already exists — the first gated update after a review captures the reviewed body, and subsequent updates leave it alone. `approve`/`reject` clear it, re-arming the capture. Second half: `reject` on an update hardcoded `status: active`, silently clearing the flag on a page that was `needs-review` before the edit. The pre-gate status is now captured alongside the shadow body and restored with it; `active` is only the fallback when no captured status exists (a shadow written by an older build).
+- **L. `--allow-dangling` files its issues at write time.** §11.4 already said permitted forward references "are then filed automatically as `dangling-link` issues rather than silently ignored", but the upsert only *returned* the targets in its `danglingFiled` envelope field and left the actual filing to whenever `wiki lint` next ran. The field name asserted something untrue, and an agent that upserts with `--allow-dangling` and then reads `wiki issues list` saw nothing. Upsert now calls `Issues.Upsert(DanglingLink, <page-slug>, …)` itself, using the same `(kind, subject)` merge key lint uses — so a link that stays dangling accumulates occurrences on ONE record across both paths instead of forking into two.
+- **M. An explicit vault path must be a vault.** §8's resolution order (`--vault` → `WIKI_VAULT` → walk up from CWD) only validated the walk-up branch, which stops at a `wiki.yaml` by construction. The two explicit branches accepted any string: `wiki page list --vault ./typo --json` returned `{"ok":true,"data":[]}` with exit 0, making "this vault is empty" and "this path is not a vault" indistinguishable to the agent that is supposed to trust `ok`. Both explicit branches now require `wiki.yaml` at the resolved root and raise `no-vault` (exit 1) otherwise. `wiki init` is exempt — it is the command that *creates* the `wiki.yaml`, so it takes its target path as an argument rather than through resolution.
+- **N. The category-in-use rule is enforced, on config load.** §5's "removing a category that sources still reference is a blocking config error" had no implementation: `VaultConfig.Load` validated syntax, kebab-case and duplicates but never looked at `raw/`. Enforcement now lives in the config-load path used by commands (not in `VaultConfig.Load` itself, which parses a file and knows nothing about a vault), so a config that has lost a referenced category fails every command that reads it, per "blocking config error". Two carve-outs keep it usable: `wiki category …` is exempt, because `wiki category add <missing-id>` is the intended repair and a check that blocks its own fix is a trap; and the error names the offending category, the sources referencing it, and the exact `wiki category add` line to run. Cost is one frontmatter scan of `raw/*.md` per invocation of a config-reading command, which is the same scan `source list` already does.
+- **O. `wiki search` covers `raw/` sources, and reports truncation.** §8 scoped search to "frontmatter + bodies" without saying whose; the implementation read wiki pages only, so the agent's one text-search primitive was blind to the raw material the wiki is built from — with no way to find which source mentioned a term except reading files directly, which §13's retrieval playbook forbids. Search now scans pages and sources both; each `Hit` carries `kind: "page" | "source"`, and `--kind` filters to one or the other (`--type` continues to filter page types and implies `--kind page`). Separately, `--limit` used to stop the scan silently, so a truncated result was indistinguishable from an exhaustive one; the result is now an object `{hits, truncated, scanned}` rather than a bare array.
+- **P. Human-mode errors render as Spectre, not JSON.** §8 says "human-facing output uses Spectre.Console rendering", and success paths did — but every failure path emitted the raw JSON envelope regardless of `--json`, so an interactive user got `{"v":1,"ok":false,…}` with `'`-escaped quotes. Failures now render as a Spectre error line (code, message, and `path` when present) unless `--json` was passed. The envelope, the error codes, and the exit codes are unchanged in both modes — this is presentation only, and `--json` output is byte-for-byte what it was.

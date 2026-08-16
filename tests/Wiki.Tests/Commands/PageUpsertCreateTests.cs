@@ -59,7 +59,7 @@ public class PageUpsertCreateTests
 
         var ok = tv.RunStdin("See [[ghost]].", "page", "upsert", "--type", "concept",
             "--title", "T", "--summary", "s", "--allow-dangling", "--json");
-        Assert.Equal(0, ok.ExitCode); // filed as issue in M3; for now just permitted
+        Assert.Equal(0, ok.ExitCode); // permitted, and filed as a dangling-link issue by the upsert (amendment L)
         Assert.True(File.Exists(Path.Combine(tv.Path, "wiki", "concepts", "t.md")));
     }
 

@@ -50,7 +50,7 @@ public sealed class ReindexService
         var pages = PageStore.Enumerate(v);
         foreach (var (slug, front) in pages)
         {
-            idmap.Put(front.Id, RelPathFor(v, slug, front));
+            idmap.Put(front.Id, PagePaths.Relative(v, slug, front));
         }
 
         idmap.Save(v);
@@ -103,35 +103,11 @@ public sealed class ReindexService
     }
 
     // raw/*.md carry source frontmatter (id, type: source, category, ...).
-    // raw/assets/ holds attachments, not sources - TopDirectoryOnly already
-    // excludes it since it's a subdirectory, so no explicit skip is needed.
-    // Sorted for the same deterministic-enumeration reason PageStore sorts
-    // its directory listings.
+    // Walk order and the raw/assets/ exclusion live in SourceStore.
     private static IEnumerable<(string Id, string RelPath)> EnumerateRawSources(Vault v)
     {
-        if (!Directory.Exists(v.RawDir))
-            yield break;
-
-        var files = new List<string>(Directory.EnumerateFiles(v.RawDir, "*.md", SearchOption.TopDirectoryOnly));
-        files.Sort(System.StringComparer.Ordinal);
-
-        foreach (var file in files)
-        {
-            var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(file));
-            var front = SourceFrontmatter.FromRaw(scalars, lists);
-            var relPath = Path.GetRelativePath(v.Root, file).Replace('\\', '/');
-            yield return (front.Id, relPath);
-        }
+        foreach (var (front, fullPath) in SourceStore.Enumerate(v))
+            yield return (front.Id, Path.GetRelativePath(v.Root, fullPath).Replace('\\', '/'));
     }
 
-    // Mirrors PageService.Show's slug->path reconstruction: overview is the
-    // fixed-path singleton `wiki/overview.md`, everything else lives at
-    // `wiki/<type-dir>/<slug>.md`.
-    private static string RelPathFor(Vault v, string slug, PageFrontmatter front)
-    {
-        var full = front.Type == PageType.Overview
-            ? Path.Combine(v.WikiDir, "overview.md")
-            : Path.Combine(v.PageDir(front.Type), slug + ".md");
-        return Path.GetRelativePath(v.Root, full).Replace('\\', '/');
-    }
 }

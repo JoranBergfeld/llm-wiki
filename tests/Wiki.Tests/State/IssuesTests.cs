@@ -14,7 +14,7 @@ public class IssuesTests
     // A flag-rooted Vault doesn't require wiki.yaml to exist (same trick
     // IdMapTests uses) - enough to get a Vault pointed at a scratch directory
     // for issues.json round-trips.
-    static Vault MakeVault(string root) => Vault.Resolve(root, _ => null, root);
+    static Vault MakeVault(string root) => Vault.At(root);
 
     private const string T1 = "2024-01-01T00:00:00Z";
     private const string T2 = "2024-01-02T00:00:00Z";

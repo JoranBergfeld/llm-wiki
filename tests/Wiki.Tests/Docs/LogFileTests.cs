@@ -11,7 +11,7 @@ public class LogFileTests
     {
         using var tv = new Wiki.Tests.Support.TempVault();
         System.IO.File.WriteAllText(System.IO.Path.Combine(tv.Path, "wiki.yaml"), "version: 1");
-        var v = Vault.Resolve(tv.Path, _ => null, tv.Path);
+        var v = Vault.At(tv.Path);
 
         var utcIso = "2026-07-14T12:34:56Z";
         var op = "create";
@@ -29,7 +29,7 @@ public class LogFileTests
     {
         using var tv = new Wiki.Tests.Support.TempVault();
         System.IO.File.WriteAllText(System.IO.Path.Combine(tv.Path, "wiki.yaml"), "version: 1");
-        var v = Vault.Resolve(tv.Path, _ => null, tv.Path);
+        var v = Vault.At(tv.Path);
 
         LogFile.Append(v, "2026-07-14T12:34:56Z", "create", "page1.md", "first entry");
         LogFile.Append(v, "2026-07-14T12:34:57Z", "update", "page2.md", "second entry");

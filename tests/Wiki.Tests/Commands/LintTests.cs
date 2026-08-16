@@ -154,6 +154,83 @@ public class LintTests
         Assert.Contains("ghost", dangling[0].GetProperty("detail").GetString());
     }
 
+    // amendment L: the upsert itself files the issue. §11.4 always said
+    // --allow-dangling links "are then filed automatically ... rather than
+    // silently ignored", but the filing used to wait for the next lint - so
+    // an agent that upserted and then read `issues list` saw nothing, while
+    // the envelope's `danglingFiled` field claimed otherwise.
+    [Fact]
+    public void AllowDangling_FilesIssueAtWriteTime_WithoutWaitingForLint()
+    {
+        using var tv = new TempVault(); Init(tv);
+
+        var r = tv.RunStdin("See [[ghost]] and [[phantom]].", "page", "upsert", "--type", "entity",
+            "--title", "Haunted", "--summary", "s", "--allow-dangling", "--json");
+        Assert.Equal(0, r.ExitCode);
+
+        // No lint run in between.
+        var dangling = IssuesList(tv, "dangling-link");
+        Assert.Equal(1, dangling.GetArrayLength());
+        Assert.Equal("haunted", dangling[0].GetProperty("subject").GetString());
+        var detail = dangling[0].GetProperty("detail").GetString()!;
+        Assert.Contains("ghost", detail);
+        Assert.Contains("phantom", detail);
+        Assert.Equal(1, dangling[0].GetProperty("occurrences").GetInt32());
+    }
+
+    // The upsert-filed issue and the lint-filed one must be ONE record: both
+    // file under (DanglingLink, <slug>), so a link that stays dangling
+    // accumulates occurrences instead of forking into two issues and
+    // corrupting the reflect-loop signal.
+    [Fact]
+    public void AllowDangling_UpsertFiledIssue_MergesWithLaterLint_NotDuplicated()
+    {
+        using var tv = new TempVault(); Init(tv);
+
+        tv.RunStdin("See [[ghost]].", "page", "upsert", "--type", "entity",
+            "--title", "Haunted", "--summary", "s", "--allow-dangling", "--json");
+        Assert.Equal(0, tv.Run("lint", "--json").ExitCode);
+
+        var dangling = IssuesList(tv, "dangling-link");
+        Assert.Equal(1, dangling.GetArrayLength());
+        Assert.Equal(2, dangling[0].GetProperty("occurrences").GetInt32());
+    }
+
+    // An update that introduces a NEW forward reference files against the
+    // same page subject, same as create.
+    [Fact]
+    public void AllowDangling_OnUpdate_FilesIssueAtWriteTime()
+    {
+        using var tv = new TempVault(); Init(tv);
+
+        var created = tv.RunStdin("No links yet.", "page", "upsert", "--type", "entity",
+            "--title", "Haunted", "--summary", "s", "--json");
+        var id = ExtractId(created);
+        Assert.Equal(0, IssuesList(tv, "dangling-link").GetArrayLength());
+
+        var updated = tv.RunStdin("Now see [[ghost]].", "page", "upsert", "--id", id, "--type", "entity",
+            "--title", "Haunted", "--summary", "s", "--allow-dangling", "--json");
+        Assert.Equal(0, updated.ExitCode);
+
+        var dangling = IssuesList(tv, "dangling-link");
+        Assert.Equal(1, dangling.GetArrayLength());
+        Assert.Equal("haunted", dangling[0].GetProperty("subject").GetString());
+        Assert.Contains("ghost", dangling[0].GetProperty("detail").GetString());
+    }
+
+    // A clean upsert files nothing - the filing is scoped to actual dangling
+    // targets, not to every use of the flag.
+    [Fact]
+    public void AllowDangling_WithNoDanglingTargets_FilesNothing()
+    {
+        using var tv = new TempVault(); Init(tv);
+
+        var r = tv.RunStdin("Plain body, no links.", "page", "upsert", "--type", "entity",
+            "--title", "Haunted", "--summary", "s", "--allow-dangling", "--json");
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal(0, IssuesList(tv, "dangling-link").GetArrayLength());
+    }
+
     // -------------------- rename-drift + --fix-links --------------------
 
     [Fact]

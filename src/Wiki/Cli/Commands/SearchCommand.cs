@@ -41,11 +41,16 @@ public static class SearchCommand
         {
             Description = "Treat <terms> as a case-insensitive regex instead of a plain-text substring",
         };
+        var kindOption = new Option<string?>("--kind")
+        {
+            Description = "Restrict to wiki pages or raw sources: page | source (default: both)",
+        };
 
-        var search = new Command("search", "Plain-text/regex search over page frontmatter + bodies; returns matching lines only, never full bodies")
+        var search = new Command("search", "Plain-text/regex search over page and source frontmatter + bodies; returns matching lines only, never full bodies")
         {
             termsArgument,
             typeOption,
+            kindOption,
             limitOption,
             regexOption,
         };
@@ -57,18 +62,20 @@ public static class SearchCommand
             var type = string.IsNullOrEmpty(typeRaw) ? (PageType?)null : PageTypeX.Parse(typeRaw);
             var limit = parseResult.GetValue(limitOption);
             var regex = parseResult.GetValue(regexOption);
+            var kindRaw = parseResult.GetValue(kindOption);
+            var kind = string.IsNullOrEmpty(kindRaw) ? (SearchKind?)null : SearchKindX.Parse(kindRaw);
 
             var vault = ctx.ResolveVault();
             var service = new SearchService();
-            var hits = service.Search(vault, terms, type, limit, regex);
+            var report = service.Search(vault, terms, type, kind, limit, regex);
 
             if (ctx.Json)
             {
-                ctx.EmitOk(ToArray(hits));
+                ctx.EmitOk(report);
             }
             else
             {
-                RenderHitsTable(ctx.Out, hits);
+                RenderHitsTable(ctx.Out, report);
             }
             return 0;
         }));
@@ -76,27 +83,21 @@ public static class SearchCommand
         return search;
     }
 
-    private static Hit[] ToArray(IReadOnlyList<Hit> hits)
-    {
-        var array = new Hit[hits.Count];
-        for (var i = 0; i < hits.Count; i++)
-            array[i] = hits[i];
-        return array;
-    }
-
-    private static void RenderHitsTable(TextWriter output, IReadOnlyList<Hit> hits)
+    private static void RenderHitsTable(TextWriter output, SearchReport report)
     {
         var console = AnsiConsole.Create(new AnsiConsoleSettings { Out = new AnsiConsoleOutput(output) });
 
         var table = new Table();
+        table.AddColumn("Kind");
         table.AddColumn("Path");
         table.AddColumn("Line");
         table.AddColumn("Title");
         table.AddColumn("Match");
 
-        foreach (var hit in hits)
+        foreach (var hit in report.Hits)
         {
             table.AddRow(
+                Markup.Escape(hit.Kind),
                 Markup.Escape(hit.Path),
                 hit.Line.ToString(),
                 Markup.Escape(hit.Title),
@@ -104,6 +105,8 @@ public static class SearchCommand
         }
 
         console.Write(table);
-        console.MarkupLine($"[grey]{hits.Count} hit(s)[/]");
+        console.MarkupLine($"[grey]{Markup.Escape(report.HumanSummary())}[/]");
+        if (report.Truncated)
+            console.MarkupLine("[yellow]results truncated - raise --limit to see the rest[/]");
     }
 }
