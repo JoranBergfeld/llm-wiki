@@ -606,7 +606,7 @@ public sealed class PageService
             .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
         LogFile.Append(v, utcIso, "upsert", slug, $"update id={existingFront.Id} type={PageTypeX.ToWire(existingFront.Type)}");
 
-        var filedDangling = req.AllowDangling ? danglingTargets : Array.Empty<string>();
+        var filedDangling = FileDanglingIssues(v, slug, danglingTargets, req.AllowDangling, utcIso);
         return new UpsertResult(existingFront.Id, slug, relPath, PageStatusX.ToWire(front.Status), filedDangling);
     }
 
@@ -724,8 +724,40 @@ public sealed class PageService
             .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
         LogFile.Append(v, utcIso, "upsert", slug, $"create id={id} type={PageTypeX.ToWire(req.Type)}");
 
-        var filedDangling = req.AllowDangling ? danglingTargets : Array.Empty<string>();
+        var filedDangling = FileDanglingIssues(v, slug, danglingTargets, req.AllowDangling, utcIso);
         return new UpsertResult(id, slug, relPath, PageStatusX.ToWire(front.Status), filedDangling);
+    }
+
+    // Spec §11.4 + amendment L: forward references permitted by
+    // `--allow-dangling` are filed as `dangling-link` issues BY THE UPSERT,
+    // not left for the next `wiki lint`. Deferring meant an agent could
+    // upsert with the flag, read `wiki issues list`, and see nothing - while
+    // the upsert's own `danglingFiled` field claimed the targets had been
+    // filed.
+    //
+    // Subject is the page CONTAINING the link and the detail string matches
+    // LintService.CheckDanglingLinks verbatim, on purpose: Issues.Upsert
+    // merges on (kind, subject), so a link that stays dangling bumps
+    // occurrences on the SAME record whether it was the upsert or a later
+    // lint that saw it. Diverging on either would fork one problem into two
+    // issues and halve the occurrence count the reflect loop reads.
+    //
+    // Called AFTER the page write and log append (it is a consequence of a
+    // completed write, not a precondition for it) and only when the caller
+    // opted in - a rejected upsert files nothing, and neither does a clean one.
+    private static string[] FileDanglingIssues(
+        Vault v, string slug, string[] danglingTargets, bool allowDangling, string utcIso)
+    {
+        if (!allowDangling || danglingTargets.Length == 0)
+            return Array.Empty<string>();
+
+        var issues = new Issues();
+        issues.Load(v);
+        issues.Upsert(IssueKind.DanglingLink, slug,
+            $"dangling wikilink target(s): {string.Join(", ", danglingTargets)}", utcIso);
+        issues.Save(v);
+
+        return danglingTargets;
     }
 
     private static void GuardScalar(string value, string field)
