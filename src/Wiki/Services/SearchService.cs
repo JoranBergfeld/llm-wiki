@@ -1,39 +1,82 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
+using Wiki.Cli;
 using Wiki.Core;
 
 namespace Wiki.Services;
 
-// One matching line from `wiki search`. Deliberately narrow: Id/Path/Title
-// identify which page the hit came from, Line is the 1-based line number
-// within that page's raw file text (frontmatter block counts - line 1 is
-// always the opening '---'), MatchLine is the single matching line's text.
-// Never the full body - that's the whole point of this being the agent's
-// retrieval primitive instead of a "just read the file" shortcut (spec §13).
-public sealed record Hit(string Id, string Path, string Title, int Line, string MatchLine);
+// What a hit came from (amendment O). The agent's retrieval playbook routes
+// differently for the two - a page hit is followed by `wiki page show`, a
+// source hit by `wiki source show` - so the caller must not have to infer it
+// from the path prefix.
+public enum SearchKind { Page, Source }
 
-// `wiki search <terms> [--type] [--limit] [--regex]`: line-by-line scan of
-// every page's raw file text (frontmatter + body together, exactly what's on
-// disk), matching `terms` against each line. Default mode is a
-// case-insensitive substring Contains; --regex treats `terms` as a
-// case-insensitive regex instead. Read-only - never opens a file for
-// anything but File.ReadAllText, never touches idmap/index/log.
+public static class SearchKindX
+{
+    public static string ToWire(SearchKind k) => k switch
+    {
+        SearchKind.Page => "page",
+        SearchKind.Source => "source",
+        _ => throw new ValidationException("invalid-kind", $"unknown SearchKind '{k}'"),
+    };
+
+    public static SearchKind Parse(string wire) => wire switch
+    {
+        "page" => SearchKind.Page,
+        "source" => SearchKind.Source,
+        _ => throw new ValidationException("invalid-kind", $"unknown kind '{wire}'; expected 'page' or 'source'"),
+    };
+}
+
+// One matching line from `wiki search`. Deliberately narrow: Kind/Id/Path/
+// Title identify what the hit came from, Line is the 1-based line number
+// within that file's raw text (frontmatter block counts - line 1 is always
+// the opening '---'), MatchLine is the single matching line's text. Never the
+// full body - that's the whole point of this being the agent's retrieval
+// primitive instead of a "just read the file" shortcut (spec §13).
+public sealed record Hit(string Kind, string Id, string Path, string Title, int Line, string MatchLine);
+
+// `wiki search`'s result (amendment O). A bare hits array left a
+// `--limit`-truncated result indistinguishable from an exhaustive one, so the
+// agent could not tell "these are all the mentions" from "these are the first
+// N". `Scanned` reports how many files were opened before the scan stopped,
+// which makes a truncated result interpretable rather than just flagged.
+public sealed record SearchReport(Hit[] Hits, bool Truncated, int Scanned) : IHumanRenderable
+{
+    public string HumanSummary()
+        => Truncated
+            ? $"{Hits.Length} hit(s) (truncated at --limit; {Scanned} file(s) scanned)"
+            : $"{Hits.Length} hit(s) across {Scanned} file(s)";
+}
+
+// `wiki search <terms> [--type] [--kind] [--limit] [--regex]`: line-by-line
+// scan of every wiki page AND every raw source, matching `terms` against each
+// line of the file's raw text (frontmatter + body together, exactly what's on
+// disk). Default mode is a case-insensitive substring Contains; --regex
+// treats `terms` as a case-insensitive regex instead. Read-only - never opens
+// a file for anything but File.ReadAllText, never touches idmap/index/log.
 //
-// Reuses PageStore.Enumerate (Task 12's helper) for the page set and its
-// deterministic ordering rather than re-walking the vault's directories
-// itself - PageStore only hands back (Slug, PageFrontmatter), not raw text
-// or a path, so the file path is reconstructed the same way
-// PageService.Show / ReindexService.RelPathFor already do (type-derived
-// directory + slug, overview as the fixed-path singleton). Id and Title come
-// straight off the already-parsed frontmatter, no second idmap lookup
-// needed.
+// Pages come from PageStore, sources from SourceStore, both already
+// deterministically ordered; pages are scanned first so a mixed result reads
+// wiki-first, which is the order the retrieval playbook wants (synthesized
+// knowledge before raw material).
 public sealed class SearchService
 {
-    public IReadOnlyList<Hit> Search(Vault v, string terms, PageType? type, int limit, bool regex)
+    public SearchReport Search(Vault v, string terms, PageType? type, SearchKind? kind, int limit, bool regex)
     {
         if (limit < 1)
             throw new ValidationException("invalid-limit", $"--limit must be >= 1, got {limit}");
+
+        // --type names a PAGE type, so it implies --kind page. Combining it
+        // with --kind source asks for source hits filtered by a page type,
+        // which is not a thing - reject rather than silently returning
+        // nothing, which would read as "no matches".
+        if (type is not null && kind == SearchKind.Source)
+            throw new ValidationException("kind-type-conflict",
+                "--type filters page types and so implies --kind page; it cannot be combined with --kind source");
+
+        var effectiveKind = type is not null ? SearchKind.Page : kind;
 
         Regex? compiled = null;
         if (regex)
@@ -49,34 +92,66 @@ public sealed class SearchService
         }
 
         var hits = new List<Hit>();
+        var scanned = 0;
+        var truncated = false;
 
-        foreach (var (slug, front) in PageStore.Enumerate(v))
+        bool IsMatch(string line) => compiled is not null
+            ? compiled.IsMatch(line)
+            : line.Contains(terms, System.StringComparison.OrdinalIgnoreCase);
+
+        // Scans one file's raw text. Returns false once the limit is hit, so
+        // the caller stops opening files. `truncated` is set only when a
+        // match had to be DROPPED - reaching the limit on the very last match
+        // in the vault is a complete result, not a truncated one.
+        bool ScanFile(string fullPath, SearchKind hitKind, string id, string title)
         {
-            if (hits.Count >= limit) break;
-            if (type is not null && front.Type != type.Value) continue;
-
-            var fullPath = front.Type == PageType.Overview
-                ? Path.Combine(v.WikiDir, "overview.md")
-                : Path.Combine(v.PageDir(front.Type), slug + ".md");
             var relPath = Path.GetRelativePath(v.Root, fullPath).Replace('\\', '/');
-
-            var text = File.ReadAllText(fullPath).Replace("\r\n", "\n");
-            var lines = text.Split('\n');
+            var lines = File.ReadAllText(fullPath).Replace("\r\n", "\n").Split('\n');
+            scanned++;
 
             for (var i = 0; i < lines.Length; i++)
             {
-                if (hits.Count >= limit) break;
+                if (!IsMatch(lines[i]))
+                    continue;
 
-                var line = lines[i];
-                var isMatch = regex
-                    ? compiled!.IsMatch(line)
-                    : line.Contains(terms, System.StringComparison.OrdinalIgnoreCase);
+                if (hits.Count >= limit)
+                {
+                    truncated = true;
+                    return false;
+                }
 
-                if (isMatch)
-                    hits.Add(new Hit(front.Id, relPath, front.Title, i + 1, line));
+                hits.Add(new Hit(SearchKindX.ToWire(hitKind), id, relPath, title, i + 1, lines[i]));
+            }
+            return true;
+        }
+
+        if (effectiveKind != SearchKind.Source)
+        {
+            foreach (var (slug, front) in PageStore.Enumerate(v))
+            {
+                if (type is not null && front.Type != type.Value) continue;
+
+                var fullPath = front.Type == PageType.Overview
+                    ? Path.Combine(v.WikiDir, "overview.md")
+                    : Path.Combine(v.PageDir(front.Type), slug + ".md");
+
+                if (!ScanFile(fullPath, SearchKind.Page, front.Id, front.Title))
+                    return new SearchReport(hits.ToArray(), truncated, scanned);
             }
         }
 
-        return hits;
+        if (effectiveKind != SearchKind.Page)
+        {
+            // Strict enumeration: a raw file that doesn't parse as a source is
+            // a real problem the operator should see, and search is a
+            // read-only diagnostic where surfacing it costs nothing.
+            foreach (var (front, fullPath) in SourceStore.Enumerate(v))
+            {
+                if (!ScanFile(fullPath, SearchKind.Source, front.Id, front.Title))
+                    return new SearchReport(hits.ToArray(), truncated, scanned);
+            }
+        }
+
+        return new SearchReport(hits.ToArray(), truncated, scanned);
     }
 }
