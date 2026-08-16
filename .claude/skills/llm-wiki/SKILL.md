@@ -247,6 +247,7 @@ them. After fixing one, close it yourself:
 | `retraction` | A cited source was retracted: revise each citing page to drop it. |
 | `content-loss` | An update dropped a large share of a page's links/sources. Restore what should not have gone, or resolve with a note if the removal was deliberate. |
 | `unsupported-claim` | An audit found a claim no cited source supports. Revise the page, or resolve with a note explaining why it stands. |
+| `broken-external-link` | A cited URL returned 404/410 or did not resolve. Replace or remove the link, then resolve. |
 
 ## What needs a human
 
@@ -287,6 +288,7 @@ Every command accepts `--json` and `--vault`.
 | Who cites this source? | `wiki source impact <id>` |
 | Check vault health | `wiki lint [--fix-links]` |
 | Score retrieval quality | `wiki eval [--k N] [--fail-under N]` (needs a human-owned `eval.yaml`) |
+| List/check external URLs | `wiki links check [--external] [--timeout <ms>] [--concurrency <n>]` |
 | Pick a page to audit | `wiki audit next` |
 | Record an audit verdict | `wiki audit record <page-id> --verdict supported\|unsupported --note "…"` |
 | Past audit verdicts | `wiki audit list [--verdict <v>]` |
