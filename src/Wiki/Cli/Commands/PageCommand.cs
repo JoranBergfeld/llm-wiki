@@ -47,7 +47,7 @@ public static class PageCommand
         };
         var idOption = new Option<string?>("--id")
         {
-            Description = "Existing page id to update (update path lands in a later task)",
+            Description = "Existing page id to update; the supplied body replaces the current one in full",
         };
         var sourcesOption = new Option<string?>("--sources")
         {
