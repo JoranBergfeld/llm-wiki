@@ -187,6 +187,7 @@ public static class App
         root.Add(CategoryCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(EvalCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(AuditCommand.Build(vaultOption, jsonOption, stdout, stdin));
+        root.Add(LinksCommand.Build(vaultOption, jsonOption, stdout, stdin));
 
         return (root, jsonOption);
     }

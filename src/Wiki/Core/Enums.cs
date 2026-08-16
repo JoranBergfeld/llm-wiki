@@ -148,6 +148,19 @@ public enum IssueKind
     // positives are expected, nothing gates on it, and it is resolvable with
     // a note like any other kind.
     UnsupportedClaim,
+
+    // Workflow kind, NOT a lint check (spec amendment H's carve-out, spec
+    // amendment Y). Filed by `wiki links check --external` (issue #2): a
+    // standard markdown link whose URL does not resolve.
+    //
+    // MUST be distinct from DanglingLink, and this is the sharpest example of
+    // why amendment H's rule exists. Issues merge on (kind, subject) and
+    // `occurrences` is the reflect-loop's evidence that a problem persists.
+    // Reusing `dangling-link` for an external URL would collide with the
+    // WIKILINK record on the same page slug and overwrite its
+    // detail/occurrences - corrupting the one measurement the amendment
+    // workflow reads, with a finding that a flaky network can produce.
+    BrokenExternalLink,
 }
 
 public static class IssueKindX
@@ -167,6 +180,7 @@ public static class IssueKindX
         IssueKind.Retraction => "retraction",
         IssueKind.ContentLoss => "content-loss",
         IssueKind.UnsupportedClaim => "unsupported-claim",
+        IssueKind.BrokenExternalLink => "broken-external-link",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
     };
 
@@ -185,6 +199,7 @@ public static class IssueKindX
         "retraction" => IssueKind.Retraction,
         "content-loss" => IssueKind.ContentLoss,
         "unsupported-claim" => IssueKind.UnsupportedClaim,
+        "broken-external-link" => IssueKind.BrokenExternalLink,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }
