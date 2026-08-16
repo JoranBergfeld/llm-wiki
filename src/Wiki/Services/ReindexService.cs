@@ -107,7 +107,7 @@ public sealed class ReindexService
     private static IEnumerable<(string Id, string RelPath)> EnumerateRawSources(Vault v)
     {
         foreach (var (front, fullPath) in SourceStore.Enumerate(v))
-            yield return (front.Id, Path.GetRelativePath(v.Root, fullPath).Replace('\\', '/'));
+            yield return (front.Id, v.RelativePath(fullPath));
     }
 
 }
