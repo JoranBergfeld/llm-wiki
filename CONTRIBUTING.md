@@ -26,9 +26,16 @@ dotnet build LlmWiki.sln                                   # everything
 dotnet test tests/Wiki.Tests/Wiki.Tests.csproj -c Release  # the suite CI gates on
 dotnet run --project src/Wiki -- --help                    # run the CLI
 
-# native-AOT publish, as CI does it
+# native-AOT publish, as CI does it — substitute the RID for the OS you're on.
+# CI publishes all four: linux-x64, linux-arm64, win-x64, osx-arm64.
 dotnet publish src/Wiki/Wiki.csproj -c Release -r linux-x64 -o publish
 ```
+
+The commands above are the same in bash, PowerShell and `cmd.exe`. Where a
+shell-specific construct is unavoidable (environment variables, line
+continuations, piping a body into `--stdin`) the README gives both forms; in
+your own scripts prefer `--vault <path>` and `--body-file <path>`, which read
+identically everywhere.
 
 Everything must build warning-free. AOT trim warnings in particular are not
 noise — they mean something will fail at runtime in the published binary but

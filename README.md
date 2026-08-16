@@ -59,6 +59,12 @@ detectable:
   amending, which is its own reviewed workflow.
 - **Nothing derived is precious.** `.wiki/` is a cache. `wiki reindex` rebuilds
   it from the markdown alone.
+- **Quality is measured, not assumed.** Lint checks the vault's *shape*, so a
+  vault of well-linked lorem ipsum would pass it. Alongside it: every full-body
+  update reports what it *removed*, so facts cannot quietly evaporate across
+  re-integrations; `wiki eval` scores retrieval against your own golden
+  questions; and `wiki audit` walks the agent through re-reading a page against
+  its sources, cold, to check the claims actually hold.
 
 ## Install
 
@@ -68,55 +74,113 @@ prerelease — every green push to `main` publishes native-AOT builds for
 `.tar.gz` (containing `wiki`), Windows is `.zip` (containing `wiki.exe`). No
 runtime to install; put it on your `PATH`.
 
-Or build from source (needs the [.NET 9 SDK](https://dotnet.microsoft.com/download)):
+Or build from source (needs the [.NET 9 SDK](https://dotnet.microsoft.com/download)).
+Pick the RID for your machine — CI publishes all four:
 
-```bash
-git clone https://github.com/JoranBergfeld/llm-wiki.git
-cd llm-wiki
-dotnet publish src/Wiki/Wiki.csproj -c Release -r linux-x64 -o publish
 ```
+dotnet publish src/Wiki/Wiki.csproj -c Release -r linux-x64   -o publish
+dotnet publish src/Wiki/Wiki.csproj -c Release -r linux-arm64 -o publish
+dotnet publish src/Wiki/Wiki.csproj -c Release -r win-x64     -o publish
+dotnet publish src/Wiki/Wiki.csproj -c Release -r osx-arm64   -o publish
+```
+
+Native AOT cannot cross-compile across operating systems, so build the target
+you are on.
 
 ## Quickstart
 
-```bash
-# 1. Scaffold a vault. Also a valid Obsidian vault root.
-wiki init ~/vaults/demo --name demo
-export WIKI_VAULT=~/vaults/demo        # or pass --vault, or run from inside it
+Two things differ between shells: **setting an environment variable**, and
+**passing a page body**. Everything else below is identical everywhere.
 
-# 2. Categories are yours to define. Two ship in the scaffold; add more.
+Point the CLI at a vault — or pass `--vault <path>` on each command, or just
+run from inside the vault directory:
+
+```bash
+# bash / zsh
+export WIKI_VAULT=~/vaults/demo
+```
+
+```powershell
+# PowerShell (Windows, macOS, Linux)
+$env:WIKI_VAULT = "$HOME\vaults\demo"
+```
+
+```
+:: cmd.exe
+set WIKI_VAULT=%USERPROFILE%\vaults\demo
+```
+
+`~` is a shell feature, not a CLI one: PowerShell and `cmd.exe` do not expand
+it, so write the path out.
+
+Then, in any shell:
+
+```
+:: 1. Scaffold a vault. Also a valid Obsidian vault root.
+wiki init ./demo --name demo
+
+:: 2. Categories are yours to define. Two ship in the scaffold; add more.
 wiki category add paper --description "Research papers and reports"
 
-# 3. Register a raw source. It is copied into raw/ under a new ULID, hashed,
-#    deduped, and entered in the ledger as `registered`.
+:: 3. Register a raw source. It is copied into raw/ under a new ULID, hashed,
+::    deduped, and entered in the ledger as `registered`.
 wiki source add ./notes.md --category article --title "Contoso platform review"
-# → {"ok":true,"data":{"id":"01M05GXZ...","path":"raw/01M05GXZ....md",...}}
+:: → {"ok":true,"data":{"id":"01M05GXZ...","path":"raw/01M05GXZ....md",...}}
 
-# 4. The agent writes the summary page. Bodies always arrive on stdin.
-echo "Contoso shipped a billing engine in Q2." \
-  | wiki page upsert --type summary \
-      --title "Contoso platform review (summary)" \
-      --summary "Key takeaways from the Contoso platform review" \
-      --sources 01M05GXZ... --stdin --json
+:: Or point it at an inbox directory and register everything in one go.
+wiki source scan ./inbox --category article --dry-run
+```
+
+Now the agent writes pages. **Bodies go in a file, and you pass the path** —
+`--body-file` is the portable way to do this, because it takes quoting,
+escaping, encoding and length limits out of the hot path entirely. (Write
+`summary.md` with whatever your editor or agent uses; it lives outside the
+vault and is just input, like the file `source add` takes.)
+
+```
+wiki page upsert --type summary --title "Contoso platform review (summary)" --summary "Key takeaways from the Contoso platform review" --sources 01M05GXZ... --body-file ./summary.md --json
 wiki ingest advance 01M05GXZ... --to summarized
 
-# 5. …then the entities and concepts it touches.
-echo "Contoso is a platform vendor. See [[contoso-platform-review-summary]]." \
-  | wiki page upsert --type entity --title "Contoso" \
-      --summary "Platform vendor evaluated in Q2" \
-      --sources 01M05GXZ... --stdin --json
+wiki page upsert --type entity --title "Contoso" --summary "Platform vendor evaluated in Q2" --sources 01M05GXZ... --body-file ./contoso.md --json
 wiki ingest advance 01M05GXZ... --to integrated --touched 01M05GYAD...
 
-# 6. Check the vault's health and close the loop.
 wiki lint
 wiki ingest advance 01M05GXZ... --to linted
 ```
 
+One line each on purpose: line continuations are the third shell-specific
+thing (`\` in bash, a backtick in PowerShell, `^` in `cmd.exe`), and the
+commands above are the same everywhere without them.
+
+`--stdin` remains fully supported and is the right choice for a one-line body
+in bash:
+
+```bash
+echo "Contoso shipped a billing engine in Q2." \
+  | wiki page upsert --type summary --title "…" --summary "…" --stdin --json
+```
+
+In PowerShell that pipe is more awkward than it looks — `echo` is
+`Write-Output` and pipes objects rather than bytes, a multi-line body needs a
+here-string whose terminator sits at column 0, and `$`, backtick and `"` are
+all live characters. Prefer `--body-file` there. Passing both `--stdin` and
+`--body-file` is an error (`body-source-conflict`); pick one.
+
 Add `--json` to any command for the agent-facing envelope; without it you get
 Spectre-rendered human output. Exit codes are identical either way:
 `0` success · `1` your input was rejected · `2` environment/IO · `3` state
-conflict (idempotent no-op).
+conflict (idempotent no-op) · `4` a measurement came in under a threshold you
+asked for (`wiki eval --fail-under` only).
 
 Then open the vault in Obsidian and look at the graph.
+
+### It is the same vault everywhere
+
+The vault is plain markdown with LF line endings and forward-slashed internal
+paths, so it is portable across operating systems — keep it in git, on a sync
+folder, or on a USB stick and work on it from Windows, macOS and Linux
+interchangeably. Obsidian reads it natively on all three, and the CLI writes
+UTF-8 regardless of what the surrounding shell's code page happens to be.
 
 ### What's on disk afterwards
 
@@ -124,6 +188,7 @@ Then open the vault in Obsidian and look at the graph.
 demo/
 ├── wiki.yaml            # your config: name, categories, review gate, lint thresholds
 ├── AGENTS.md            # the agent's instructions — conventions + playbooks
+├── eval.yaml            # optional: your golden retrieval questions, for `wiki eval`
 ├── raw/                 # immutable sources, named by ULID
 ├── wiki/
 │   ├── index.md         # CLI-generated routing catalog
@@ -153,19 +218,21 @@ among others) picks it up automatically; it needs nothing but the `wiki` binary
 on `PATH`.
 
 That file is also the system's only learning surface. The agent can propose
-amendments to it (`wiki schema propose --section "<heading>" --stdin`) citing
+amendments to it (`wiki schema propose --section "<heading>" --body-file <path>`) citing
 recurring lint issues; you approve or reject. The agent never edits it directly.
 
 ## Commands
 
 | Group | Commands |
 |---|---|
-| Vault | `init` · `reindex` · `category add\|list` |
-| Sources | `source add\|list\|show\|impact\|retract` |
+| Vault | `init` · `reindex` |
+| Categories | `category add\|list\|propose\|proposals\|approve\|reject` |
+| Sources | `source add\|scan\|list\|show\|impact\|retract` |
 | Ingest | `ingest status\|advance\|resume` |
 | Pages | `page upsert\|show\|list\|rename\|set-status\|backlinks` |
 | Retrieval | `search` · `index show` |
-| Health | `lint` · `issues list\|show\|resolve` |
+| Health | `lint` · `issues list\|show\|resolve` · `links check` |
+| Quality | `eval` · `audit next\|record\|list` |
 | Review | `review list\|approve\|reject` |
 | Reflect | `schema propose\|proposals\|approve\|reject` |
 

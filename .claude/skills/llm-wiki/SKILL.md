@@ -18,14 +18,29 @@ ledger state, lint. Stay on your side of that line.
    Reading is unrestricted: prefer `wiki source show` / `wiki page show` for
    sources and pages, and read `AGENTS.md` and `wiki.yaml` directly.
 2. **Always pass `--json`.** Parse the envelope. Human output is for humans.
-3. **Bodies arrive on stdin.** Never as an argument.
+3. **Bodies arrive in a file, not on a pipe.** Write the body with your own
+   file-writing tool and pass `--body-file <path>`. Never as a command-line
+   argument, and never through a shell pipe if you can avoid it — `--stdin`
+   still works, but a shell pipe is where quoting, escaping, encoding and
+   length limits bite, and this binary runs on Windows as well as Unix.
+   Temp files live **outside** the vault; they are input, like the file
+   `wiki source add` takes.
 4. **One unit of work per tick** — see The Tick.
 
 ## Preflight
 
-Locate the vault, in this order: `--vault <path>` → `$WIKI_VAULT` → auto-detect
-from the working directory. Confirm with any read command; `no-vault` means none
-of the three resolved, so stop and ask where the vault is.
+Locate the vault, in this order: `--vault <path>` → the `WIKI_VAULT`
+environment variable → auto-detect from the working directory. Confirm with any
+read command; `no-vault` means none of the three resolved, so stop and ask
+where the vault is.
+
+**Prefer `--vault <path>` on every command.** It is the one form that reads the
+same in every shell — `$WIKI_VAULT`, `$env:WIKI_VAULT` and `%WIKI_VAULT%` are
+three different spellings, and `~` does not expand outside bash/zsh. The binary
+ships for Windows as well as Unix; assume nothing about which shell you are in.
+The vault itself is identical on every OS — plain markdown, LF endings,
+forward-slashed internal paths — so nothing about your platform changes what
+you write.
 
 Then **read the vault's `AGENTS.md`** (`wiki page show` does not serve it — read
 the file; it is documentation, not vault content). It carries the conventions
@@ -76,8 +91,8 @@ work, do that one unit, then stop.
    see the Audit playbook. One page, then stop.
 6. **Reflect.** A clean lint, but an issue kind keeps recurring across ticks?
    Draft an amendment: `wiki schema propose --section "<exact heading>"
-   --rationale "<cite issue ids>" --stdin`. A human approves it. Never edit
-   `AGENTS.md` directly.
+   --rationale "<cite issue ids>" --body-file <path>`. A human approves it.
+   Never edit `AGENTS.md` directly.
 7. **Nothing to do.** Say so plainly and stop. Do not invent work — a quiet
    vault is a healthy one.
 
@@ -117,7 +132,7 @@ per-file outcomes (`registered`, `skipped-duplicate`, `skipped-empty`,
 the source content is enough to pick an existing one — do that first. Only when
 nothing fits, propose one and stop:
 
-```bash
+```
 wiki category propose <id> --description "…" \
   --rationale "why nothing existing fits" \
   --sources <the source ids that fit nothing> --json
@@ -129,11 +144,11 @@ the decision reviewable instead of an argument about a name in the abstract.
 
 **Step 1 — read it.** `wiki source show <source-id> --json`.
 
-**Step 2 — summarize.** One summary page per source.
+**Step 2 — summarize.** One summary page per source. Write the body to a temp
+file outside the vault, then pass its path:
 
-```bash
-wiki page upsert --type summary --title "…" --summary "…" \
-  --sources <source-id> --stdin --json
+```
+wiki page upsert --type summary --title "…" --summary "…" --sources <source-id> --body-file <path> --json
 wiki ingest advance <source-id> --to summarized --json
 ```
 
@@ -142,7 +157,7 @@ wiki ingest advance <source-id> --to summarized --json
 it is a distinct thing other pages would link to, edit if it is an attribute or
 update of an existing one. Extend `--sources` with the new source id. Then:
 
-```bash
+```
 wiki ingest advance <source-id> --to integrated --touched <id1,id2,…> --json
 ```
 
@@ -152,7 +167,7 @@ nothing beyond its summary.
 **Step 4 — lint and close.** Update `overview.md` if the top-level picture
 changed, then:
 
-```bash
+```
 wiki lint --json
 wiki ingest advance <source-id> --to linted --json
 ```
@@ -198,7 +213,7 @@ The CLI selects and records; **you are the judge**.
    thesis, or does it only restate its own wikilinks?
 4. Record exactly one verdict:
 
-```bash
+```
 wiki audit record <page-id> --verdict supported --json
 wiki audit record <page-id> --verdict unsupported --note "asserts a Q3 launch date; neither cited source mentions a date" --json
 ```
@@ -279,7 +294,7 @@ Every command accepts `--json` and `--vault`.
 | Read a page | `wiki page show <id-or-name> [--frontmatter-only]` |
 | List pages | `wiki page list [--type <t>] [--status <s>] [--orphans]` |
 | What links here? | `wiki page backlinks <id-or-name>` |
-| Write/replace a page | `wiki page upsert --type <t> --title "…" --summary "…" [--id <id>] [--sources <ids>] [--tags <t>] [--allow-dangling] --stdin` |
+| Write/replace a page | `wiki page upsert --type <t> --title "…" --summary "…" [--id <id>] [--sources <ids>] [--tags <t>] [--allow-dangling] --body-file <path>` |
 | Change page status | `wiki page set-status <id> <status>` |
 | Rename a page | `wiki page rename <id> <new-slug>` (rewrites inbound links) |
 | Read a raw source | `wiki source show <id>` |
@@ -297,7 +312,7 @@ Every command accepts `--json` and `--vault`.
 | Rebuild derived state | `wiki reindex` |
 | List categories | `wiki category list` |
 | Propose a new category | `wiki category propose <id> --description "…" --rationale "…" --sources <ids>` |
-| Propose an AGENTS.md change | `wiki schema propose --section "<heading>" --rationale "…" --stdin` |
+| Propose an AGENTS.md change | `wiki schema propose --section "<heading>" --rationale "…" --body-file <path>` |
 
 Enums: page type `summary | entity | concept | overview` · page status `active |
 pending-review | needs-review | archived` · ledger state `registered |
