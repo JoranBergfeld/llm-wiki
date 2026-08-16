@@ -576,14 +576,19 @@ public sealed class PageService
         // --- Validation complete. Everything from here on is the write. ---
 
         // Review gate (spec §15): BEFORE the new body overwrites the page on
-        // disk, stash the CURRENT (about-to-be-replaced) body as a shadow
+        // disk, stash the CURRENT (about-to-be-replaced) document as a shadow
         // copy under .wiki/review/<id>.prev.md - the one place the CLI keeps
         // a shadow copy. `review list` diffs against it; `review reject`
         // restores it. Only written when the gate is on; an update under a
         // gate-off vault never accrues shadow state.
+        //
+        // SaveIfAbsent, not Save (amendment K): a second un-reviewed update
+        // must NOT overwrite the shadow, or `reject` would restore the first
+        // un-reviewed edit instead of the last body a human actually
+        // reviewed. approve/reject clear the shadow and so re-arm the capture.
         if (cfg.ReviewGate)
         {
-            ReviewShadow.Save(v, existingFront.Id, existingDoc.Body);
+            ReviewShadow.SaveIfAbsent(v, existingFront.Id, existingDoc);
         }
 
         AtomicFile.Write(fullPath, serialized);

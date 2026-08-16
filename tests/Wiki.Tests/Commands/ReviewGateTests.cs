@@ -102,9 +102,15 @@ public class ReviewGateTests
         Assert.Equal(0, updated.ExitCode);
         Assert.Equal("pending-review", Data(updated).GetProperty("status").GetString());
 
+        // The shadow is a full page document (amendment K) - it has to carry
+        // the pre-gate STATUS as well as the body, so `reject` can restore
+        // both. Parsing it back is the same PageDoc.Parse a page file gets.
         var shadow = ShadowPath(tv, id);
         Assert.True(File.Exists(shadow));
-        Assert.Equal("Original body.", File.ReadAllText(shadow));
+        var shadowDoc = PageDoc.Parse(File.ReadAllText(shadow));
+        Assert.Contains("Original body.", shadowDoc.Body);
+        Assert.Equal(PageStatus.Active, shadowDoc.Front.Status);
+        Assert.Equal(id, shadowDoc.Front.Id);
 
         var file = Path.Combine(tv.Path, "wiki", "entities", "fabrikam.md");
         var doc = PageDoc.Parse(File.ReadAllText(file));
@@ -350,5 +356,109 @@ public class ReviewGateTests
         var issuesAfter = tv.Run("issues", "list", "--kind", "orphan", "--json");
         Assert.Equal(1, Data(issuesAfter).GetArrayLength());
         Assert.Equal("contoso", Data(issuesAfter)[0].GetProperty("subject").GetString());
+    }
+
+    // -------------------- amendment K: the shadow holds the last REVIEWED body --------------------
+
+    // The bug this pins: the shadow used to be rewritten on EVERY gated
+    // update, so a run of un-reviewed edits walked it forward and `reject`
+    // restored an intermediate nobody had approved. The gate's whole promise
+    // is that rejecting returns the page to content a human signed off on.
+    [Fact]
+    public void Reject_AfterConsecutiveGatedUpdates_RestoresLastReviewedBody_NotAnIntermediate()
+    {
+        using var tv = new TempVault(); InitGated(tv);
+
+        var created = tv.RunStdin("V1 approved", "page", "upsert", "--type", "concept",
+            "--title", "Beta", "--summary", "s", "--json");
+        var id = ExtractId(created);
+        Assert.Equal(0, tv.Run("review", "approve", id, "--json").ExitCode);
+
+        // Two updates stack up before anyone reviews either one.
+        Assert.Equal(0, tv.RunStdin("V2 intermediate", "page", "upsert", "--id", id, "--type", "concept",
+            "--title", "Beta", "--summary", "s", "--json").ExitCode);
+        Assert.Equal(0, tv.RunStdin("V3 latest", "page", "upsert", "--id", id, "--type", "concept",
+            "--title", "Beta", "--summary", "s", "--json").ExitCode);
+
+        // The shadow still points at the reviewed body, not at V2.
+        Assert.Contains("V1 approved", File.ReadAllText(ShadowPath(tv, id)));
+        Assert.DoesNotContain("V2 intermediate", File.ReadAllText(ShadowPath(tv, id)));
+
+        Assert.Equal(0, tv.Run("review", "reject", id, "--note", "no", "--json").ExitCode);
+
+        var body = PageDoc.Parse(File.ReadAllText(Path.Combine(tv.Path, "wiki", "concepts", "beta.md"))).Body;
+        Assert.Contains("V1 approved", body);
+        Assert.DoesNotContain("V2 intermediate", body);
+        Assert.DoesNotContain("V3 latest", body);
+    }
+
+    // Approve clears the shadow, which re-arms the capture: the NEXT update
+    // stashes the body that was just approved, not the one before it.
+    [Fact]
+    public void Approve_ReArmsShadowCapture_NextUpdateStashesTheApprovedBody()
+    {
+        using var tv = new TempVault(); InitGated(tv);
+
+        var created = tv.RunStdin("V1", "page", "upsert", "--type", "concept",
+            "--title", "Beta", "--summary", "s", "--json");
+        var id = ExtractId(created);
+        Assert.Equal(0, tv.Run("review", "approve", id, "--json").ExitCode);
+
+        tv.RunStdin("V2", "page", "upsert", "--id", id, "--type", "concept", "--title", "Beta", "--summary", "s", "--json");
+        Assert.Equal(0, tv.Run("review", "approve", id, "--json").ExitCode);
+        Assert.False(File.Exists(ShadowPath(tv, id)));
+
+        tv.RunStdin("V3", "page", "upsert", "--id", id, "--type", "concept", "--title", "Beta", "--summary", "s", "--json");
+
+        // V2 was approved, so V2 - not V1 - is what reject must restore now.
+        Assert.Contains("V2", File.ReadAllText(ShadowPath(tv, id)));
+        Assert.Equal(0, tv.Run("review", "reject", id, "--json").ExitCode);
+        var body = PageDoc.Parse(File.ReadAllText(Path.Combine(tv.Path, "wiki", "concepts", "beta.md"))).Body;
+        Assert.Contains("V2", body);
+    }
+
+    // Second half of amendment K: reject used to hardcode `active`, so
+    // rejecting an edit to a needs-review page silently cleared the flag that
+    // said the page still needed repair.
+    [Fact]
+    public void Reject_OnUpdateToNeedsReviewPage_RestoresNeedsReview_NotActive()
+    {
+        using var tv = new TempVault(); InitGated(tv);
+
+        var created = tv.RunStdin("V1", "page", "upsert", "--type", "concept",
+            "--title", "Beta", "--summary", "s", "--json");
+        var id = ExtractId(created);
+        Assert.Equal(0, tv.Run("review", "approve", id, "--json").ExitCode);
+        Assert.Equal(0, tv.Run("page", "set-status", id, "needs-review", "--json").ExitCode);
+
+        Assert.Equal(0, tv.RunStdin("V2 attempted repair", "page", "upsert", "--id", id, "--type", "concept",
+            "--title", "Beta", "--summary", "s", "--json").ExitCode);
+        Assert.Equal(0, tv.Run("review", "reject", id, "--note", "not fixed", "--json").ExitCode);
+
+        var doc = PageDoc.Parse(File.ReadAllText(Path.Combine(tv.Path, "wiki", "concepts", "beta.md")));
+        Assert.Equal(PageStatus.NeedsReview, doc.Front.Status);
+        Assert.Contains("V1", doc.Body);
+    }
+
+    // A body-only shadow is what older builds wrote. It must still restore
+    // (falling back to `active`) rather than crash the reject path.
+    [Fact]
+    public void Reject_LegacyBodyOnlyShadow_StillRestores_FallsBackToActive()
+    {
+        using var tv = new TempVault(); InitGated(tv);
+
+        var created = tv.RunStdin("V1", "page", "upsert", "--type", "concept",
+            "--title", "Beta", "--summary", "s", "--json");
+        var id = ExtractId(created);
+        Assert.Equal(0, tv.Run("review", "approve", id, "--json").ExitCode);
+        tv.RunStdin("V2", "page", "upsert", "--id", id, "--type", "concept", "--title", "Beta", "--summary", "s", "--json");
+
+        // Overwrite the shadow with the old body-only format.
+        File.WriteAllText(ShadowPath(tv, id), "legacy body\n");
+
+        Assert.Equal(0, tv.Run("review", "reject", id, "--json").ExitCode);
+        var doc = PageDoc.Parse(File.ReadAllText(Path.Combine(tv.Path, "wiki", "concepts", "beta.md")));
+        Assert.Equal(PageStatus.Active, doc.Front.Status);
+        Assert.Contains("legacy body", doc.Body);
     }
 }
