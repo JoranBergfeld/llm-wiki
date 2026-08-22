@@ -153,6 +153,15 @@ release always reflects the newest green `main`.
 long enough to stall the gated release. The RID still works if you build it
 locally.
 
+The same green build then fans out to three channels: the rolling release, a
+multi-arch image on `ghcr.io/joranbergfeld/llm-wiki`, and the `LlmWiki.Cli`
+global tool on the GitHub Packages NuGet feed. If you change the packaging,
+change all three deliberately — `docker/Dockerfile` copies the binaries the
+build job produced (so its base image must track the runners' Ubuntu version
+or the AOT binary meets a glibc it was not linked against), and the `nuget`
+job packs from `src/Wiki/Wiki.csproj` with a rolling `PackageVersion` that
+leaves the assembly version alone.
+
 ## Licence
 
 By contributing you agree your contributions are licensed under the MIT

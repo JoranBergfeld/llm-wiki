@@ -211,6 +211,15 @@ systems, so each target builds on its own runner. `osx-x64` still works if you
 build it yourself — it is omitted from CI only because GitHub's Intel-Mac
 runners are too scarce to gate a release on.
 
+That one build feeds three distribution channels, all gated on the same green
+run: the rolling `latest` prerelease of the raw binaries (what
+`scripts/install.sh` and `scripts/install.ps1` fetch), a multi-arch GHCR image
+that copies those same binaries onto an `ubuntu:24.04` base, and a `dotnet
+tool` package on the GitHub Packages NuGet feed. The NuGet one is the
+exception that proves the rule: `dotnet tool` has no native-AOT story, so that
+channel alone ships the IL build and needs a runtime installed. It is offered
+for .NET-toolchain users, not recommended as the default install.
+
 ## What is deliberately not here
 
 No MCP server (the agent shells out). No embedded database, vector index or
