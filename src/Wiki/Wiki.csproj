@@ -10,11 +10,40 @@
     <RootNamespace>Wiki</RootNamespace>
     <StartupObject>Wiki.App</StartupObject>
   </PropertyGroup>
+
+  <!-- `dotnet pack` produces a global tool for the GitHub Packages NuGet feed.
+       That channel ships the IL build, not the AOT one - `dotnet tool` has no
+       native-AOT story - so it needs the .NET 9 runtime present. The release
+       binaries stay the recommended install; this exists for `dotnet tool`
+       users and CI images that already have the SDK. PackAsTool is inert
+       during `dotnet publish -r <rid>`, so the AOT build is unaffected. -->
+  <PropertyGroup>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>wiki</ToolCommandName>
+    <PackageId>LlmWiki.Cli</PackageId>
+    <!-- PackageVersion, not Version: the nupkg gets its own rolling version
+         (CI passes a -p:PackageVersion of 1.0.0-main.RUNNUMBER) while the
+         assembly version, and so the version the release binaries report,
+         stays exactly what it was. -->
+    <PackageVersion>1.0.0</PackageVersion>
+    <Authors>Joran Bergfeld</Authors>
+    <Description>A local, CLI-operated LLM wiki: the `wiki` CLI that builds and maintains a vault of interlinked markdown from immutable raw sources.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/JoranBergfeld/llm-wiki</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/JoranBergfeld/llm-wiki.git</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>wiki;llm;cli;knowledge-base;markdown</PackageTags>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.0" />
     <PackageReference Include="Spectre.Console" Version="0.49.1" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Templates/*.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../LICENSE.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>

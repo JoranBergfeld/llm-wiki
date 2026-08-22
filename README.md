@@ -68,13 +68,58 @@ detectable:
 
 ## Install
 
-Grab a binary from the rolling [`latest`](https://github.com/JoranBergfeld/llm-wiki/releases/tag/latest)
-prerelease — every green push to `main` publishes native-AOT builds for
-`linux-x64`, `linux-arm64`, `win-x64` and `osx-arm64`. Unix targets are
-`.tar.gz` (containing `wiki`), Windows is `.zip` (containing `wiki.exe`). No
-runtime to install; put it on your `PATH`.
+Every green push to `main` publishes the same native-AOT build through three
+channels. The install script is the one to reach for.
 
-Or build from source (needs the [.NET 9 SDK](https://dotnet.microsoft.com/download)).
+**Script (recommended).** Detects your platform, pulls the matching binary from
+the rolling [`latest`](https://github.com/JoranBergfeld/llm-wiki/releases/tag/latest)
+prerelease, and drops it in place. Re-run it to update — that is the whole
+update story.
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/JoranBergfeld/llm-wiki/main/scripts/install.sh | sh
+```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/JoranBergfeld/llm-wiki/main/scripts/install.ps1 | iex
+```
+
+It installs to `~/.local/bin` (Unix) or `%LOCALAPPDATA%\Programs\wiki`
+(Windows) — override with `WIKI_INSTALL_DIR` — and tells you if that directory
+is not on your `PATH`. Set `WIKI_VERSION` to install a tag other than `latest`.
+
+**Manual download.** Take the asset yourself from the same
+[`latest`](https://github.com/JoranBergfeld/llm-wiki/releases/tag/latest)
+release: native-AOT builds for `linux-x64`, `linux-arm64`, `win-x64` and
+`osx-arm64`. Unix targets are `.tar.gz` (containing `wiki`), Windows is `.zip`
+(containing `wiki.exe`). No runtime to install; put it on your `PATH`.
+
+**Container.** A multi-arch image (`linux/amd64`, `linux/arm64`) carrying the
+same binary. Mount your vault at `/vault`, which is where `WIKI_VAULT` already
+points:
+
+```bash
+docker run --rm -v "$PWD:/vault" --user "$(id -u):$(id -g)" \
+  ghcr.io/joranbergfeld/llm-wiki:latest lint
+```
+
+`:latest` follows `main`; every build is also tagged with its commit SHA.
+
+**.NET global tool.** Published to the GitHub Packages NuGet feed. Two caveats,
+so pick this only if you are already in the .NET toolchain: it ships the **IL
+build, not the AOT one**, so it needs the .NET 9 runtime present, and GitHub
+Packages requires authentication *even for public packages* — you need a PAT
+with `read:packages`.
+
+```bash
+dotnet nuget add source https://nuget.pkg.github.com/JoranBergfeld/index.json \
+  -n llm-wiki -u <your-github-username> -p <your-PAT> --store-password-in-clear-text
+dotnet tool install -g LlmWiki.Cli --prerelease
+```
+
+**From source** (needs the [.NET 9 SDK](https://dotnet.microsoft.com/download)).
 Pick the RID for your machine — CI publishes all four:
 
 ```
