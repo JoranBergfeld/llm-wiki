@@ -103,6 +103,7 @@ public enum IssueKind
     RenameDrift,
     NeedsReviewBacklog,
     PendingBacklog,
+    MissingTags,
 
     // Workflow kind, NOT a lint check (spec amendment H: IssueKind covers
     // non-lint workflow kinds too - cf. §14's `retraction`, likewise absent
@@ -176,6 +177,7 @@ public static class IssueKindX
         IssueKind.RenameDrift => "rename-drift",
         IssueKind.NeedsReviewBacklog => "needs-review-backlog",
         IssueKind.PendingBacklog => "pending-backlog",
+        IssueKind.MissingTags => "missing-tags",
         IssueKind.ReviewRejected => "review-rejected",
         IssueKind.Retraction => "retraction",
         IssueKind.ContentLoss => "content-loss",
@@ -195,6 +197,7 @@ public static class IssueKindX
         "rename-drift" => IssueKind.RenameDrift,
         "needs-review-backlog" => IssueKind.NeedsReviewBacklog,
         "pending-backlog" => IssueKind.PendingBacklog,
+        "missing-tags" => IssueKind.MissingTags,
         "review-rejected" => IssueKind.ReviewRejected,
         "retraction" => IssueKind.Retraction,
         "content-loss" => IssueKind.ContentLoss,

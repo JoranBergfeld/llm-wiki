@@ -145,17 +145,22 @@ the decision reviewable instead of an argument about a name in the abstract.
 **Step 1 — read it.** `wiki source show <source-id> --json`.
 
 **Step 2 — summarize.** One summary page per source. Write the body to a temp
-file outside the vault, then pass its path:
+file outside the vault, then pass its path. Assign 2-5 stable, cross-cutting
+tags: lowercase kebab-case, reused from related pages where possible, and
+describing durable topics or domains rather than the page type, title, or
+source category.
 
 ```
-wiki page upsert --type summary --title "…" --summary "…" --sources <source-id> --body-file <path> --json
+wiki page upsert --type summary --title "…" --summary "…" --sources <source-id> --tags <tag1,tag2> --body-file <path> --json
 wiki ingest advance <source-id> --to summarized --json
 ```
 
 **Step 3 — integrate.** Find what this source affects via `wiki index show
 --json` and `wiki search <terms> --json`. For each entity/concept: new page if
 it is a distinct thing other pages would link to, edit if it is an attribute or
-update of an existing one. Extend `--sources` with the new source id. Then:
+update of an existing one. Extend `--sources` with the new source id. Reuse the
+tags on related pages and pass the complete tag set on every upsert because
+`--tags` replaces the stored tags. Then:
 
 ```
 wiki ingest advance <source-id> --to integrated --touched <id1,id2,…> --json
@@ -258,6 +263,7 @@ them. After fixing one, close it yourself:
 | `index-drift` | `wiki reindex --json` rebuilds from markdown alone. |
 | `rename-drift` | Someone renamed a file in Obsidian: `wiki lint --fix-links --json`. |
 | `needs-review-backlog`, `pending-backlog` | Human-gated — report, don't act. |
+| `missing-tags` | Read the page and its sources, inspect related pages for existing tags, then upsert the complete page with 2-5 stable tags. |
 | `review-rejected` | Read the rejection, rewrite the page, resubmit. |
 | `retraction` | A cited source was retracted: revise each citing page to drop it. |
 | `content-loss` | An update dropped a large share of a page's links/sources. Restore what should not have gone, or resolve with a note if the removal was deliberate. |

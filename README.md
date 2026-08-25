@@ -183,15 +183,21 @@ escaping, encoding and length limits out of the hot path entirely. (Write
 vault and is just input, like the file `source add` takes.)
 
 ```
-wiki page upsert --type summary --title "Contoso platform review (summary)" --summary "Key takeaways from the Contoso platform review" --sources 01M05GXZ... --body-file ./summary.md --json
+wiki page upsert --type summary --title "Contoso platform review (summary)" --summary "Key takeaways from the Contoso platform review" --sources 01M05GXZ... --tags platform-review,vendor-evaluation --body-file ./summary.md --json
 wiki ingest advance 01M05GXZ... --to summarized
 
-wiki page upsert --type entity --title "Contoso" --summary "Platform vendor evaluated in Q2" --sources 01M05GXZ... --body-file ./contoso.md --json
+wiki page upsert --type entity --title "Contoso" --summary "Platform vendor evaluated in Q2" --sources 01M05GXZ... --tags platform-vendor,vendor-evaluation --body-file ./contoso.md --json
 wiki ingest advance 01M05GXZ... --to integrated --touched 01M05GYAD...
 
 wiki lint
 wiki ingest advance 01M05GXZ... --to linted
 ```
+
+Use 2-5 stable, cross-cutting tags per summary, entity, and concept page.
+Prefer existing lowercase kebab-case tags from related pages over near-synonyms.
+Tags should describe durable topics or domains, not repeat the page type,
+title, or source category. On update, pass the complete tag set: `--tags`
+replaces the stored tags.
 
 One line each on purpose: line continuations are the third shell-specific
 thing (`\` in bash, a backtick in PowerShell, `^` in `cmd.exe`), and the

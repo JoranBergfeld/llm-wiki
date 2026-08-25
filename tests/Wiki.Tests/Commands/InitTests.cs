@@ -150,6 +150,7 @@ public class InitTests
                  {
                      "wiki source add", "wiki ingest advance", "summarized",
                      "integrated", "linted", "--touched", "wiki ingest resume",
+                     "--tags", "lowercase kebab-case",
                  })
         {
             Assert.Contains(required, text);

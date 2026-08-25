@@ -135,6 +135,31 @@ public class LintTests
         Assert.Equal(2, orphanIssues[0].GetProperty("occurrences").GetInt32());
     }
 
+    [Fact]
+    public void Lint_SourceBackedPageWithoutTags_FilesMissingTagsIssue()
+    {
+        using var tv = new TempVault(); Init(tv);
+
+        var srcFile = Path.Combine(tv.Path, "input.md");
+        File.WriteAllText(srcFile, "raw notes");
+        var source = tv.Run("source", "add", srcFile, "--category", "article",
+            "--title", "Source", "--json");
+        Assert.Equal(0, source.ExitCode);
+        var sourceId = Data(source).GetProperty("id").GetString()!;
+
+        var page = tv.RunStdin("Source-backed page.", "page", "upsert", "--type", "entity",
+            "--title", "Untagged", "--summary", "s", "--sources", sourceId, "--json");
+        Assert.Equal(0, page.ExitCode);
+
+        var lint = tv.Run("lint", "--json");
+        Assert.Equal(0, lint.ExitCode);
+
+        var issues = IssuesList(tv, "missing-tags");
+        Assert.Equal(1, issues.GetArrayLength());
+        Assert.Equal("untagged", issues[0].GetProperty("subject").GetString());
+        Assert.Contains("2-5", issues[0].GetProperty("detail").GetString());
+    }
+
     // -------------------- dangling-link --------------------
 
     [Fact]

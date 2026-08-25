@@ -103,6 +103,7 @@ public sealed class LintService
         findings.AddRange(CheckStale(v, pages, idmap, cfg, today));
         findings.AddRange(CheckCoverageGap(pages));
         findings.AddRange(CheckOversize(pages, cfg));
+        findings.AddRange(CheckMissingTags(pages));
         findings.AddRange(CheckBacklog(pages, PageStatus.NeedsReview, IssueKind.NeedsReviewBacklog, today));
         findings.AddRange(CheckBacklog(pages, PageStatus.PendingReview, IssueKind.PendingBacklog, today));
 
@@ -186,6 +187,25 @@ public sealed class LintService
             if (inbound.TryGetValue(slug, out var sources) && sources.Count > 0)
                 continue;
             yield return new LintFinding(IssueKind.Orphan, slug, "active page has zero inbound wikilinks");
+        }
+    }
+
+    // `missing-tags`: source-backed authored pages are ingest artifacts, so an
+    // empty tag set means the semantic metadata step was skipped. Uncited
+    // scratch pages and the overview are excluded to keep this focused on
+    // ingestion rather than turning optional frontmatter into a global gate.
+    private static IEnumerable<LintFinding> CheckMissingTags(
+        IReadOnlyList<(string Slug, PageFrontmatter Front, string Body)> pages)
+    {
+        foreach (var (slug, front, _) in pages)
+        {
+            if (front.Status != PageStatus.Active || front.Type == PageType.Overview)
+                continue;
+            if (front.Sources.Length == 0 || front.Tags.Length > 0)
+                continue;
+
+            yield return new LintFinding(IssueKind.MissingTags, slug,
+                "source-backed page has no tags; add 2-5 stable lowercase kebab-case topic/domain tags, reusing tags from related pages");
         }
     }
 

@@ -341,6 +341,7 @@ The canonical agent flow (encoded in AGENTS.md, enforced by ledger preconditions
 | `rename-drift` | idmap path mismatch (Obsidian-side rename) |
 | `needs-review-backlog` | Pages in `needs-review` older than 14 days |
 | `pending-backlog` | Pages in `pending-review` older than 14 days |
+| `missing-tags` | Active, source-backed summary/entity/concept page has an empty tag set |
 
 Lint never edits page content. `--fix-links` repairs only mechanical link targets after renames. Everything else is filed as an issue for the agent/human.
 
