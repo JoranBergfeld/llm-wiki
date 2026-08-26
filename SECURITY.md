@@ -40,12 +40,30 @@ because content quality is a separate problem, addressed separately.
 ## Verifying what you installed
 
 Release binaries are built by the CI workflow in this repository from a green
-`main`, and `wiki --version` reports the exact commit SHA it was built from:
+`main`. Two things let you check what you got.
+
+**Integrity.** Every release carries a `SHA256SUMS` covering all four
+archives. `install.sh` and `install.ps1` fetch it and verify automatically,
+refusing to install on a mismatch; a release with no `SHA256SUMS` published
+is reported and skipped rather than silently trusted. To check a manual
+download yourself:
+
+```bash
+curl -fsSLO https://github.com/JoranBergfeld/llm-wiki/releases/download/latest/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+Note what this does and does not buy you: the archive and its checksum come
+from the same host, so this catches corruption and truncation, not a
+compromised release. It is integrity, not provenance.
+
+**Provenance.** `wiki --version` reports the exact commit the binary was built
+from:
 
 ```
 $ wiki --version
-1.0.0+e90b1f95ac88abdcc992917bbbf518941071d0e0
+1.0.0+7e608a39d00a804c7cbe8b9e1f53e9d816d85592
 ```
 
-Cross-check that against the commit history before trusting a binary you did
-not build yourself.
+Cross-check that against the commit history, and against the CI run that
+published the release, before trusting a binary you did not build yourself.

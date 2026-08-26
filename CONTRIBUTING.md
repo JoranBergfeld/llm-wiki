@@ -162,6 +162,12 @@ or the AOT binary meets a glibc it was not linked against), and the `nuget`
 job packs from `src/Wiki/Wiki.csproj` with a rolling `PackageVersion` that
 leaves the assembly version alone.
 
+The release job also publishes a `SHA256SUMS` covering every archive, which
+both install scripts fetch and verify before installing. If you rename an
+asset or add a RID, the checksum file follows automatically (it is generated
+from the artifacts), but the scripts look their asset up by exact filename —
+so a rename means touching `scripts/install.sh` and `scripts/install.ps1` too.
+
 ## Licence
 
 By contributing you agree your contributions are licensed under the MIT

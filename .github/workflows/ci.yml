@@ -122,6 +122,17 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # SHA256SUMS ships as a release asset so install.sh and install.ps1 can
+      # verify what they downloaded, and so anyone can check a manual download
+      # by hand. `cd dist` first: sha256sum records the paths it is given, and
+      # bare filenames are what `sha256sum -c` expects to find next to it.
+      #
+      # This is integrity, not provenance - it proves the archive is the one
+      # this run produced, not that this run is trustworthy. The chain back to
+      # a commit is `wiki --version`, which reports the SHA it was built from.
+      - name: Checksum the artifacts
+        run: cd dist && sha256sum wiki-* > SHA256SUMS && cat SHA256SUMS
+
       - name: Publish rolling 'latest' release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -136,7 +147,9 @@ jobs:
             --title "Latest main build ($sha_short)" \
             --notes "Automated native-AOT build from main @ $sha_short (run #${GITHUB_RUN_NUMBER}).
 
-          Binaries: linux-x64, linux-arm64, win-x64, osx-arm64. Unix targets are \`.tar.gz\` (contains \`wiki\`); Windows is \`.zip\` (contains \`wiki.exe\`)."
+          Binaries: linux-x64, linux-arm64, win-x64, osx-arm64. Unix targets are \`.tar.gz\` (contains \`wiki\`); Windows is \`.zip\` (contains \`wiki.exe\`).
+
+          \`SHA256SUMS\` covers every archive here; the install scripts verify it automatically. The binary reports the commit it was built from: \`wiki --version\` → \`1.0.0+$GITHUB_SHA\`."
 
   # The image is a shipping vehicle for the binary the build job already
   # produced - it compiles nothing. See docker/Dockerfile for why the base
