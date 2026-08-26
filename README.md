@@ -199,6 +199,13 @@ Tags should describe durable topics or domains, not repeat the page type,
 title, or source category. On update, pass the complete tag set: `--tags`
 replaces the stored tags.
 
+Tags are not required at write time — `wiki lint` files a `missing-tags` issue
+for any active, source-backed page without them. That check is advisory like
+every other lint finding, so a vault that predates it will file one issue per
+untagged page on its next lint. That backlog is the point: work it off through
+`wiki issues list --kind missing-tags`, or resolve the issues if you have
+decided tags are not for you.
+
 One line each on purpose: line continuations are the third shell-specific
 thing (`\` in bash, a backtick in PowerShell, `^` in `cmd.exe`), and the
 commands above are the same everywhere without them.
@@ -239,15 +246,21 @@ UTF-8 regardless of what the surrounding shell's code page happens to be.
 demo/
 ├── wiki.yaml            # your config: name, categories, review gate, lint thresholds
 ├── AGENTS.md            # the agent's instructions — conventions + playbooks
-├── eval.yaml            # optional: your golden retrieval questions, for `wiki eval`
 ├── raw/                 # immutable sources, named by ULID
 ├── wiki/
 │   ├── index.md         # CLI-generated routing catalog
 │   ├── log.md           # CLI-generated append-only operation log
-│   ├── overview.md      # top-level synthesis
-│   ├── summaries/  entities/  concepts/
+│   ├── entities/        # one file per page, by type
+│   └── summaries/
 └── .wiki/               # derived cache — idmap, ledger, issues, lint (rebuildable)
 ```
+
+Page directories are created when the first page of that type lands, so a
+vault this young has `entities/` and `summaries/` and not yet `concepts/`.
+Two more files show up as you go: `wiki/overview.md`, the top-level synthesis,
+once the agent writes the `overview` page (it is a singleton at a fixed path,
+not scaffolded), and `eval.yaml`, which you write by hand if you want
+`wiki eval` to score retrieval against your own golden questions.
 
 `wiki/index.md` is what makes retrieval cheap — the agent routes through it
 instead of reading page bodies to find out what's relevant:
