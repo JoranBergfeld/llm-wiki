@@ -40,6 +40,50 @@ try {
         throw "download failed: $url`n$($_.Exception.Message)"
     }
 
+    # Verify against the SHA256SUMS published alongside the archives. This
+    # proves the archive is the one that release produced - integrity, not
+    # provenance; both files come from the same host, so it catches a
+    # truncated or corrupted download, not a compromised release.
+    # `wiki --version` reports the commit the binary was built from, which is
+    # the chain back to source.
+    #
+    # A release with no SHA256SUMS (one published before it existed, or a
+    # WIKI_VERSION pointing at one) has nothing to check against and is
+    # skipped. A checksum that disagrees is fatal.
+    Write-Host "Verifying checksum..."
+    $sumsUrl = "https://github.com/$repo/releases/download/$tag/SHA256SUMS"
+    $sumsFile = Join-Path $tmp 'SHA256SUMS'
+    $haveSums = $true
+    try {
+        Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsFile -UseBasicParsing
+    } catch {
+        $haveSums = $false
+        Write-Warning "  no SHA256SUMS published for '$tag' - skipping verification."
+    }
+
+    if ($haveSums) {
+        # sha256sum writes "<hash>  <name>", and prefixes the name with '*'
+        # for a binary-mode entry. Accept either.
+        $expected = $null
+        foreach ($line in Get-Content $sumsFile) {
+            $parts = $line -split '\s+', 2
+            if ($parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq $asset) {
+                $expected = $parts[0]
+                break
+            }
+        }
+        if (-not $expected) { throw "SHA256SUMS has no entry for $asset." }
+
+        # Get-FileHash returns uppercase, sha256sum writes lowercase.
+        # PowerShell's -ne is case-insensitive on strings, so this compares
+        # correctly without normalising either side.
+        $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+        if ($actual -ne $expected) {
+            throw "checksum mismatch for ${asset}:`n  expected $expected`n  actual   $actual`nRefusing to install. Retry, and if it persists, open an issue."
+        }
+        Write-Host "  ok ($expected)"
+    }
+
     Expand-Archive -Path $zip -DestinationPath $tmp -Force
     $staged = Join-Path $tmp 'wiki.exe'
     if (-not (Test-Path $staged)) { throw "archive did not contain wiki.exe" }
