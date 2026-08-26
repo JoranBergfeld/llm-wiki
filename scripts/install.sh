@@ -73,10 +73,22 @@ tar -xzf "$tmp/$asset" -C "$tmp" || die "could not extract $asset"
 [ -f "$tmp/wiki" ] || die "archive did not contain a 'wiki' binary"
 
 mkdir -p "$INSTALL_DIR"
-# mv, not cp: replacing the inode leaves a running `wiki` process alone and
-# avoids "text file busy" when updating a binary that is currently executing.
-mv -f "$tmp/wiki" "$INSTALL_DIR/wiki"
-chmod +x "$INSTALL_DIR/wiki"
+# Stage inside the destination directory, then rename over the target. The
+# rename is what matters: it replaces the directory entry rather than writing
+# through the existing inode, so a currently-executing `wiki` keeps its own
+# copy and we never hit ETXTBSY updating a running binary.
+#
+# Staging here rather than renaming straight out of "$tmp" is deliberate -
+# mktemp -d and $INSTALL_DIR are usually on different filesystems, and a
+# cross-device mv silently degrades to copy-then-unlink, which writes through
+# the target inode and reintroduces exactly the failure this avoids.
+staged="$INSTALL_DIR/.wiki.$$.new"
+# Leave no staged file behind if anything below fails; the EXIT trap above
+# only covers "$tmp".
+trap 'rm -rf "$tmp"; rm -f "$staged"' EXIT INT TERM
+cp "$tmp/wiki" "$staged"
+chmod +x "$staged"
+mv -f "$staged" "$INSTALL_DIR/wiki"
 
 version="$("$INSTALL_DIR/wiki" --version 2>/dev/null || echo "unknown")"
 echo "Installed wiki $version to $INSTALL_DIR/wiki"
