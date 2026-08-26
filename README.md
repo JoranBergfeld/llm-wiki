@@ -96,6 +96,24 @@ release: native-AOT builds for `linux-x64`, `linux-arm64`, `win-x64` and
 `osx-arm64`. Unix targets are `.tar.gz` (containing `wiki`), Windows is `.zip`
 (containing `wiki.exe`). No runtime to install; put it on your `PATH`.
 
+Every release carries a `SHA256SUMS` covering all four archives. The install
+scripts check it for you; verifying a manual download is two commands:
+
+```bash
+curl -fsSLO https://github.com/JoranBergfeld/llm-wiki/releases/download/latest/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+```powershell
+# PowerShell
+(Get-FileHash wiki-win-x64.zip -Algorithm SHA256).Hash -eq
+  (Select-String 'wiki-win-x64.zip' SHA256SUMS).Line.Split()[0]
+```
+
+That is an integrity check, not a provenance one — it proves the archive is
+the one that release published. The link back to source is `wiki --version`,
+which reports the commit the binary was built from.
+
 **Container.** A multi-arch image (`linux/amd64`, `linux/arm64`) carrying the
 same binary. Mount your vault at `/vault`, which is where `WIKI_VAULT` already
 points:
@@ -232,6 +250,11 @@ asked for (`wiki eval --fail-under` only).
 
 Then open the vault in Obsidian and look at the graph.
 
+To see what that produces before installing anything, **[docs/example-vault.md](docs/example-vault.md)**
+walks through a real one — built from this repository's own documentation, with
+the pages, the generated index, the errors the CLI returns when an agent gets
+it wrong, and every output pasted as it came back.
+
 ### It is the same vault everywhere
 
 The vault is plain markdown with LF line endings and forward-slashed internal
@@ -304,6 +327,9 @@ recurring lint issues; you approve or reject. The agent never edits it directly.
 
 ## Documentation
 
+- **[Example vault](docs/example-vault.md)** — a real vault built from this
+  repo's own docs: the pages, the generated index, what the CLI refuses to
+  write, and a rebuild of the derived cache proved byte-identical
 - **[Architecture](docs/architecture.md)** — layers, vault layout, the JSON
   contract, why the code looks the way it does
 - **[Functional flow](docs/functional-flow.md)** — who does what: ingest,
