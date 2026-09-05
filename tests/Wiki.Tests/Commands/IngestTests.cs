@@ -273,6 +273,204 @@ public class IngestTests
         tv.Dispose();
     }
 
+    // --- Amendment Z: unwitnessed integration (issue #23) ------------------
+
+    // Creates an `entity` page citing `sourceId` - the structural evidence
+    // ReindexService.RebuildLedger reads to prove a source reached
+    // `integrated`. A summary page alone only proves `summarized`, so without
+    // this a reindexed entry lands back at `summarized` and never exercises
+    // the null-`integratedAt` case at all.
+    private static void IntegrateSource(TempVault tv, string sourceId)
+    {
+        var r = tv.RunStdin("Entity body", "page", "upsert", "--type", "entity",
+            "--title", "M entity", "--summary", "s", "--sources", sourceId, "--json");
+        Assert.Equal(0, r.ExitCode);
+    }
+
+    // Drives issue #23's repro up to the wedge: a source taken to
+    // `integrated` through the real flow, then `.wiki/` deleted and rebuilt by
+    // `wiki reindex` - the documented recovery path. Reindex re-derives
+    // `state: integrated` from the entity page's citation but leaves
+    // `integratedAt` null rather than fabricate a transition it never
+    // witnessed (amendment A), so the returned vault holds exactly the entry
+    // that used to be permanently unadvanceable.
+    private static (TempVault, string) ReindexDerivedIntegrated()
+    {
+        var (tv, id) = Seeded();
+        SummarizeSource(tv, id);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "summarized", "--json").ExitCode);
+        IntegrateSource(tv, id);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "integrated", "--touched", "", "--json").ExitCode);
+
+        Directory.Delete(Path.Combine(tv.Path, ".wiki"), recursive: true);
+        Assert.Equal(0, tv.Run("reindex", "--json").ExitCode);
+
+        // Precondition of every test below: back at `integrated`, with no
+        // `integratedAt` (absent from the envelope, or present as null).
+        var data = (JsonElement)tv.Run("ingest", "status", id, "--json").Envelope.Data!;
+        Assert.Equal("integrated", data.GetProperty("state").GetString());
+        Assert.True(!data.TryGetProperty("integratedAt", out var integratedAt)
+            || integratedAt.ValueKind == JsonValueKind.Null);
+        return (tv, id);
+    }
+
+    // The wedge itself. `advance --to linted` on a reindex-derived
+    // `integrated` entry used to fail `precondition-lint` however many times
+    // lint was re-run, because a null `integratedAt` was read as "no lint ran
+    // after integration" - a comparison with nothing on the other side of it.
+    // A recorded lint run now satisfies the precondition.
+    [Fact]
+    public void Advance_ToLinted_UnwitnessedIntegration_AcceptedAfterLint()
+    {
+        var (tv, id) = ReindexDerivedIntegrated();
+
+        Assert.Equal(0, tv.Run("lint", "--json").ExitCode);
+
+        var linted = tv.Run("ingest", "advance", id, "--to", "linted", "--json");
+        Assert.Equal(0, linted.ExitCode);
+        Assert.Contains("\"state\":\"linted\"", File.ReadAllText(LedgerPath(tv)));
+
+        // The entry is finished, so it drops out of the work queue
+        // `ingest status` (no args) reports - amendment G. This is the half of
+        // the bug that cost real money: a wedged row kept the queue non-empty
+        // forever, waking a scheduled agent every hour indefinitely.
+        var queue = (JsonElement)tv.Run("ingest", "status", "--json").Envelope.Data!;
+        Assert.DoesNotContain(queue.EnumerateArray(),
+            e => e.GetProperty("sourceId").GetString() == id);
+        tv.Dispose();
+    }
+
+    // Tolerating the null must not tolerate a vault that has never linted:
+    // the "a lint actually ran" half of the precondition is unconditional.
+    [Fact]
+    public void Advance_ToLinted_UnwitnessedIntegration_StillRequiresALintRun()
+    {
+        var (tv, id) = ReindexDerivedIntegrated();
+
+        // Deleting `.wiki/` took lint.json with it, and reindex does not
+        // recreate it - the last-lint timestamp is history, not structure
+        // (amendment A).
+        Assert.False(File.Exists(Path.Combine(tv.Path, ".wiki", "lint.json")));
+
+        var snapshot = LedgerSnapshot(tv);
+        var r = tv.Run("ingest", "advance", id, "--to", "linted", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "precondition-lint");
+        Assert.Equal(snapshot, LedgerSnapshot(tv));
+        tv.Dispose();
+    }
+
+    // The ordering claim is dropped ONLY where there is no timestamp to order
+    // against. A WITNESSED integration whose newest lint predates it is still
+    // rejected - that lint ran against a body the integration then changed,
+    // so it proves nothing (amendment J's "strictly older" reject).
+    [Fact]
+    public void Advance_ToLinted_WitnessedIntegration_StaleLint_StillRejected()
+    {
+        var (tv, id) = Seeded();
+        SummarizeSource(tv, id);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "summarized", "--json").ExitCode);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "integrated", "--touched", "", "--json").ExitCode);
+
+        var lastRun = System.DateTimeOffset.UtcNow.AddDays(-1)
+            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        File.WriteAllText(Path.Combine(tv.Path, ".wiki", "lint.json"), $"{{\"lastRun\":\"{lastRun}\"}}");
+
+        var snapshot = LedgerSnapshot(tv);
+        var r = tv.Run("ingest", "advance", id, "--to", "linted", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "precondition-lint");
+        Assert.Equal(snapshot, LedgerSnapshot(tv));
+        tv.Dispose();
+    }
+
+    // `ingest resume` is what an agent reads after losing context, so it must
+    // not name the unsatisfiable goal either - "newer than this source's
+    // 'integrated' timestamp" is the instruction that had agents re-running
+    // lint forever against an entry that has no such timestamp.
+    [Fact]
+    public void Resume_UnwitnessedIntegration_DescribesALintRunWithoutOrdering()
+    {
+        var (tv, id) = ReindexDerivedIntegrated();
+
+        var data = (JsonElement)tv.Run("ingest", "resume", id, "--json").Envelope.Data!;
+        var artifacts = data.GetProperty("expectedArtifacts").EnumerateArray()
+            .Select(a => a.GetString()!).ToList();
+        var lintArtifact = Assert.Single(artifacts);
+        Assert.Contains("reconstructed by reindex", lintArtifact);
+        // The ordering INSTRUCTION must be gone. Matching the full phrase, not
+        // a bare "newer than" - the replacement text uses those words itself,
+        // in the clause explaining that there is nothing to be newer than.
+        Assert.DoesNotContain("newer than this source's", lintArtifact);
+        tv.Dispose();
+    }
+
+    // The ordinary case keeps the ordering wording - a witnessed integration
+    // really does have a timestamp the lint must be newer than.
+    [Fact]
+    public void Resume_WitnessedIntegration_KeepsOrderingWording()
+    {
+        var (tv, id) = Seeded();
+        SummarizeSource(tv, id);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "summarized", "--json").ExitCode);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "integrated", "--touched", "", "--json").ExitCode);
+
+        var data = (JsonElement)tv.Run("ingest", "resume", id, "--json").Envelope.Data!;
+        var lintArtifact = Assert.Single(data.GetProperty("expectedArtifacts").EnumerateArray()
+            .Select(a => a.GetString()!));
+        Assert.Contains("newer than this source's", lintArtifact);
+        tv.Dispose();
+    }
+
+    // A source not integrated YET also has a null `integratedAt`, but its
+    // transition is still ahead of it and will stamp one - so it must get the
+    // ordinary ordering wording, not the unwitnessed-integration wording.
+    [Fact]
+    public void Resume_NotYetIntegrated_KeepsOrderingWording()
+    {
+        var (tv, id) = Seeded();
+        SummarizeSource(tv, id);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "summarized", "--json").ExitCode);
+
+        var data = (JsonElement)tv.Run("ingest", "resume", id, "--json").Envelope.Data!;
+        var artifacts = data.GetProperty("expectedArtifacts").EnumerateArray()
+            .Select(a => a.GetString()!).ToList();
+        Assert.Equal(2, artifacts.Count);
+        Assert.Contains("newer than this source's", artifacts[^1]);
+        Assert.DoesNotContain("reconstructed by reindex", artifacts[^1]);
+        tv.Dispose();
+    }
+
+    // A non-null but UNPARSEABLE `integratedAt` is corrupt state, not absent
+    // history, so it stays rejected rather than riding the null tolerance in.
+    [Fact]
+    public void Advance_ToLinted_UnparseableIntegratedAt_Rejected()
+    {
+        var (tv, id) = Seeded();
+        SummarizeSource(tv, id);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "summarized", "--json").ExitCode);
+        Assert.Equal(0, tv.Run("ingest", "advance", id, "--to", "integrated", "--touched", "", "--json").ExitCode);
+
+        var status = (JsonElement)tv.Run("ingest", "status", id, "--json").Envelope.Data!;
+        var integratedAt = status.GetProperty("integratedAt").GetString()!;
+
+        // Corrupt the timestamp in place - the one thing no CLI path writes,
+        // which is why it has to be simulated by hand here.
+        var ledgerPath = LedgerPath(tv);
+        File.WriteAllText(ledgerPath, File.ReadAllText(ledgerPath).Replace(integratedAt, "not-a-date"));
+
+        var lastRun = System.DateTimeOffset.UtcNow.AddDays(1)
+            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        File.WriteAllText(Path.Combine(tv.Path, ".wiki", "lint.json"), $"{{\"lastRun\":\"{lastRun}\"}}");
+
+        var snapshot = LedgerSnapshot(tv);
+        var r = tv.Run("ingest", "advance", id, "--to", "linted", "--json");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains(r.Envelope.Errors, e => e.Code == "precondition-lint");
+        Assert.Equal(snapshot, LedgerSnapshot(tv));
+        tv.Dispose();
+    }
+
     [Fact]
     public void Status_WithId_ReturnsThatEntry()
     {

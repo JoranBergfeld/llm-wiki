@@ -233,6 +233,20 @@ explanation. The worst case under the relaxed rule (a lint fractionally before
 the integrate in the same second) is negligible and self-corrects on the next
 lint.
 
+The comparison also needs a second side to exist. `wiki reindex` can promote an
+entry to `integrated` on the entity/concept citations in the markdown, but it
+refuses to invent an `integratedAt` for a transition it never saw — so a
+recovered vault holds `integrated` entries with no timestamp. Reading that null
+as "no lint ran after integration" wedged them permanently: no lint run could
+ever be after a moment that isn't recorded, and `reindex` is itself the
+documented repair tool, so the repair created a state nothing could repair. A
+null `integratedAt` is therefore an *unwitnessed* integration and any recorded
+lint run clears it; a lint must still have run, so `linted` stays unreachable in
+a never-linted vault. Only the ordering claim is dropped, and only where there
+is nothing to order against. A non-null timestamp that won't parse is corrupt
+state rather than absent history and is still rejected, with a message that says
+so instead of advising a lint re-run that cannot help.
+
 Re-advancing to the state a source is already in is a `StateConflictException`
 — exit 3, an idempotent no-op — not an error. Same for retracting an
 already-retracted source. The agent is told "the world is already how you
