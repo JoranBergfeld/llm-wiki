@@ -13,10 +13,16 @@
          RollForward for the same reason as Wiki.csproj, applied to testhost:
          without it `dotnet test` aborts outright ("Testhost process ...
          exited with error: You must install or update .NET") for any target
-         whose exact runtime is absent - on a machine with 8.0 and 10.0 but no
-         9.0, that killed the whole run, so the suite CI gates on could not be
-         run locally at all. With it, the net9.0 pass rolls forward to 10.0. -->
-    <RollForward>LatestMajor</RollForward>
+         whose runtime is absent - on a machine with 8.0 and 10.0 but no 9.0,
+         that killed the whole run, so the suite CI gates on could not be run
+         locally at all. With it, the net9.0 pass rolls forward to 10.0.
+
+         `Major` rather than `LatestMajor` is what keeps this matrix honest:
+         `LatestMajor` rolls to the highest installed major even when the
+         requested one IS present, so every pass would run on the newest
+         runtime and the three targets would prove one thing three times. See
+         Wiki.csproj for the longer note. -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

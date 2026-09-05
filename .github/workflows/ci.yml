@@ -50,10 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # All three SDKs, because the suite multi-targets net8.0/net9.0/net10.0
-      # and each pass needs its own runtime present. Installing only the
-      # newest would let RollForward quietly run all three passes on 10.0,
-      # which would assert nothing about 8.x and 9.x - the whole point of
-      # targeting them.
+      # and each pass runs on its own runtime (RollForward=Major prefers the
+      # exact major and only rolls up when it is missing). Installing just the
+      # newest would silently roll all three passes onto 10.0 and assert
+      # nothing about 8.x or 9.x - the whole point of targeting them.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |

@@ -32,12 +32,22 @@
          what would break the arrangement - that is the constraint this list
          imposes, and the reason to drop net8.0 if it ever becomes worth it.
 
-         RollForward is still needed on top: without it each build demands its
-         EXACT runtime and refuses to start on a machine that has, say, 8.0
-         and 10.0 but not 9.0 ("You must install or update .NET to run this
+         RollForward is still needed on top: by default a build demands its
+         EXACT major and refuses to start on a machine that has, say, 8.0 and
+         10.0 but not 9.0 ("You must install or update .NET to run this
          application") even though the assemblies are fine. It sets the
-         ceiling; TargetFrameworks sets the floor. -->
-    <RollForward>LatestMajor</RollForward>
+         ceiling; TargetFrameworks sets the floor.
+
+         `Major`, NOT `LatestMajor`: the two differ in a way that matters
+         here. `LatestMajor` rolls to the highest installed major EVEN WHEN the
+         requested one is present (the host trace shows it as
+         roll_to_highest_version=1), so on a machine with 8.0/9.0/10.0 all
+         three builds would run on 10.0 - which would make the per-target test
+         passes theatre, all three exercising one runtime while appearing to
+         cover three. `Major` prefers the exact major and rolls up only when it
+         is absent, which is both what the fallback was for and what makes the
+         test matrix mean something. -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
 
   <!-- `dotnet pack` produces a global tool for the GitHub Packages NuGet feed.

@@ -13,10 +13,13 @@ will notice if you skip them.
   NuGet packages.
 - To run the **full** test suite you need the 8.0, 9.0 and 10.0 runtimes,
   because both projects target `net8.0;net9.0;net10.0` and `dotnet test`
-  executes the suite once per target. With a runtime missing, that target's
-  pass rolls forward to the next one installed (`RollForward=LatestMajor`), so
-  the run still succeeds — it just doesn't prove what it looks like it proves.
-  CI installs all three for exactly that reason.
+  executes the suite once per target, each on its own runtime. With one
+  missing, that target's pass rolls forward to the next installed
+  (`RollForward=Major`), so the run still goes green — it just doesn't prove
+  what it appears to. CI installs all three for exactly that reason.
+  `RollForward` is deliberately `Major` and not `LatestMajor`: the latter rolls
+  to the newest major *even when the requested one is installed*, which would
+  quietly collapse the whole matrix onto one runtime.
 - For a native-AOT publish: a platform toolchain
   - **Linux:** `clang` and `zlib1g-dev`
   - **macOS:** Xcode command line tools; `openssl@3` and `brotli` (Homebrew
