@@ -1,15 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <!-- Same reason as Wiki.csproj, applied to testhost: without it
-         `dotnet test` aborts outright ("Testhost process ... exited with
-         error: You must install or update .NET") on a machine with 8.0 and
-         10.0 but no 9.0 runtime, so the suite CI gates on cannot be run
-         locally at all. -->
+    <!-- Matches Wiki.csproj's targets deliberately: the claim "8.x, 9.x and
+         10.x are supported" is only worth making if the suite actually runs
+         on all three, so `dotnet test` executes it three times rather than
+         asserting compatibility the build never exercised.
+
+         RollForward for the same reason as Wiki.csproj, applied to testhost:
+         without it `dotnet test` aborts outright ("Testhost process ...
+         exited with error: You must install or update .NET") for any target
+         whose exact runtime is absent - on a machine with 8.0 and 10.0 but no
+         9.0, that killed the whole run, so the suite CI gates on could not be
+         run locally at all. With it, the net9.0 pass rolls forward to 10.0. -->
     <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
   <ItemGroup>

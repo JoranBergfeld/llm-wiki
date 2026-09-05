@@ -49,9 +49,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # All three SDKs, because the suite multi-targets net8.0/net9.0/net10.0
+      # and each pass needs its own runtime present. Installing only the
+      # newest would let RollForward quietly run all three passes on 10.0,
+      # which would assert nothing about 8.x and 9.x - the whole point of
+      # targeting them.
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
       - name: Restore
         run: dotnet restore LlmWiki.sln
       - name: Test
@@ -77,7 +85,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       # Native-AOT link prerequisites. Linux needs clang + zlib headers.
       - name: Linux AOT prerequisites
@@ -92,8 +100,13 @@ jobs:
           brew install openssl@3 brotli || true
           echo "LIBRARY_PATH=$(brew --prefix openssl@3)/lib:$(brew --prefix brotli)/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
+      # -f is required once the project multi-targets, and the released
+      # binaries deliberately take the NEWEST target: they are self-contained
+      # AOT, so they carry their own runtime and nothing about the consumer's
+      # installed .NET applies to them. The lower targets exist for the IL
+      # `dotnet tool` channel, not for these.
       - name: Publish (native AOT)
-        run: dotnet publish src/Wiki/Wiki.csproj -c Release -r ${{ matrix.rid }} -o publish/${{ matrix.rid }}
+        run: dotnet publish src/Wiki/Wiki.csproj -c Release -f net10.0 -r ${{ matrix.rid }} -o publish/${{ matrix.rid }}
 
       - name: Package (unix)
         if: runner.os != 'Windows'
@@ -211,10 +224,13 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      # One SDK packs all three targets - reference assemblies for the older
+      # ones are restored as NuGet packages, so no 8.0/9.0 SDK is needed here.
+      # The resulting nupkg carries tools/net8.0, tools/net9.0 and
+      # tools/net10.0, and `dotnet tool install` picks by installed runtime.
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       # Rolling prerelease version: monotonic in run number, and marked
       # prerelease so `dotnet tool install` only picks it up with

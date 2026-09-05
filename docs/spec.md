@@ -405,7 +405,7 @@ When `false`, pages land `active` directly. The flag can be flipped at any time;
 
 ## 16. Implementation notes (.NET)
 
-- **Target:** .NET 9, `PublishAot=true`, single-file, self-contained. Build matrix: `win-x64`, `linux-x64`, `osx-x64`, `osx-arm64`, `linux-arm64`.
+- **Target:** `net8.0;net9.0;net10.0` (the IL `dotnet tool` channel serves all three; the released binaries are built from the newest), `PublishAot=true`, single-file, self-contained. Build matrix: `win-x64`, `linux-x64`, `osx-x64`, `osx-arm64`, `linux-arm64`.
 - **CLI framework:** Spectre.Console for rendering (tables, trees, diff display). For command parsing, verify **Spectre.Console.Cli** AOT/trimming compatibility at implementation time — it historically relies on reflection for command binding; if warnings persist, use `System.CommandLine` for parsing and Spectre.Console purely for output. Do not fight the trimmer.
 - **YAML:** frontmatter schemas here are small and closed — prefer a hand-rolled or minimal mapping over reflection-based YamlDotNet defaults (AOT hazard). If YamlDotNet is used, use its static/source-generated context.
 - **Markdown:** Markdig for parsing (wikilink extraction via a custom inline parser or regex over the raw text — wikilinks are simple enough that regex `\[\[([^\]|]+)(\|[^\]]+)?\]\]` on non-code-fence lines is acceptable and avoids AST complexity).

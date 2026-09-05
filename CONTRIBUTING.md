@@ -8,12 +8,15 @@ will notice if you skip them.
 
 ## Prerequisites
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download) — or any newer SDK that
-  can still target `net9.0`. Both projects set `RollForward=LatestMajor`, so
-  the framework-dependent build and the test host run on the 9.0 runtime or
-  any newer major (10.0, …); you do not need the 9.0 runtime specifically
-  installed alongside a newer one. Without that property `dotnet test` aborts
-  with "You must install or update .NET" on exactly that setup.
+- [.NET 10 SDK](https://dotnet.microsoft.com/download). One SDK is enough to
+  build every target — reference assemblies for the older ones restore as
+  NuGet packages.
+- To run the **full** test suite you need the 8.0, 9.0 and 10.0 runtimes,
+  because both projects target `net8.0;net9.0;net10.0` and `dotnet test`
+  executes the suite once per target. With a runtime missing, that target's
+  pass rolls forward to the next one installed (`RollForward=LatestMajor`), so
+  the run still succeeds — it just doesn't prove what it looks like it proves.
+  CI installs all three for exactly that reason.
 - For a native-AOT publish: a platform toolchain
   - **Linux:** `clang` and `zlib1g-dev`
   - **macOS:** Xcode command line tools; `openssl@3` and `brotli` (Homebrew
@@ -24,16 +27,29 @@ will notice if you skip them.
 Native AOT cannot cross-compile across operating systems. You build for the OS
 you're on.
 
+Why three targets: a target framework is the **floor** of runtime support and
+roll-forward only moves up, so a `net10.0` assembly cannot load on a 9.x
+runtime however it's configured. Shipping the latest *and* not stranding
+anyone on 8.x/9.x therefore needs more than one target. It only affects the
+`dotnet tool` channel, which ships IL — the release binaries and Docker image
+are self-contained AOT and need no runtime at all. Adding an API newer than
+the lowest target is what would break this, and is the reason to drop `net8.0`
+if it ever earns its keep.
+
 ## Build, test, run
 
 ```bash
-dotnet build LlmWiki.sln                                   # everything
-dotnet test tests/Wiki.Tests/Wiki.Tests.csproj -c Release  # the suite CI gates on
-dotnet run --project src/Wiki -- --help                    # run the CLI
+dotnet build LlmWiki.sln                                   # every target
+dotnet test tests/Wiki.Tests/Wiki.Tests.csproj -c Release  # the suite CI gates on, once per target
+dotnet run --project src/Wiki -f net10.0 -- --help         # run the CLI
+
+# -f is required by both `run` and `publish` now that the project
+# multi-targets. Any of net8.0/net9.0/net10.0 works for local runs; the
+# released binaries are built from the newest.
 
 # native-AOT publish, as CI does it — substitute the RID for the OS you're on.
 # CI publishes all four: linux-x64, linux-arm64, win-x64, osx-arm64.
-dotnet publish src/Wiki/Wiki.csproj -c Release -r linux-x64 -o publish
+dotnet publish src/Wiki/Wiki.csproj -c Release -f net10.0 -r linux-x64 -o publish
 ```
 
 The commands above are the same in bash, PowerShell and `cmd.exe`. Where a
