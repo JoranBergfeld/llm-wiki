@@ -5,6 +5,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Same reason as Wiki.csproj, applied to testhost: without it
+         `dotnet test` aborts outright ("Testhost process ... exited with
+         error: You must install or update .NET") on a machine with 8.0 and
+         10.0 but no 9.0 runtime, so the suite CI gates on cannot be run
+         locally at all. -->
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

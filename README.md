@@ -127,7 +127,8 @@ docker run --rm -v "$PWD:/vault" --user "$(id -u):$(id -g)" \
 
 **.NET global tool.** Published to the GitHub Packages NuGet feed. Two caveats,
 so pick this only if you are already in the .NET toolchain: it ships the **IL
-build, not the AOT one**, so it needs the .NET 9 runtime present, and GitHub
+build, not the AOT one**, so it needs the .NET 9 runtime *or newer* present
+(it rolls forward, so a machine with only 10.0 is fine), and GitHub
 Packages requires authentication *even for public packages* — you need a PAT
 with `read:packages`.
 
@@ -137,7 +138,8 @@ dotnet nuget add source https://nuget.pkg.github.com/JoranBergfeld/index.json \
 dotnet tool install -g LlmWiki.Cli --prerelease
 ```
 
-**From source** (needs the [.NET 9 SDK](https://dotnet.microsoft.com/download)).
+**From source** (needs the [.NET 9 SDK](https://dotnet.microsoft.com/download),
+or any newer SDK that can still target `net9.0`).
 Pick the RID for your machine — CI publishes all four:
 
 ```

@@ -8,7 +8,12 @@ will notice if you skip them.
 
 ## Prerequisites
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download)
+- [.NET 9 SDK](https://dotnet.microsoft.com/download) — or any newer SDK that
+  can still target `net9.0`. Both projects set `RollForward=LatestMajor`, so
+  the framework-dependent build and the test host run on the 9.0 runtime or
+  any newer major (10.0, …); you do not need the 9.0 runtime specifically
+  installed alongside a newer one. Without that property `dotnet test` aborts
+  with "You must install or update .NET" on exactly that setup.
 - For a native-AOT publish: a platform toolchain
   - **Linux:** `clang` and `zlib1g-dev`
   - **macOS:** Xcode command line tools; `openssl@3` and `brotli` (Homebrew

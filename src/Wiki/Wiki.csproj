@@ -9,11 +9,24 @@
     <AssemblyName>wiki</AssemblyName>
     <RootNamespace>Wiki</RootNamespace>
     <StartupObject>Wiki.App</StartupObject>
+    <!-- Target net9.0, but run on 9.0 or any newer major runtime. Without
+         this, the framework-dependent output demands an EXACTLY 9.0 runtime
+         and refuses to start on a machine that has, say, 8.0 and 10.0
+         installed - "You must install or update .NET to run this
+         application", even though the assemblies are perfectly compatible.
+         That is a real failure for the two channels that ship IL rather than
+         AOT (the `dotnet tool` package below, and anyone doing `dotnet run`
+         from a clone), and it is not a compatibility risk worth carrying: the
+         CLI's dependency surface is System.CommandLine + Spectre.Console and
+         a handful of BCL primitives, all of which are stable across majors.
+         Irrelevant to the release binaries, which are self-contained AOT. -->
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
 
   <!-- `dotnet pack` produces a global tool for the GitHub Packages NuGet feed.
        That channel ships the IL build, not the AOT one - `dotnet tool` has no
-       native-AOT story - so it needs the .NET 9 runtime present. The release
+       native-AOT story - so it needs a .NET runtime present (9.0 or newer,
+       via the RollForward above). The release
        binaries stay the recommended install; this exists for `dotnet tool`
        users and CI images that already have the SDK. PackAsTool is inert
        during `dotnet publish -r <rid>`, so the AOT build is unaffected. -->
