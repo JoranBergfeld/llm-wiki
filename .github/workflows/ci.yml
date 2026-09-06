@@ -224,6 +224,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
       # One SDK packs all three targets - reference assemblies for the older
       # ones are restored as NuGet packages, so no 8.0/9.0 SDK is needed here.
       # The resulting nupkg carries tools/net8.0, tools/net9.0 and
