@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <PublishAot>true</PublishAot>
@@ -9,11 +9,52 @@
     <AssemblyName>wiki</AssemblyName>
     <RootNamespace>Wiki</RootNamespace>
     <StartupObject>Wiki.App</StartupObject>
+    <!-- Three targets, because a target framework is the FLOOR of runtime
+         support and roll-forward only ever moves UP: a net10.0 assembly
+         cannot load on a 9.x runtime, no matter how it is configured. So
+         "ship the latest" and "don't strand anyone on 8.x/9.x" cannot both be
+         served by a single target - hence all three.
+
+         Where it actually matters is narrower than it looks. The release
+         binaries and the Docker image carry self-contained native AOT and
+         need no runtime installed at all, so their consumers are indifferent
+         to this list; CI publishes those from the newest target (-f, see
+         .github/workflows/ci.yml). The one channel where a consumer's
+         installed runtime decides anything is the `dotnet tool` package
+         below, which ships IL - and a multi-targeted tool nupkg carries
+         tools/net8.0, tools/net9.0 and tools/net10.0, so `dotnet tool
+         install` resolves whichever matches the machine.
+
+         The code costs nothing for this: it compiles warning-free (AOT
+         analyzers included) against all three, because the dependency
+         surface is System.CommandLine + Spectre.Console and a handful of
+         stable BCL primitives. Adding an API newer than the lowest target is
+         what would break the arrangement - that is the constraint this list
+         imposes, and the reason to drop net8.0 if it ever becomes worth it.
+
+         RollForward is still needed on top: by default a build demands its
+         EXACT major and refuses to start on a machine that has, say, 8.0 and
+         10.0 but not 9.0 ("You must install or update .NET to run this
+         application") even though the assemblies are fine. It sets the
+         ceiling; TargetFrameworks sets the floor.
+
+         `Major`, NOT `LatestMajor`: the two differ in a way that matters
+         here. `LatestMajor` rolls to the highest installed major EVEN WHEN the
+         requested one is present (the host trace shows it as
+         roll_to_highest_version=1), so on a machine with 8.0/9.0/10.0 all
+         three builds would run on 10.0 - which would make the per-target test
+         passes theatre, all three exercising one runtime while appearing to
+         cover three. `Major` prefers the exact major and rolls up only when it
+         is absent, which is both what the fallback was for and what makes the
+         test matrix mean something. -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
 
   <!-- `dotnet pack` produces a global tool for the GitHub Packages NuGet feed.
        That channel ships the IL build, not the AOT one - `dotnet tool` has no
-       native-AOT story - so it needs the .NET 9 runtime present. The release
+       native-AOT story - so it needs a .NET runtime present: 8.0, 9.0 or
+       10.0, whichever the machine has, resolved from the matching tools/<tfm>
+       folder in the nupkg. The release
        binaries stay the recommended install; this exists for `dotnet tool`
        users and CI images that already have the SDK. PackAsTool is inert
        during `dotnet publish -r <rid>`, so the AOT build is unaffected. -->
