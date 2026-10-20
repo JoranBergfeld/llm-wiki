@@ -96,6 +96,36 @@ public class InitTests
         Assert.False(config.ReviewGate);
     }
 
+    [Fact]
+    public void AgentsTemplate_ExemptsStandaloneVersion_FromVaultRequirements()
+    {
+        using var tv = new TempVault();
+        Assert.Equal(0, tv.Run("init", tv.Path, "--json").ExitCode);
+        AssertStandaloneVersionContract(File.ReadAllText(Path.Combine(tv.Path, "AGENTS.md")));
+    }
+
+    [Fact]
+    public void Skill_ExemptsStandaloneVersion_FromVaultRequirements()
+    {
+        var text = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Instructions", "llm-wiki.md"));
+        AssertStandaloneVersionContract(text);
+        Assert.DoesNotContain("**Always pass `--json`.**", text);
+        Assert.DoesNotContain("on every command", text);
+    }
+
+    private static void AssertStandaloneVersionContract(string text)
+    {
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+        Assert.Contains("`wiki --version`", text);
+        Assert.Contains("--version` only", text);
+        Assert.Contains("plain-text", text);
+        Assert.Contains("exit status", text);
+        Assert.Contains("no vault, configuration, or policy approval", text);
+        Assert.Contains("vault operations", text);
+        Assert.Contains("--vault <path>", text);
+        Assert.Contains("--json", text);
+    }
+
     // Fix 1: our YAML parser has no quote-escaping, so a `"` in --name would
     // corrupt the scaffolded wiki.yaml and silently mis-parse. Reject it at
     // the boundary before any filesystem writes happen.

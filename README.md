@@ -134,10 +134,47 @@ you are on.
 
 ## Quickstart
 
+### Check the executable (no vault required)
+
+`wiki --version` (or `wiki.exe --version` on Windows) is standalone executable
+metadata. It needs **only `--version`**: no `--vault`, `--json`, `WIKI_VAULT`,
+configuration, initialized/readable vault, or policy approval. It returns a
+plain-text version and exits 0 without reading, initializing, validating, or
+mutating a vault or inbox queue. Combining it with other flags is unsupported.
+
+An unattended Windows inbox processor should check the explicit executable
+before vault discovery, accept the plain-text output, and check its exit status:
+
+```powershell
+$WikiExe = 'C:\Tools\LLM Wiki\wiki.exe'
+$version = & $WikiExe --version
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace("$version")) {
+    throw 'wiki version preflight failed'
+}
+
+# Only actual vault operations use vault flags and a JSON envelope.
+& $WikiExe ingest status --vault 'C:\Vaults\demo' --json
+```
+
+Do not run the version output through `ConvertFrom-Json` or require a schema
+amendment to permit the check. Explicit `--vault <path>` and `--json`
+requirements for agent vault operations do not apply to executable metadata.
+
+**Existing automations need instruction synchronization.** Updating the binary
+does not replace installed skill copies, scheduled-task prompts, or an existing
+vault's `AGENTS.md`; `wiki init` only scaffolds new vaults. Refresh installed
+copies of [the skill](.claude/skills/llm-wiki/SKILL.md) and merge this standalone
+version exemption into automation instructions. Have the vault owner merge the
+same exemption into existing `AGENTS.md` instructions while preserving local
+customizations; agents must not edit vault files directly. No vault edit or
+policy approval is a prerequisite for running `--version` itself.
+
+### Create and use a vault
+
 Two things differ between shells: **setting an environment variable**, and
 **passing a page body**. Everything else below is identical everywhere.
 
-Point the CLI at a vault — or pass `--vault <path>` on each command, or just
+Point the CLI at a vault — or pass `--vault <path>` on each vault operation, or just
 run from inside the vault directory:
 
 ```bash
@@ -217,7 +254,7 @@ here-string whose terminator sits at column 0, and `$`, backtick and `"` are
 all live characters. Prefer `--body-file` there. Passing both `--stdin` and
 `--body-file` is an error (`body-source-conflict`); pick one.
 
-Add `--json` to any command for the agent-facing envelope; without it you get
+Add `--json` to vault operations for the agent-facing envelope; without it you get
 Spectre-rendered human output. Exit codes are identical either way:
 `0` success · `1` your input was rejected · `2` environment/IO · `3` state
 conflict (idempotent no-op) · `4` a measurement came in under a threshold you

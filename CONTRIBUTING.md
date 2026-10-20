@@ -119,8 +119,12 @@ Assert.True(result.Envelope.Ok);
 
 What a change should come with:
 
-- The `--json` envelope asserted for both the success and the rejection path —
+- For vault operations, the `--json` envelope asserted for both the success and the rejection path —
   the envelope *is* the contract.
+- Standalone `--version` is exempt: assert exit 0 and a non-empty plain-text
+  version, with no vault flags, JSON parsing, or policy prerequisites. The
+  functional tests in `E2E/VersionTests.cs` run the real process outside a vault
+  and with invalid vault state, and check that existing files are unchanged.
 - Exit codes asserted, not just `ok`. 1 (rejected), 2 (IO), 3 (state conflict)
   are distinct promises.
 - For anything touching derived state, a reindex assertion: idmap byte-identity

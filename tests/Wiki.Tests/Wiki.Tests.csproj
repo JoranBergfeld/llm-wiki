@@ -13,5 +13,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Wiki/Wiki.csproj" />
+    <Content Include="../../.claude/skills/llm-wiki/SKILL.md"
+             Link="Instructions/llm-wiki.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

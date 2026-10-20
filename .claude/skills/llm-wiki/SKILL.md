@@ -17,7 +17,9 @@ ledger state, lint. Stay on your side of that line.
    indexing, and the log — it corrupts the vault silently.
    Reading is unrestricted: prefer `wiki source show` / `wiki page show` for
    sources and pages, and read `AGENTS.md` and `wiki.yaml` directly.
-2. **Always pass `--json`.** Parse the envelope. Human output is for humans.
+2. **Pass `--json` for vault operations.** Parse the envelope. The standalone
+   `wiki --version` check is executable metadata, not a vault operation: it
+   returns plain-text, not JSON, and needs no other flags or prerequisites.
 3. **Bodies arrive in a file, not on a pipe.** Write the body with your own
    file-writing tool and pass `--body-file <path>`. Never as a command-line
    argument, and never through a shell pipe if you can avoid it — `--stdin`
@@ -29,12 +31,21 @@ ledger state, lint. Stay on your side of that line.
 
 ## Preflight
 
-Locate the vault, in this order: `--vault <path>` → the `WIKI_VAULT`
+If checking the installed executable, invoke its explicit path with
+`--version` only (for example, `& 'C:\Tools\LLM Wiki\wiki.exe' --version` in
+PowerShell). `wiki --version` needs no vault, configuration, or policy approval.
+Check its exit status is 0 and its plain-text version is non-empty; do not
+append `--vault` or `--json`, parse an envelope, or request a schema amendment.
+It does not read, initialize, validate, or mutate a vault or inbox queue.
+This metadata check can run before locating a vault or reading `AGENTS.md`.
+
+For vault operations, locate the vault, in this order:
+`--vault <path>` → the `WIKI_VAULT`
 environment variable → auto-detect from the working directory. Confirm with any
 read command; `no-vault` means none of the three resolved, so stop and ask
 where the vault is.
 
-**Prefer `--vault <path>` on every command.** It is the one form that reads the
+**Pass `--vault <path>` explicitly for agent vault operations.** It is the one form that reads the
 same in every shell — `$WIKI_VAULT`, `$env:WIKI_VAULT` and `%WIKI_VAULT%` are
 three different spellings, and `~` does not expand outside bash/zsh. The binary
 ships for Windows as well as Unix; assume nothing about which shell you are in.
@@ -50,7 +61,8 @@ authority on conventions; this skill is the authority on mechanics.
 
 ## The envelope
 
-Every command returns the same four keys:
+Vault operations invoked with `--json` return the same four keys.
+Standalone `wiki --version` is exempt and returns plain-text instead:
 
 ```json
 {"v":1,"ok":true,"data":{...},"errors":[]}
@@ -288,7 +300,8 @@ rather than pausing mid-work.
 
 ## Command reference
 
-Every command accepts `--json` and `--vault`.
+The vault operations below accept `--json` and `--vault`.
+Standalone `wiki --version` is not a vault operation and takes neither.
 
 | Intent | Command |
 |---|---|
