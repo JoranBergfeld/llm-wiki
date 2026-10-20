@@ -38,8 +38,8 @@ or mutate a vault or inbox queue. Run it before vault discovery if needed.
 ## Playbooks
 
 ### Session start
-1. `wiki ingest status` - finish interrupted work before anything else.
-2. `wiki issues list --status open` - know the outstanding repairs.
+1. `wiki ingest status` — finish interrupted work before anything else.
+2. `wiki issues list --status open` — know the outstanding repairs.
 
 ### Retrieval (answering questions)
 1. `wiki index show --json` and/or `wiki search <terms>` to route.
@@ -60,48 +60,48 @@ Never scan bodies to discover relevance.
 | Which pages cite this source? | `wiki source impact <id>` |
 | Register a configured inbox | `wiki source scan <dir> --category <id> [--dry-run]` |
 | List categories | `wiki category list` |
-| Propose a new category | `wiki category propose <id> --description "..." --rationale "..." --sources <ids>` |
-| Write or replace a page body | `wiki page upsert --type <t> --title "..." [--id <id>] --summary "..." --sources <ids> --body-file <path>` |
+| Propose a new category | `wiki category propose <id> --description "…" --rationale "…" --sources <ids>` |
+| Write or replace a page body | `wiki page upsert --type <t> --title "…" [--id <id>] --summary "…" --sources <ids> --body-file <path>` |
 | Record ingest progress | `wiki ingest advance <source-id> --to <state> [--touched <ids>]` |
 | Check vault health | `wiki lint` |
 | Score retrieval quality | `wiki eval [--k N]` (needs a human-owned eval.yaml) |
 | List/check external URLs | `wiki links check [--external]` |
 | Pick a page to audit | `wiki audit next` |
-| Record an audit verdict | `wiki audit record <page-id> --verdict supported\|unsupported --note "..."` |
+| Record an audit verdict | `wiki audit record <page-id> --verdict supported\|unsupported --note "…"` |
 | See outstanding repairs | `wiki issues list --status open [--kind <k>]` |
-| Close a repair | `wiki issues resolve <issue-id> --note "..."` |
+| Close a repair | `wiki issues resolve <issue-id> --note "…"` |
 | Amend these instructions | `wiki schema propose --section "<heading>" --body-file <path>` |
 
 For the vault operations above, pass `--vault <path>` and `--json` explicitly.
-Exit codes: 0 success - 1 your input was rejected - read
-`errors[].code`, correct it, retry once, never retry blind - 2 environment/IO
-problem, do not retry - 3 state conflict, the world is already how you asked,
+Exit codes: 0 success · 1 your input was rejected — read
+`errors[].code`, correct it, retry once, never retry blind · 2 environment/IO
+problem, do not retry · 3 state conflict, the world is already how you asked,
 treat as a no-op and move on.
 
 ### Ingest
 1. Registration. The human decides WHAT enters the vault; you may perform the
    mechanical registration when they have set up an inbox.
    - Human, one file at a time:
-     `wiki source add <file> --category <id> --title "..."` -> state `registered`.
+     `wiki source add <file> --category <id> --title "…"` → state `registered`.
    - You, from a configured inbox directory:
-     `wiki source scan <inbox-dir> --category <id>` -> registers everything not
+     `wiki source scan <inbox-dir> --category <id>` → registers everything not
      already registered. Idempotent (content is hash-deduped), so re-running is
      free. Only ever scan a directory the human has named as an inbox; never go
      looking for files to add.
 
    Choosing a category needs no new command: read `wiki category list --json`
-   and pick the one that fits. Only when nothing fits, propose one -
-   `wiki category propose <id> --description "..." --rationale "..." --sources <the
-   source ids that fit nothing>` - and stop; a human approves or rejects it.
+   and pick the one that fits. Only when nothing fits, propose one —
+   `wiki category propose <id> --description "…" --rationale "…" --sources <the
+   source ids that fit nothing>` — and stop; a human approves or rejects it.
 2. Read it: `wiki source show <source-id>` (reading is unrestricted; only
    writing is mediated).
 3. Write the summary page, then record the step:
-   `wiki page upsert --type summary --title "..." --summary "..." --sources <source-id> --body-file <path>`
+   `wiki page upsert --type summary --title "…" --summary "…" --sources <source-id> --body-file <path>`
    `wiki ingest advance <source-id> --to summarized`
 4. Find the entities/concepts this source affects via `wiki index show` and
-   `wiki search`; upsert each one - new page or edit per the heuristic above -
+   `wiki search`; upsert each one — new page or edit per the heuristic above —
    extending `--sources` with the new source id. Then:
-   `wiki ingest advance <source-id> --to integrated --touched <id1,id2,...>`
+   `wiki ingest advance <source-id> --to integrated --touched <id1,id2,…>`
 5. Update `overview.md` if the source changes the top-level picture, then:
    `wiki lint`
    `wiki ingest advance <source-id> --to linted`
@@ -112,10 +112,10 @@ precondition-checked. If you lose the thread mid-ingest, `wiki ingest resume
 
 ### Audit
 `wiki audit next` selects one page and the ids of the sources it cites. Read
-those sources, then judge the page **cold and adversarially** - try to refute
+those sources, then judge the page **cold and adversarially** — try to refute
 it, do not confirm it, and do not reason from what you remember writing.
 Record one verdict with `wiki audit record <page-id> --verdict
-supported|unsupported --note "..."`. An `unsupported` verdict files an issue for
+supported|unsupported --note "…"`. An `unsupported` verdict files an issue for
 a human to weigh; it is a finding, not a fact. One page per tick at most.
 
 ### Reflect

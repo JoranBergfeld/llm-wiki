@@ -69,14 +69,62 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 echo "Downloading $asset from the '$TAG' release..."
 fetch "$url" "$tmp/$asset" || die "download failed: $url"
 
+# Verify against the SHA256SUMS published alongside the archives. This proves
+# the archive is the one that release produced - integrity, not provenance;
+# both files come from the same host, so it catches a truncated or corrupted
+# download, not a compromised release. `wiki --version` reports the commit the
+# binary was built from, which is the chain back to source.
+#
+# Not fatal if the tooling is missing: sha256sum is coreutils, shasum is the
+# perl script macOS ships instead, and a box with neither should still be able
+# to install. It IS fatal if we have a checksum and it disagrees.
+echo "Verifying checksum..."
+if fetch "https://github.com/$REPO/releases/download/$TAG/SHA256SUMS" "$tmp/SHA256SUMS" 2> /dev/null; then
+    expected="$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")"
+    [ -n "$expected" ] || die "SHA256SUMS has no entry for $asset."
+
+    if command -v sha256sum > /dev/null 2>&1; then
+        actual="$(sha256sum "$tmp/$asset" | cut -d' ' -f1)"
+    elif command -v shasum > /dev/null 2>&1; then
+        actual="$(shasum -a 256 "$tmp/$asset" | cut -d' ' -f1)"
+    else
+        actual=""
+        echo "  no sha256sum or shasum on PATH - skipping verification." >&2
+    fi
+
+    if [ -n "$actual" ] && [ "$actual" != "$expected" ]; then
+        die "checksum mismatch for $asset.
+  expected $expected
+  actual   $actual
+Refusing to install. Retry, and if it persists, open an issue."
+    fi
+    [ -n "$actual" ] && echo "  ok ($expected)"
+else
+    # Releases published before SHA256SUMS existed, or a WIKI_VERSION pointing
+    # at one, have nothing to check against.
+    echo "  no SHA256SUMS published for '$TAG' - skipping verification." >&2
+fi
+
 tar -xzf "$tmp/$asset" -C "$tmp" || die "could not extract $asset"
 [ -f "$tmp/wiki" ] || die "archive did not contain a 'wiki' binary"
 
 mkdir -p "$INSTALL_DIR"
-# mv, not cp: replacing the inode leaves a running `wiki` process alone and
-# avoids "text file busy" when updating a binary that is currently executing.
-mv -f "$tmp/wiki" "$INSTALL_DIR/wiki"
-chmod +x "$INSTALL_DIR/wiki"
+# Stage inside the destination directory, then rename over the target. The
+# rename is what matters: it replaces the directory entry rather than writing
+# through the existing inode, so a currently-executing `wiki` keeps its own
+# copy and we never hit ETXTBSY updating a running binary.
+#
+# Staging here rather than renaming straight out of "$tmp" is deliberate -
+# mktemp -d and $INSTALL_DIR are usually on different filesystems, and a
+# cross-device mv silently degrades to copy-then-unlink, which writes through
+# the target inode and reintroduces exactly the failure this avoids.
+staged="$INSTALL_DIR/.wiki.$$.new"
+# Leave no staged file behind if anything below fails; the EXIT trap above
+# only covers "$tmp".
+trap 'rm -rf "$tmp"; rm -f "$staged"' EXIT INT TERM
+cp "$tmp/wiki" "$staged"
+chmod +x "$staged"
+mv -f "$staged" "$INSTALL_DIR/wiki"
 
 version="$("$INSTALL_DIR/wiki" --version 2>/dev/null || echo "unknown")"
 echo "Installed wiki $version to $INSTALL_DIR/wiki"

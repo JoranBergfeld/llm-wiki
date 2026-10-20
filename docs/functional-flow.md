@@ -102,7 +102,7 @@ stateDiagram-v2
 | `registered` | File copied into `raw/`, hashed, frontmatter valid | entry state |
 | `summarized` | Summary page exists | a `summary` page lists this source in `sources` |
 | `integrated` | Affected entity/concept pages updated | `--touched id1,id2,…` supplied (may be empty), index verified consistent |
-| `linted` | Health checked | `.wiki/lint.json`'s timestamp is at or after the `integrated` timestamp |
+| `linted` | Health checked | `.wiki/lint.json`'s timestamp is at or after the `integrated` timestamp — or, for a reindex-derived entry that has no `integrated` timestamp, simply that a lint has run |
 
 The full round trip:
 

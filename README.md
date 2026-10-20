@@ -96,6 +96,24 @@ release: native-AOT builds for `linux-x64`, `linux-arm64`, `win-x64` and
 `osx-arm64`. Unix targets are `.tar.gz` (containing `wiki`), Windows is `.zip`
 (containing `wiki.exe`). No runtime to install; put it on your `PATH`.
 
+Every release carries a `SHA256SUMS` covering all four archives. The install
+scripts check it for you; verifying a manual download is two commands:
+
+```bash
+curl -fsSLO https://github.com/JoranBergfeld/llm-wiki/releases/download/latest/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+```powershell
+# PowerShell
+(Get-FileHash wiki-win-x64.zip -Algorithm SHA256).Hash -eq
+  (Select-String 'wiki-win-x64.zip' SHA256SUMS).Line.Split()[0]
+```
+
+That is an integrity check, not a provenance one — it proves the archive is
+the one that release published. The link back to source is `wiki --version`,
+which reports the commit the binary was built from.
+
 **Container.** A multi-arch image (`linux/amd64`, `linux/arm64`) carrying the
 same binary. Mount your vault at `/vault`, which is where `WIKI_VAULT` already
 points:
@@ -109,7 +127,8 @@ docker run --rm -v "$PWD:/vault" --user "$(id -u):$(id -g)" \
 
 **.NET global tool.** Published to the GitHub Packages NuGet feed. Two caveats,
 so pick this only if you are already in the .NET toolchain: it ships the **IL
-build, not the AOT one**, so it needs the .NET 9 runtime present, and GitHub
+build, not the AOT one**, so it needs a .NET runtime present — 8.0, 9.0 or
+10.0, whichever you have; the package carries all three — and GitHub
 Packages requires authentication *even for public packages* — you need a PAT
 with `read:packages`.
 
@@ -119,7 +138,8 @@ dotnet nuget add source https://nuget.pkg.github.com/JoranBergfeld/index.json \
 dotnet tool install -g LlmWiki.Cli --prerelease
 ```
 
-**From source** (needs the [.NET 9 SDK](https://dotnet.microsoft.com/download)).
+**From source** (needs the [.NET 10 SDK](https://dotnet.microsoft.com/download);
+one SDK builds every target).
 Pick the RID for your machine — CI publishes all four:
 
 ```
@@ -236,6 +256,13 @@ Tags should describe durable topics or domains, not repeat the page type,
 title, or source category. On update, pass the complete tag set: `--tags`
 replaces the stored tags.
 
+Tags are not required at write time — `wiki lint` files a `missing-tags` issue
+for any active, source-backed page without them. That check is advisory like
+every other lint finding, so a vault that predates it will file one issue per
+untagged page on its next lint. That backlog is the point: work it off through
+`wiki issues list --kind missing-tags`, or resolve the issues if you have
+decided tags are not for you.
+
 One line each on purpose: line continuations are the third shell-specific
 thing (`\` in bash, a backtick in PowerShell, `^` in `cmd.exe`), and the
 commands above are the same everywhere without them.
@@ -262,6 +289,11 @@ asked for (`wiki eval --fail-under` only).
 
 Then open the vault in Obsidian and look at the graph.
 
+To see what that produces before installing anything, **[docs/example-vault.md](docs/example-vault.md)**
+walks through a real one — built from this repository's own documentation, with
+the pages, the generated index, the errors the CLI returns when an agent gets
+it wrong, and every output pasted as it came back.
+
 ### It is the same vault everywhere
 
 The vault is plain markdown with LF line endings and forward-slashed internal
@@ -276,15 +308,21 @@ UTF-8 regardless of what the surrounding shell's code page happens to be.
 demo/
 ├── wiki.yaml            # your config: name, categories, review gate, lint thresholds
 ├── AGENTS.md            # the agent's instructions — conventions + playbooks
-├── eval.yaml            # optional: your golden retrieval questions, for `wiki eval`
 ├── raw/                 # immutable sources, named by ULID
 ├── wiki/
 │   ├── index.md         # CLI-generated routing catalog
 │   ├── log.md           # CLI-generated append-only operation log
-│   ├── overview.md      # top-level synthesis
-│   ├── summaries/  entities/  concepts/
+│   ├── entities/        # one file per page, by type
+│   └── summaries/
 └── .wiki/               # derived cache — idmap, ledger, issues, lint (rebuildable)
 ```
+
+Page directories are created when the first page of that type lands, so a
+vault this young has `entities/` and `summaries/` and not yet `concepts/`.
+Two more files show up as you go: `wiki/overview.md`, the top-level synthesis,
+once the agent writes the `overview` page (it is a singleton at a fixed path,
+not scaffolded), and `eval.yaml`, which you write by hand if you want
+`wiki eval` to score retrieval against your own golden questions.
 
 `wiki/index.md` is what makes retrieval cheap — the agent routes through it
 instead of reading page bodies to find out what's relevant:
@@ -328,6 +366,9 @@ recurring lint issues; you approve or reject. The agent never edits it directly.
 
 ## Documentation
 
+- **[Example vault](docs/example-vault.md)** — a real vault built from this
+  repo's own docs: the pages, the generated index, what the CLI refuses to
+  write, and a rebuild of the derived cache proved byte-identical
 - **[Architecture](docs/architecture.md)** — layers, vault layout, the JSON
   contract, why the code looks the way it does
 - **[Functional flow](docs/functional-flow.md)** — who does what: ingest,

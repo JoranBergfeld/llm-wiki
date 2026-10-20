@@ -158,13 +158,22 @@ public sealed class IngestService
         for (var s = entry.State + 1; s <= LedgerState.Linted; s++)
         {
             remainingStates.Add(LedgerStateX.ToWire(s));
-            artifacts.Add(ArtifactDescription(s));
+            artifacts.Add(ArtifactDescription(s, entry));
         }
 
         return new ResumePlan(sourceId, entry.State, remainingStates.ToArray(), artifacts.ToArray());
     }
 
-    private static string ArtifactDescription(LedgerState to) => to switch
+    // The resume plan is the agent's instruction sheet after a lost context, so
+    // it has to describe the artifact the precondition will ACTUALLY look for.
+    // For `linted` that depends on the entry: an unwitnessed integration
+    // (amendment Z) is cleared by any lint run, and telling the agent to produce
+    // one "newer than this source's 'integrated' timestamp" would name an
+    // unsatisfiable goal - the exact misdirection that had agents re-running
+    // lint forever. `entry.State >= Integrated` is what distinguishes it from a
+    // source merely not integrated YET, whose IntegratedAt is null only because
+    // the transition is still ahead of it and will stamp one when it happens.
+    private static string ArtifactDescription(LedgerState to, LedgerEntry entry) => to switch
     {
         LedgerState.Summarized =>
             "a 'summary'-type page whose 'sources' list includes this source id " +
@@ -172,6 +181,9 @@ public sealed class IngestService
         LedgerState.Integrated =>
             "entity/concept pages updated to reflect this source, with wiki/index.md current " +
             "(wiki page upsert ... --sources <id>,... then ingest advance --to integrated --touched id1,id2,...)",
+        LedgerState.Linted when entry.State >= LedgerState.Integrated && entry.IntegratedAt is null =>
+            "a 'wiki lint' run recorded in .wiki/lint.json (this entry's 'integrated' transition was " +
+            "reconstructed by reindex rather than witnessed, so it carries no timestamp to be newer than)",
         LedgerState.Linted =>
             "a 'wiki lint' run recorded in .wiki/lint.json newer than this source's 'integrated' timestamp",
         _ => throw new ValidationException("invalid-ledger-state", $"no expected artifact for state '{to}'"),
@@ -211,7 +223,7 @@ public sealed class IngestService
                 "run 'wiki reindex' or investigate before integrating");
     }
 
-    // `linted` precondition (spec §10, amendments D + J): a lint run at or
+    // `linted` precondition (spec §10, amendments D + J + Z): a lint run at or
     // after this entry's `integratedAt` timestamp must exist, tracked in
     // `.wiki/lint.json`'s `lastRun` field. `wiki lint` (Task 22) is the only
     // writer of that file; until it exists, this precondition can never pass.
@@ -226,6 +238,23 @@ public sealed class IngestService
     // `>=`-accept is the honest reading of "a lint newer-or-equal to the
     // integrate ran". A lint STRICTLY older than integratedAt is still
     // rejected - that lint predates the integration and proves nothing.
+    //
+    // Amendment Z: a null `integratedAt` is an UNWITNESSED integration, and a
+    // recorded lint run of any age satisfies the precondition. `Ledger.Reconcile`
+    // promotes a reindex-derived entry to `Integrated` on the markdown citations
+    // that prove integration, but deliberately leaves `IntegratedAt` null rather
+    // than fabricate a transition timestamp it never saw (amendment A). Treating
+    // that null as "no lint ran after integration" conflates two different
+    // things and wedged the entry permanently: there is no timestamp for a lint
+    // to be after, so no lint run could ever clear it - and `reindex`, the
+    // documented recovery path, is what creates the state. The substance of the
+    // precondition survives: a lint must still have RUN (the first check below
+    // is unconditional), so `linted` stays unreachable in a vault that has never
+    // been linted. What is dropped is only the ORDERING claim, which is the
+    // honest thing to drop when the other side of the comparison does not exist.
+    // A non-null but unparseable timestamp is NOT this case - that is corrupt
+    // state rather than absent history, and it is still rejected, with its own
+    // message rather than advice to re-run lint (which would not help).
     private static void CheckLintPrecondition(Vault v, LedgerEntry entry)
     {
         var lintPath = Path.Combine(v.StateDir, "lint.json");
@@ -234,14 +263,29 @@ public sealed class IngestService
         lintState.Load(v);
 
         if (string.IsNullOrEmpty(lintState.LastRun) ||
-            !DateTimeOffset.TryParse(lintState.LastRun, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var lastRun) ||
-            entry.IntegratedAt is null ||
-            !DateTimeOffset.TryParse(entry.IntegratedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var integratedAt) ||
-            lastRun < integratedAt)
+            !DateTimeOffset.TryParse(lintState.LastRun, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var lastRun))
         {
             throw new ValidationException("precondition-lint",
-                $"no lint run at or after this source's 'integrated' timestamp ({entry.IntegratedAt}) is recorded " +
-                $"in '{lintPath}'; run 'wiki lint' after integrating this source");
+                $"no lint run is recorded in '{lintPath}'; run 'wiki lint' after integrating this source");
+        }
+
+        // Unwitnessed integration (amendment Z): no timestamp to be "after",
+        // and the lint run above is all the proof available or required.
+        if (entry.IntegratedAt is null)
+            return;
+
+        if (!DateTimeOffset.TryParse(entry.IntegratedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var integratedAt))
+        {
+            throw new ValidationException("precondition-lint",
+                $"this source's 'integrated' timestamp ('{entry.IntegratedAt}') is not a parseable instant, so no lint " +
+                $"run in '{lintPath}' can be compared against it; the ledger entry is corrupt");
+        }
+
+        if (lastRun < integratedAt)
+        {
+            throw new ValidationException("precondition-lint",
+                $"the most recent lint run ({lintState.LastRun}) predates this source's 'integrated' timestamp " +
+                $"({entry.IntegratedAt}), recorded in '{lintPath}'; run 'wiki lint' after integrating this source");
         }
     }
 }

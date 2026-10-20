@@ -83,7 +83,11 @@ public sealed class Ledger
     //     is genuinely unknown, not "empty"), IntegratedAt = null (reindex
     //     never witnessed an `integrated` transition, so stamping "now" would
     //     fabricate history the property test amendment A explicitly forbids
-    //     claiming), RegisteredAt = null (same reasoning: reindex doesn't
+    //     claiming - and IngestService.CheckLintPrecondition reads that null
+    //     as an UNWITNESSED integration rather than as a failed ordering
+    //     check, per amendment Z, which is what keeps such an entry
+    //     advanceable to `linted` instead of wedged at `integrated` forever),
+    //     RegisteredAt = null (same reasoning: reindex doesn't
     //     know when this source was first registered, only that raw/<id>.md
     //     exists now - left null rather than backdated to "now" via an
     //     injected clock, since a null RegisteredAt is honestly "unknown"
