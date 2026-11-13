@@ -101,6 +101,74 @@ public class PersonaStaleEvidenceTests
     }
 
     [Fact]
+    public void AStaleLine_IsARecheckProposal_ThatDistillHandsTheNextPass()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var (a, _, _, _) = Persona(tv);
+        EditBody(tv, a.Path);
+
+        // Lint is what files the proposal; until it runs there is none.
+        Assert.Empty(Data(tv.Run("persona", "distill", "--json")).GetProperty("recheck").EnumerateArray());
+        tv.Run("lint", "--json");
+
+        var recheck = Assert.Single(Data(tv.Run("persona", "distill", "--json")).GetProperty("recheck").EnumerateArray());
+        Assert.Equal(StaleIssues(tv)[0].GetProperty("id").GetString(), recheck.GetProperty("issue").GetString());
+        Assert.Equal("values", recheck.GetProperty("section").GetString());
+        Assert.Equal(Craft, recheck.GetProperty("text").GetString());
+        var stale = Assert.Single(recheck.GetProperty("evidence").EnumerateArray());
+        Assert.Equal(a.Id, stale.GetProperty("page").GetString());
+        Assert.Equal(a.Path, stale.GetProperty("path").GetString());
+        Assert.Equal("changed", stale.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public void ReconfirmingAStaleLine_WithCurrentEvidence_RetiresTheWarning()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var (a, b, _, _) = Persona(tv);
+        EditBody(tv, a.Path);
+        tv.Run("lint", "--json");
+        var issue = Assert.Single(StaleIssues(tv)).GetProperty("id").GetString();
+
+        // Same line, fresh evidence: a `change` whose text equals `from`.
+        Accept(tv, Change("change", "values", Craft, Craft, a.Id, b.Id));
+        Assert.Equal(new[] { Craft },
+            Data(tv.Run("persona", "read", "--json")).GetProperty("values").EnumerateArray().Select(x => x.GetString()).ToArray());
+        tv.Run("lint", "--json");
+
+        Assert.Empty(StaleIssues(tv));
+        var resolved = Assert.Single(StaleIssues(tv, "resolved"));
+        Assert.Equal(issue, resolved.GetProperty("id").GetString());
+        Assert.Empty(Data(tv.Run("persona", "distill", "--json")).GetProperty("recheck").EnumerateArray());
+    }
+
+    [Fact]
+    public void RemovingAStaleLine_RetiresItsEvidence_WithNoDanglingWarning_AndTheAuditLogRecordsIt()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var (a, b, _, _) = Persona(tv);
+        EditBody(tv, a.Path);
+        tv.Run("lint", "--json");
+        Assert.Single(StaleIssues(tv));
+
+        Accept(tv, Change("remove", "values", Craft, null));
+        tv.Run("lint", "--json");
+
+        Assert.Empty(StaleIssues(tv));
+        Assert.Empty(Data(tv.Run("persona", "distill", "--json")).GetProperty("recheck").EnumerateArray());
+
+        var log = File.ReadAllText(Path.Combine(tv.Path, "audit", "audit.log")).Split('\n', System.StringSplitOptions.RemoveEmptyEntries);
+        var accept = log.Last(l => l.Split(" | ")[1] == "persona.accept");
+        Assert.Equal("+0 ~0 -1", accept.Split(" | ").First(s => s.StartsWith("lines="))["lines=".Length..]);
+        var retired = accept.Split(" | ").First(s => s.StartsWith("retired="))["retired=".Length..];
+        Assert.Contains(a.Path + "@", retired);
+        Assert.Contains(b.Path + "@", retired);
+
+        // The lint run that retired the warning is in the log as well.
+        Assert.Contains(log, l => l.Split(" | ")[1] == "lint");
+    }
+
+    [Fact]
     public void DeletingAnEvidencePage_WarnsThatItIsGone()
     {
         using var tv = new TempVault(); Init(tv);

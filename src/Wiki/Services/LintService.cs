@@ -163,6 +163,18 @@ public sealed class LintService
             counts[wireKind] = counts.TryGetValue(wireKind, out var c) ? c + 1 : 1;
             severities[wireKind] = IssueKindX.Severity(f.Kind);
         }
+
+        // A stale-evidence warning is about one persona line. Once that line
+        // is no longer stale - re-confirmed with current evidence, reworded,
+        // removed, or its page restored - lint resolves the warning itself,
+        // so retired evidence leaves nothing dangling (issue #52). Other
+        // kinds keep the "someone resolves it" lifecycle.
+        var staleNow = new HashSet<string>(findings.Where(f => f.Kind == IssueKind.PersonaStaleEvidence).Select(f => f.Subject), StringComparer.Ordinal);
+        foreach (var issue in issues.List(IssueKind.PersonaStaleEvidence, "open"))
+        {
+            if (!staleNow.Contains(issue.Subject))
+                issues.Resolve(issue.Id, "resolved by lint: the line's evidence is no longer stale (re-confirmed, reworded or removed)");
+        }
         issues.Save(v);
 
         var lintState = new LintState();
