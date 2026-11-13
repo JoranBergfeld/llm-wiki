@@ -719,8 +719,8 @@ Same standing as Appendices B and C: these override the original text where they
   (`--vault`, `WIKI_VAULT` or the working directory) to an absolute path,
   and the server refuses to start (`no-vault`, exit 1) when it cannot be.
   Every tool is a thin sequence of CLI steps run in-process with argv built
-  only from typed arguments (option values as `--opt=value`, positional
-  values after `--`) plus the bound `--vault` and `--json`, so validation,
+  only from typed arguments (option values as `--opt=value`, an empty
+  value as `--opt ""` (issue #62), positional values after `--`) plus the bound `--vault` and `--json`, so validation,
   the vault lock, the audit log and logging apply per step exactly as on the
   command line. Tool results: all steps exit 0 → `isError: false`,
   structured content `{v, ok, data:{<step key>: <data>}, errors, exitCode:0,

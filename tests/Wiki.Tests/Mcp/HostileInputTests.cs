@@ -1,3 +1,4 @@
+using System.Collections;
 using System.IO;
 using System.Text.Json;
 using ModelContextProtocol;
@@ -6,54 +7,88 @@ using Xunit;
 
 namespace Wiki.Tests.Mcp;
 
-// Issue #37 / spec, Testing Decisions: `--vault=...`, `@file` and
-// `--json=false` sent as the value of every string argument of every listed
-// tool leave the bound vault and the envelope unchanged - values reach the
-// CLI as `--opt=value` or after `--`, never as options of their own, and
-// response files are off.
+// Issue #62 (spec, Testing Decisions; #37 argument injection): hostile values
+// - `--vault=...`, `@file`, `--json=false`, anything starting with `--` - sent
+// as the value of every string argument of every tool, over every transport,
+// leave the bound vault, the other vault, the environment and the response
+// envelope unchanged. Values reach the CLI as `--opt=value` (or `--opt ""`)
+// or after `--`, never as options of their own, and response files are off.
 //
-// Driven off tools/list, so each tool a later ticket adds is covered without
-// touching this file - under every value of its selector arguments (#55).
-// Every other string argument gets a plausible value (Benign) so the hostile
-// one reaches the command it would really run - for the write tools (#56)
-// that means a real write, which must land in the bound vault and leave the
-// other vault byte-identical.
+// Self-enforcing: the catalogue is enumerated from tools/list, and every
+// argument a tool advertises must have a strategy here, or the test fails
+// naming it. A selector (a schema `enum`) is swept through all its values;
+// a free-text string argument needs an entry in Strategies (its plausible
+// value while another argument is attacked); a boolean/integer argument is
+// attacked through the schema. Any other argument type fails the test.
 public class HostileInputTests
 {
     private const string OtherMarker = "zebracornmarker";
+    private const string SecretMarker = "quokkasecretmarker";
 
-    // A plausible value per argument name ("tool.argument" wins over
-    // "argument"); anything unlisted gets "contoso". Keys are argument names
-    // only - add one here when a new tool's argument needs a specific shape
-    // to get past validation.
-    private static Dictionary<string, string> Benign(string pageId, string sourceId) => new()
+    // The plausible value of every free-text string argument, keyed
+    // "tool.argument", used while another argument of the same call is
+    // attacked so the call reaches the command it would really run (the
+    // write tools really write, #56). A new tool or argument MUST be added
+    // here: the test fails on any string argument without an entry, and on
+    // an entry no tool advertises any more.
+    private static Dictionary<string, string> Strategies(string pageId, string sourceId) => new()
     {
-        ["type"] = "entity",
-        ["kind"] = "page",
-        ["title"] = "Contoso",
-        ["summary"] = "s",
-        ["body"] = "Bound body.",
-        ["tags"] = "t",
-        ["sources"] = sourceId,
-        ["source"] = sourceId,
-        ["reason"] = "r",
-        ["description"] = "d",
-        ["status"] = "needs-review",
-        ["pages"] = pageId,
-        ["id"] = pageId,
-        ["newSlug"] = "contoso-renamed",
+        ["search_wiki.query"] = "contoso",
+        ["search_wiki.type"] = "entity",
+        ["search_wiki.kind"] = "page",
+        ["read_page.page"] = pageId,
+        ["browse_wiki.type"] = "entity",
+        ["browse_wiki.status"] = "needs-review",
+        ["browse_wiki.category"] = "article",
+        ["browse_wiki.source"] = sourceId,
+        ["work_issues.kind"] = "page",
+        ["work_issues.status"] = "needs-review",
+        ["work_issues.issue"] = "contoso",
+        ["work_issues.note"] = "contoso",
+        ["audit_page.page"] = pageId,
+        ["audit_page.verdict"] = "contoso",
+        ["audit_page.note"] = "contoso",
+        ["write_page.type"] = "entity",
+        ["write_page.title"] = "Contoso",
+        ["write_page.summary"] = "s",
+        ["write_page.body"] = "Bound body.",
+        ["write_page.id"] = pageId,
+        ["write_page.sources"] = sourceId,
+        ["write_page.tags"] = "t",
+        ["rename_page.id"] = pageId,
+        ["rename_page.newSlug"] = "contoso-renamed",
         ["add_category.id"] = "podcast",
-        ["sourceId"] = sourceId,
+        ["add_category.description"] = "d",
+        ["retract_source.source"] = sourceId,
+        ["retract_source.reason"] = "r",
+        ["repair_vault.pages"] = pageId,
+        ["repair_vault.status"] = "needs-review",
         ["ingest_source.category"] = "article",
-        ["filename"] = "note.md",
-        ["content"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("Benign upload.")),
+        ["ingest_source.filename"] = "note.md",
+        ["ingest_source.content"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("Benign upload.")),
+        ["ingest_source.categoryDescription"] = "d",
+        ["ingest_source.categoryRationale"] = "contoso",
+        ["continue_ingest.sourceId"] = sourceId,
+        ["continue_ingest.to"] = "contoso",
+        ["continue_ingest.touched"] = "contoso",
+        ["propose_change.category"] = "contoso",
+        ["propose_change.description"] = "d",
+        ["propose_change.rationale"] = "contoso",
+        ["propose_change.section"] = "contoso",
+        ["propose_change.sources"] = sourceId,
+        ["propose_change.text"] = "contoso",
+        ["propose_change.changeset"] = "contoso",
+        ["decide.id"] = pageId,
+        ["decide.reason"] = "contoso",
+        ["record_owner_statement.answer"] = "contoso",
+        ["record_owner_statement.question"] = "contoso",
         // Blank = start a new transcript, so the answer is really recorded (#59).
         ["record_owner_statement.transcript"] = "",
     };
 
     [Theory]
     [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
-    public async Task HostileStringArguments_NeverEscapeTheBoundVaultOrTheEnvelope(string transport)
+    public async Task HostileArguments_AcrossTheWholeCatalogue_NeverEscapeTheBoundVaultOrTheEnvelope(string transport)
     {
         using var bound = new TempVault();
         bound.Run("init", bound.Path, "--name", "bound", "--json");
@@ -63,89 +98,155 @@ public class HostileInputTests
         File.WriteAllText(sourceFile, "content");
         var sourceId = Data(bound.Run("source", "add", sourceFile, "--category", "article", "--title", "T", "--json"))
             .GetProperty("id").GetString()!;
-        var benign = Benign(pageId, sourceId);
+        var strategies = Strategies(pageId, sourceId);
 
         using var other = new TempVault();
         other.Run("init", other.Path, "--name", "other", "--json");
         other.RunStdin($"{OtherMarker} lives here.", "page", "upsert", "--type", "entity", "--title", OtherMarker, "--summary", OtherMarker, "--json");
         var otherBefore = Snapshot(other.Path);
 
-        var responseFile = Path.Combine(bound.Path, "hostile.rsp");
-        File.WriteAllText(responseFile, $"--vault\n{other.Path}\n");
-        string[] hostile = [$"--vault={other.Path}", "@" + responseFile, "--json=false", $"--vault {other.Path}"];
+        // Files an argument names, outside both vaults: a response file that
+        // would redirect to the other vault, and a plain file whose content
+        // must never be read into a response or the vault.
+        var scratch = Path.Combine(Path.GetTempPath(), "wiki-hostile-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratch);
+        var responseFile = Path.Combine(scratch, "hostile.rsp");
+        File.WriteAllText(responseFile, $"--vault\n{other.Path}\n--title\n{SecretMarker}\n");
+        var secretFile = Path.Combine(scratch, "secret.md");
+        File.WriteAllText(secretFile, $"{SecretMarker} must never be read.");
+        var scratchBefore = Snapshot(scratch);
+
+        string[] hostile =
+        [
+            $"--vault={other.Path}",
+            $"--vault {other.Path}",
+            "@" + responseFile,
+            "@" + secretFile,
+            secretFile,
+            "--json=false",
+            "--",
+            $"-- --vault={other.Path}",
+            "--help",
+            "--version",
+            "--stdin",
+            "--lock-timeout=0",
+            // Not hostile, but the edge that used to make an option swallow
+            // the next token (#57's `--opt=`): it must reach the command as
+            // an empty value.
+            "",
+        ];
+
+        var environmentBefore = Environment();
+        var directoryBefore = Directory.GetCurrentDirectory();
 
         // ingest_source needs an inbox (#57); it lives outside both vaults.
-        var inbox = Path.Combine(Path.GetTempPath(), "wiki-inbox-" + Guid.NewGuid().ToString("N"));
+        var inbox = Path.Combine(scratch, "inbox");
         try
         {
             await using var mcp = await McpHarness.StartAsync(bound, transport, null, "--inbox-root", inbox);
             var tools = await mcp.Client.ListToolsAsync();
-            var calls = 0;
+            Assert.NotEmpty(tools);
 
+            // Every advertised argument has a strategy, and every strategy
+            // still names an advertised argument.
+            var advertised = tools.SelectMany(t => t.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject()
+                .Select(p => (Tool: t.Name, Argument: p.Name, Schema: p.Value))).ToArray();
+            var freeText = advertised.Where(a => Type(a.Schema) == "string" && !a.Schema.TryGetProperty("enum", out _))
+                .Select(a => a.Tool + "." + a.Argument).ToHashSet();
+            Assert.True(freeText.SetEquals(strategies.Keys),
+                "string arguments without a strategy: [" + string.Join(", ", freeText.Except(strategies.Keys).Order()) +
+                "]; strategies for arguments no tool advertises: [" + string.Join(", ", strategies.Keys.Except(freeText).Order()) + "]");
+            var untyped = advertised.Where(a => Type(a.Schema) is not ("string" or "boolean" or "integer"))
+                .Select(a => $"{a.Tool}.{a.Argument}: {Type(a.Schema)}");
+            Assert.Empty(untyped);
+
+            var attacked = new HashSet<string>();
             foreach (var tool in tools)
             {
                 var schema = tool.ProtocolTool.InputSchema;
-                var strings = schema.GetProperty("properties").EnumerateObject()
-                    .Where(p => IsString(p.Value))
-                    .ToArray();
-                // Selectors (an `enum`, e.g. browse_wiki's view) pick the CLI
-                // command, so every free-text argument is attacked under every
-                // selector value. A hostile selector value never reaches the CLI:
-                // it is a schema failure.
-                var selectors = strings.Where(p => p.Value.TryGetProperty("enum", out _)).ToArray();
-                var properties = strings.Except(selectors).Select(p => p.Name).ToArray();
-                var required = schema.TryGetProperty("required", out var r)
-                    ? r.EnumerateArray().Select(e => e.GetString()!).ToArray()
-                    : [];
+                var properties = schema.GetProperty("properties").EnumerateObject().ToArray();
+                var selectors = properties.Where(p => Type(p.Value) == "string" && p.Value.TryGetProperty("enum", out _)).ToArray();
+                var texts = properties.Where(p => Type(p.Value) == "string").Except(selectors).Select(p => p.Name).ToArray();
+                var typed = properties.Where(p => Type(p.Value) != "string").Select(p => p.Name).ToArray();
 
-                foreach (var selector in selectors)
+                // Selectors and boolean/integer arguments: a hostile value is
+                // a schema failure and never reaches the CLI.
+                foreach (var name in selectors.Select(p => p.Name).Concat(typed))
                 foreach (var value in hostile)
                 {
-                    var ex = await Assert.ThrowsAsync<McpProtocolException>(() => mcp.CallAsync(tool.Name,
-                        new Dictionary<string, object?>(required.Select(n => KeyValuePair.Create(n, (object?)"contoso"))) { [selector.Name] = value }));
+                    var args = texts.ToDictionary(n => n, n => (object?)strategies[tool.Name + "." + n]);
+                    args[name] = value;
+                    var ex = await Assert.ThrowsAsync<McpProtocolException>(() => mcp.CallAsync(tool.Name, args));
                     Assert.Equal(McpErrorCode.InvalidParams, ex.ErrorCode);
-                    calls++;
+                    attacked.Add(tool.Name + "." + name);
                 }
 
+                // Free-text arguments: attacked under every combination of
+                // selector values, every other argument plausible.
                 foreach (var mode in Modes(selectors))
-                foreach (var property in properties)
+                foreach (var property in texts)
                 foreach (var value in hostile)
                 {
-                    // Every other free-text argument gets a plausible value, so
-                    // the chosen command has what it needs (#55, #56).
-                    var args = properties.ToDictionary(n => n, n => (object?)BenignFor(benign, tool.Name, n));
+                    var args = texts.ToDictionary(n => n, n => (object?)strategies[tool.Name + "." + n]);
                     foreach (var (name, selected) in mode)
                         args[name] = selected;
                     args[property] = value;
+                    var call = $"{tool.Name}({string.Join(", ", mode.Select(m => m.Name + "=" + m.Value))}).{property}={value}";
 
-                    var result = await mcp.CallAsync(tool.Name, args);
-                    calls++;
+                    attacked.Add(tool.Name + "." + property);
+                    ModelContextProtocol.Protocol.CallToolResult result;
+                    try
+                    {
+                        result = await mcp.CallAsync(tool.Name, args);
+                    }
+                    catch (McpProtocolException ex) when (value == "" && ex.ErrorCode == McpErrorCode.InvalidParams)
+                    {
+                        // A blank value may count as "not given" for a tool's
+                        // argument combination (repair_vault: pages needs
+                        // status), refused before any step runs. Every
+                        // non-blank value must be answered with the envelope.
+                        continue;
+                    }
 
-                    // Still the JSON envelope (--json=false never reached the CLI as an option).
+                    // Still the JSON envelope (--json=false never reached the
+                    // CLI as an option, nor did --help or --version).
                     var s = result.Structured();
                     Assert.Equal(1, s.GetProperty("v").GetInt32());
-                    Assert.True(s.TryGetProperty("exitCode", out _), $"{tool.Name}.{property}={value}");
+                    Assert.True(s.TryGetProperty("ok", out _), call);
+                    Assert.True(s.TryGetProperty("errors", out _), call);
+                    Assert.True(s.TryGetProperty("exitCode", out _), call);
                     // The value reached the command as a plain value: a parse
-                    // error (`unknown-command`) would mean it was read as an option.
+                    // error (`unknown-command`) means it was read as an option.
                     var codes = s.GetProperty("errors").EnumerateArray().Select(e => e.GetProperty("code").GetString());
-                    Assert.DoesNotContain("unknown-command", codes);
-                    // And never the other vault's content.
-                    Assert.DoesNotContain(OtherMarker, JsonSerializer.Serialize(result.StructuredContent), StringComparison.OrdinalIgnoreCase);
-                    Assert.DoesNotContain(OtherMarker, result.Text(), StringComparison.OrdinalIgnoreCase);
+                    Assert.True(!codes.Contains("unknown-command"), call + ": " + result.Text());
+                    // Never the other vault's content, never a named file's.
+                    var text = JsonSerializer.Serialize(result.StructuredContent) + "\n" + result.Text();
+                    Assert.True(!text.Contains(OtherMarker, StringComparison.OrdinalIgnoreCase), call);
+                    Assert.True(!text.Contains(SecretMarker, StringComparison.OrdinalIgnoreCase), call);
                 }
             }
 
-            Assert.True(calls > 0);
-            // No tool, write tools included, ever wrote to the other vault.
+            // Every advertised argument was really attacked.
+            Assert.Equal(advertised.Select(a => a.Tool + "." + a.Argument).Order(), attacked.Order());
+
+            // No tool, write tools included, ever wrote to the other vault...
             Assert.Equal(otherBefore, Snapshot(other.Path));
+            // ...or read a named file into the bound vault, or changed it.
+            Assert.All(Snapshot(bound.Path), f => Assert.DoesNotContain(SecretMarker, Text(f.Value), StringComparison.OrdinalIgnoreCase));
+            Assert.All(Snapshot(bound.Path), f => Assert.DoesNotContain(OtherMarker, Text(f.Value), StringComparison.OrdinalIgnoreCase));
+            Assert.Equal(scratchBefore, Snapshot(scratch).Where(f => !f.Key.StartsWith("inbox", StringComparison.Ordinal))
+                .ToDictionary(f => f.Key, f => f.Value));
             // Uploads only ever landed directly in <inbox>/<category>.
             if (Directory.Exists(inbox))
                 Assert.All(Directory.EnumerateFiles(inbox, "*", SearchOption.AllDirectories),
                     f => Assert.Equal(Path.GetFullPath(inbox), Path.GetDirectoryName(Path.GetDirectoryName(f))));
+            // The process environment and working directory are untouched.
+            Assert.Equal(environmentBefore, Environment());
+            Assert.Equal(directoryBefore, Directory.GetCurrentDirectory());
         }
         finally
         {
-            try { Directory.Delete(inbox, true); } catch { }
+            try { Directory.Delete(scratch, true); } catch { }
         }
     }
 
@@ -161,10 +262,16 @@ public class HostileInputTests
         return modes;
     }
 
-    private static string BenignFor(Dictionary<string, string> benign, string tool, string argument)
-        => benign.TryGetValue(tool + "." + argument, out var specific) ? specific
-            : benign.TryGetValue(argument, out var general) ? general
-            : "contoso";
+    // The JSON Schema type of an argument; a nullable one ("string" + "null")
+    // counts as its non-null type.
+    private static string Type(JsonElement property)
+    {
+        if (!property.TryGetProperty("type", out var type))
+            return "(none)";
+        return type.ValueKind == JsonValueKind.Array
+            ? string.Join("|", type.EnumerateArray().Select(t => t.GetString()).Where(t => t != "null"))
+            : type.GetString()!;
+    }
 
     private static JsonElement Data(CliResult r)
     {
@@ -176,12 +283,13 @@ public class HostileInputTests
         => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .ToDictionary(f => Path.GetRelativePath(root, f), f => Convert.ToBase64String(File.ReadAllBytes(f)));
 
-    private static bool IsString(JsonElement property)
+    private static string Text(string base64) => System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(base64));
+
+    private static SortedDictionary<string, string?> Environment()
     {
-        if (!property.TryGetProperty("type", out var type))
-            return false;
-        return type.ValueKind == JsonValueKind.Array
-            ? type.EnumerateArray().Any(t => t.GetString() == "string")
-            : type.GetString() == "string";
+        var all = new SortedDictionary<string, string?>(StringComparer.Ordinal);
+        foreach (DictionaryEntry e in System.Environment.GetEnvironmentVariables())
+            all[(string)e.Key] = (string?)e.Value;
+        return all;
     }
 }

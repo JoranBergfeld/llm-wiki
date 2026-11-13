@@ -100,6 +100,29 @@ public class WriteAndAdminToolTests
 
     [Theory]
     [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task WritePage_EmptyTags_IsAnEmptyValue_NotTheNextOption(string transport)
+    {
+        // An empty string reaches the command as an empty value, exactly as
+        // `--tags ""` typed in a shell. It never makes the option swallow the
+        // option after it (here --stdin, which would lose the body and file
+        // "--stdin" as a tag) or the `--` separator (a parse error).
+        using var tv = new TempVault(); Init(tv);
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+
+        var result = await mcp.CallAsync("write_page", new Dictionary<string, object?>
+        {
+            ["type"] = "entity", ["title"] = "Fabrikam", ["summary"] = "A company", ["body"] = "Body text.", ["tags"] = "",
+        });
+
+        Assert.False(result.IsError, result.Text());
+        var id = result.Structured().GetProperty("data").GetProperty("page").GetProperty("id").GetString()!;
+        var shown = CliData(tv.Run("page", "show", id, "--json"));
+        Assert.Empty(shown.GetProperty("tags").EnumerateArray());
+        Assert.Contains("Body text.", shown.GetProperty("body").GetString());
+    }
+
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
     public async Task WritePage_MatchesAManualRun(string transport)
     {
         // Same request to a twin vault by hand and through the tool: the
