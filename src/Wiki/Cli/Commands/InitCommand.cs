@@ -41,6 +41,9 @@ public static class InitCommand
             var reviewGate = parseResult.GetValue(reviewGateOption);
 
             var result = Run(path, name, reviewGate, ctx.VaultFlag);
+            // The vault did not exist when the audit boundary looked for it;
+            // tell it where the first audit line belongs.
+            ctx.Audit.VaultRoot = result.Vault;
             ctx.EmitOk(result);
             return 0;
         }));

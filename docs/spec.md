@@ -81,6 +81,9 @@ my-vault/                        # also the Obsidian vault root
 │   ├── summaries/               # one page per source
 │   ├── entities/                # people, orgs, products, places…
 │   └── concepts/                # topics, themes, cross-source synthesis
+├── audit/                       # hash-chained audit log (amendment AE); path set by audit.path
+│   ├── audit.log                # one sealed line per mutation, never rebuilt
+│   └── details/                 # large details, one file per SHA-256
 └── .wiki/                       # derived state — NEVER synced-critical, always rebuildable
     ├── idmap.json               # id → relative path
     ├── ledger.json              # ingest state machine per source (§10)
@@ -115,6 +118,8 @@ lint:
   staleness_days: 90             # advisory: summaries older than this with newer related sources
   max_page_lines: 400            # advisory: pages larger than this flagged for splitting
   content_loss_percent: 25       # optional (default 25): a full-body update dropping this share of a page's references files a content-loss issue
+audit:                           # optional block (amendment AE)
+  path: "audit/audit.log"        # audit log location, vault-relative or absolute; never inside .wiki/
 ```
 
 Rules:
@@ -263,6 +268,8 @@ wiki audit next                                 Faithfulness auditing (amendment
 wiki audit record <page-id> --verdict …          selects a page + its cited source ids; the AGENT judges,
                 --note "…"                       cold and adversarially; the CLI records. `unsupported`
 wiki audit list [--verdict …]                    files an issue. No model in the binary. Never in lint.
+wiki audit                                      Integrity report (amendment AE): the audit log's live-segment
+                                                hash chain and page faithfulness, as two separate sections.
 wiki eval [--k N] [--fail-under N]              Golden-question retrieval scoring (recall@k) against the
                                                 human-owned eval.yaml (amendment W). NEVER part of lint.
                                                 Exits 0 when reporting; exits 4 only under --fail-under.
@@ -650,3 +657,7 @@ Same standing as Appendices B and C: these override the original text where they
   a busy vault means "not done, retry" and must surface as an error. The
   timeout never cancels a step that already holds the lock. Guarantee: local
   storage only; network filesystems are outside it.
+
+## Appendix H — Audit log amendment (2026-11-13)
+
+- **AE. Every mutation appends one line to a hash-chained audit log.** (issue #44; design in #35, transport field in #34) `.wiki/ledger.json` is a rebuildable snapshot and `wiki/log.md` has no integrity and skips five mutations (`schema propose`, `category add`, `reindex`, `init`, lint's drift rewrites), so neither can say verifiably what changed. Every command classified `Mutate` (issue #42) now appends exactly one line, through one step on the mutation boundary rather than per command; reads append none. A line is `<utc> | <action> | <subject> | key=value… | exit=<n> | via=<cli|stdio|http|http+token> | prev=<sha256> | hash=<sha256>`, where `hash` is the SHA-256 of everything before ` | hash=` and `prev` is the previous line's hash (64 zeros on the first). `|`, `%`, line breaks and a leading `@` in values are percent-escaped. A value of the form `@<sha256>` references `details/<sha256>.txt`; values over 200 characters move there automatically, so the chain covers details without bloating lines. **Fail closed:** the log is opened and its last line checked before the command runs; if that fails the command does not run (exit 2, or 3 `audit-chain-broken` for an unsealed or altered last line) and the vault is byte-identical. A command that throws `ValidationException`/`StateConflictException` wrote nothing and gets no line; any other exception gets a line with `error=` instead of `exit=`, because it may have written part of a change. **Location:** `audit.path` in `wiki.yaml`, default `audit/audit.log`, rejected inside `.wiki/`, which `reindex` regenerates. **Origin:** `via` records the transport and whether a token was used, never a client identity (#34). It is passed into `App.Main` as a typed value by the MCP adapter, never through argv or the environment, so a remote caller cannot claim to be the CLI. **`wiki audit`** (bare) reports the live segment's chain (each line sealed, chained, and its detail files matching) separately from the faithfulness counts; a broken chain is reported with exit 0 and `chain.intact: false`. Blocking writes after a break, re-anchoring, rotation and `--deep` are issue #45. `wiki/log.md` and the ledger are unchanged.
