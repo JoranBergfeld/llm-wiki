@@ -65,6 +65,7 @@ my-vault/
     ├── issues.json      # lint findings with lifecycle
     ├── lint.json        # last-lint timestamp
     ├── proposals.json   # open AGENTS.md amendment proposals
+    ├── persona-changesets.json # persona changesets and their review state (amendment AF)
     └── review/          # shadow copies for the review gate
 ```
 
