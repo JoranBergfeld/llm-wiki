@@ -20,6 +20,10 @@ namespace Wiki.Core;
 // Every write is flushed through to disk before the caller goes on. A crash
 // can therefore only tear the LAST line; a bad line followed by good ones is
 // not a crash but damage, and makes the whole journal untrustworthy.
+//
+// The journal writes itself directly, never through AtomicFile: journaling
+// the journal would be circular. It is one of the exemptions CONTRIBUTING.md
+// lists under "Every vault write goes through ...".
 public static class JournalFile
 {
     public const string CommitRecord = "commit";
@@ -28,7 +32,7 @@ public static class JournalFile
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
     public static string EncodeBegin(string action, DateTimeOffset now)
-        => Line("begin", B64(action), now.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture));
+        => Line("begin", B64(action), Timestamp.Iso(now));
 
     public static string EncodeAfter(string path, string? hash) => Line("after", B64(path), hash ?? "absent");
 
@@ -122,25 +126,7 @@ public static class JournalFile
 
     // Same temp-then-rename as AtomicFile.Write, but never journaled: this
     // is recovery putting a file back, not a command changing it.
-    private static void WriteDurably(string path, byte[] bytes)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            using (var s = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                s.Write(bytes, 0, bytes.Length);
-                s.Flush(flushToDisk: true);
-            }
-            File.Move(tmp, path, overwrite: true);
-        }
-        catch
-        {
-            try { File.Delete(tmp); } catch { }
-            throw;
-        }
-    }
+    private static void WriteDurably(string path, byte[] bytes) => FileReplace.Write(path, bytes);
 
     // Null when there is no journal.
     public static ParsedJournal? Read(string path)

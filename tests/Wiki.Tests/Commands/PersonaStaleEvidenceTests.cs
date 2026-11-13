@@ -221,4 +221,28 @@ public class PersonaStaleEvidenceTests
                 .Where(c => c.GetProperty("kind").GetString() == "persona-stale-evidence"),
             c => Assert.Equal("warning", c.GetProperty("severity").GetString()));
     }
+
+    // Amendment AV: an evidence page that comes to cite a source outside the
+    // persona-source categories is no longer an endorsed note, even though
+    // its body (and so its hash) is unchanged.
+    [Fact]
+    public void AnEvidencePageGainingANonPersonaSource_MakesItsEvidenceStale()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var (a, _, _, _) = Persona(tv);
+        var src = Path.Combine(tv.Path, "call-src.md");
+        File.WriteAllText(src, "A call");
+        var other = Data(tv.Run("source", "add", src, "--category", "meeting-transcript", "--title", "Call", "--json"))
+            .GetProperty("id").GetString()!;
+        var shown = Data(tv.Run("page", "show", a.Id, "--frontmatter-only", "--json"));
+        var sources = string.Join(",", shown.GetProperty("sources").EnumerateArray().Select(s => s.GetString()));
+        Assert.Equal(0, tv.RunStdin("Body of Craft one", "page", "upsert", "--type", "summary", "--title", "Craft one",
+            "--summary", "Craft one summary", "--sources", sources + "," + other, "--id", a.Id, "--stdin", "--json").ExitCode);
+
+        tv.Run("lint", "--json");
+
+        var issue = Assert.Single(StaleIssues(tv));
+        Assert.Equal("PERSONA.md#values: " + Craft, issue.GetProperty("subject").GetString());
+        Assert.Contains("persona-source", issue.GetProperty("detail").GetString());
+    }
 }

@@ -50,7 +50,7 @@ public sealed class CategoryService
     // proposal ids and timestamps. Same shape as SchemaService.
     public CategoryService(System.Func<long>? nowUnixMs = null, System.Func<byte[]>? randomBytes = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
         _randomBytes = randomBytes ?? DefaultRandomBytes;
     }
 
@@ -273,12 +273,31 @@ public sealed class CategoryService
         return ToView(updated);
     }
 
+    // The proposer takes an open proposal back (amendment AX); wiki.yaml is
+    // never touched.
+    public CategoryProposalView Withdraw(Vault v, string proposalId, string reason)
+    {
+        var store = new CategoryProposals();
+        store.Load(v);
+        var proposal = store.Get(proposalId)
+            ?? throw new ValidationException("not-found", $"no category proposal found for id '{proposalId}'");
+        if (proposal.Status != "open")
+            throw new StateConflictException("state-conflict",
+                $"category proposal '{proposalId}' is already '{proposal.Status}'; nothing to do");
+
+        // --- Validation complete ---
+
+        var updated = store.SetStatus(proposalId, "withdrawn", reason);
+        store.Save(v);
+        Docs.LogFile.Append(v, ToIso(_nowUnixMs()), "category-withdraw", proposalId, reason);
+        return ToView(updated);
+    }
+
     private static CategoryProposalView ToView(CategoryProposal p)
         => new(p.Id, p.CategoryId, p.Description, p.Rationale, p.Sources, p.Status, p.CreatedAt, p.Note);
 
     private static string ToIso(long unixMs)
-        => System.DateTimeOffset.FromUnixTimeMilliseconds(unixMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        => Timestamp.Iso(unixMs);
 
     private static byte[] DefaultRandomBytes()
     {

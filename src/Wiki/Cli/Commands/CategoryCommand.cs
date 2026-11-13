@@ -24,6 +24,7 @@ public static class CategoryCommand
         category.Add(BuildProposals(vaultOption, jsonOption, stdout, stdin));
         category.Add(BuildApprove(vaultOption, jsonOption, stdout, stdin));
         category.Add(BuildReject(vaultOption, jsonOption, stdout, stdin));
+        category.Add(BuildWithdraw(vaultOption, jsonOption, stdout, stdin));
         return category;
     }
 
@@ -176,15 +177,44 @@ public static class CategoryCommand
         return reject;
     }
 
+    // `wiki category withdraw <id> --reason` (amendment AX).
+    private static Command BuildWithdraw(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var idArgument = new Argument<string>("id")
+        {
+            Description = "Category proposal id (ULID) to withdraw",
+        };
+        var reasonOption = DecisionAudit.WithdrawReasonOption();
+
+        var withdraw = new Command("withdraw", "Withdraw an open category proposal, with a reason; wiki.yaml is left untouched")
+        {
+            idArgument,
+            reasonOption,
+        };
+
+        withdraw.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var id = parseResult.GetRequiredValue(idArgument);
+            var reason = DecisionAudit.RequireWithdrawReason(parseResult.GetValue(reasonOption));
+            var vault = ctx.ResolveVault();
+            var updated = new CategoryService().Withdraw(vault, id, reason);
+            DecisionAudit.RecordWithdraw(ctx, reason);
+            ctx.EmitOk(updated);
+            return 0;
+        }));
+
+        return withdraw;
+    }
+
     // Same closed lifecycle set (and same rationale for validating it before
     // it reaches a `!=` filter) as SchemaCommand.ValidateStatus.
     private static string? ValidateStatus(string? raw)
     {
         if (string.IsNullOrEmpty(raw))
             return null;
-        if (raw != "open" && raw != "approved" && raw != "rejected")
+        if (raw != "open" && raw != "approved" && raw != "rejected" && raw != "withdrawn")
             throw new ValidationException("invalid-proposal-status",
-                $"unknown proposal status '{raw}'; expected 'open', 'approved', or 'rejected'");
+                $"unknown proposal status '{raw}'; expected 'open', 'approved', 'rejected' or 'withdrawn'");
         return raw;
     }
 

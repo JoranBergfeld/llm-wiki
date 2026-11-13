@@ -238,6 +238,54 @@ public class PersonaLintTests
         Assert.Equal(new[] { "persona-entry-length", "persona-link" }, kinds);
     }
 
+    // Amendment AZ: "no IDs" (issue #31). Only shapes no sentence of prose
+    // takes: a ULID (page, source, changeset ids), a long hex hash, a
+    // vault path to a Markdown file. Wikilinks are persona-link already.
+    [Theory]
+    [InlineData("- I value the 01JC9Z6Q4X0V6M8T2K3B5N7P9R decision.\n", "01JC9Z6Q4X0V6M8T2K3B5N7P9R")]
+    [InlineData("- I trust 3f2a9c0e8b7d6a5f4e3d2c1b0a9f8e7d.\n", "3f2a9c0e8b7d6a5f4e3d2c1b0a9f8e7d")]
+    [InlineData("- As wiki/entities/contoso.md says, I value craft.\n", "wiki/entities/contoso.md")]
+    [InlineData("- I said so in persona/interviews/2026-11-13-v2.md.\n", "persona/interviews/2026-11-13-v2.md")]
+    public void Lint_AnIdInAnEntry_IsAPersonaIdError(string values, string id)
+    {
+        using var tv = new TempVault(); Init(tv);
+        WritePersona(tv, Persona(values: values));
+
+        var found = LintPersona(tv, out var report);
+
+        var issue = Assert.Single(found);
+        Assert.Equal("persona-id", issue.Kind);
+        Assert.Contains("Values", issue.Detail);
+        Assert.Contains(id, issue.Detail);
+        Assert.Equal("error", SeverityOf(report, "persona-id"));
+    }
+
+    [Theory]
+    [InlineData("- I value open-source software and well-known tools.\n")]
+    [InlineData("- I answer email within 24 hours, never at 3am.\n")]
+    [InlineData("- I prefer ASAP replies over FYI threads; ACCOUNTABILITY matters.\n")]
+    [InlineData("- I read README.md files first, and/or the CHANGELOG.\n")]
+    [InlineData("- I have kept the same habit since 2015-03-01 and in 1990s-era code.\n")]
+    [InlineData("- My favourite colour is #c0ffee and I own a deadbeef mug.\n")]
+    [InlineData("- I use version 10.0.100 and ISO 8601 dates.\n")]
+    [InlineData("- I write in British English (en-GB), not en-US.\n")]
+    public void Lint_OrdinaryProse_IsNoPersonaIdError(string values)
+    {
+        using var tv = new TempVault(); Init(tv);
+        WritePersona(tv, Persona(values: values));
+
+        Assert.Empty(LintPersona(tv, out _));
+    }
+
+    [Fact]
+    public void Lint_TheAuditEntryHashInTheFrontmatter_IsNotAnId()
+    {
+        using var tv = new TempVault(); Init(tv);
+        WritePersona(tv, Persona().Replace("audit_entry: 3f2a9c", "audit_entry: " + new string('a', 32) + new string('1', 32)));
+
+        Assert.Empty(LintPersona(tv, out _));
+    }
+
     [Fact]
     public void Lint_Rerun_RefreshesPersonaIssueInsteadOfDuplicating()
     {

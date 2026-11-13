@@ -7,7 +7,7 @@ using ModelContextProtocol.Server;
 namespace Wiki.Mcp.Tools;
 
 // Decide: `decide` (spec tool catalogue: approve/reject for every kind
-// `review_queue` lists). `kind` picks the command group: pages and persona
+// `review_queue` lists; withdraw for the pending proposals, amendment AX). `kind` picks the command group: pages and persona
 // changesets go through `wiki review`, categories through `wiki category`,
 // schema proposals through `wiki schema`. Who decided is not an argument:
 // the step's audit line records `decidedVia=mcp` from the server's
@@ -20,7 +20,9 @@ public sealed class DecideTool(CliAdapter cli)
                  "approve|reject (approving a page makes it active; rejecting restores or archives it; approving a " +
                  "persona changeset rewrites PERSONA.md). kind=category: wiki category approve|reject (approving adds " +
                  "the category to wiki.yaml). kind=schema: wiki schema approve|reject (approving replaces the AGENTS.md " +
-                 "section). Rejecting a persona changeset requires `reason`. An item already decided is exit 3, not an error. " +
+                 "section). decision=withdraw takes a pending persona changeset, category or schema proposal back (wiki review|" +
+                 "category|schema withdraw); a page under review is rejected, not withdrawn. Rejecting a persona changeset " +
+                 "and every withdraw require `reason`. An item already decided is exit 3, not an error. " +
                  "`reason` is ignored on approve.")]
     public CallToolResult Decide(
         [Description("What is decided: page | category | schema | persona")]
@@ -28,10 +30,10 @@ public sealed class DecideTool(CliAdapter cli)
         string kind,
         [Description("The item id (ULID) from review_queue: page id, proposal id or persona changeset id")]
         string id,
-        [Description("approve | reject")]
-        [AllowedValues("approve", "reject")]
+        [Description("approve | reject | withdraw")]
+        [AllowedValues("approve", "reject", "withdraw")]
         string decision,
-        [Description("Why it was rejected; recorded on the item and the audit line. Required to reject a persona changeset.")]
+        [Description("Why it was rejected or withdrawn; recorded on the item and the audit line. Required to reject a persona changeset and to withdraw.")]
         string? reason = null,
         CancellationToken cancellationToken = default)
     {
@@ -42,7 +44,7 @@ public sealed class DecideTool(CliAdapter cli)
             _ => "review",
         };
         var step = new CliStep("decision", group, decision);
-        if (decision == "reject")
+        if (decision != "approve")
             step.Option("--note", reason);
         step.Positional(id);
 

@@ -15,7 +15,9 @@ namespace Wiki.Services;
 // #50, ADR 0001). Evidence lives only in the audit log: each persona.accept
 // line carries a `ledger=@<sha256>` detail listing every line of the
 // resulting PERSONA.md with the evidence it rests on, and PERSONA.md's
-// `audit_entry` is the changeset id that line records as `changeset=<id>`.
+// `audit_entry` is that line's hash (amendment AY). Files written before AY
+// hold the changeset id instead, which the line records as `changeset=<id>`;
+// the lookup accepts either, since a line hash and a ULID never collide.
 //
 // The line rule is defined here once and used both by `persona propose`
 // (reject before queueing) and by `wiki lint` (the persona-evidence error).
@@ -48,8 +50,8 @@ public static class PersonaEvidence
         return pages >= 2 ? null : $"a line distilled from endorsed notes needs at least two supporting pages (has {pages})";
     }
 
-    // The evidence ledger recorded for the accept whose changeset id is
-    // `auditEntry`, or null when there is none to read: no audit_entry, no
+    // The evidence ledger recorded for the accept whose line hash (or, for a
+    // pre-AY file, changeset id) is `auditEntry`, or null when there is none to read: no audit_entry, no
     // log, no such accept (a PERSONA.md written by hand or before this
     // ticket), or its detail file missing. Searches newest first across the
     // live segment and, once rotated away (#45), the archived segments, so
@@ -65,7 +67,7 @@ public static class PersonaEvidence
             var parsed = AuditLine.Parse(raw);
             if (parsed is null || parsed.Segments.Length < 3 || parsed.Segments[1] != AcceptAction)
                 continue;
-            if (Field(parsed, ChangesetField) != auditEntry)
+            if (parsed.Hash != auditEntry && Field(parsed, ChangesetField) != auditEntry)
                 continue;
 
             var reference = Field(parsed, LedgerField);
@@ -114,8 +116,8 @@ public static class PersonaEvidence
     // no longer holds, judged against the ledger of the accept that wrote the
     // file. Page evidence is stale when the page (looked up by id, so a
     // rename is not staleness) is gone, its body no longer hashes to the
-    // recorded value, or it no longer cites a source in a persona-source
-    // category. Owner-stated evidence (issue #53) is stale when its answer
+    // recorded value, or it is no longer an endorsed note (amendment AV: every cited source in a
+    // persona-source category). Owner-stated evidence (issue #53) is stale when its answer
     // no longer hashes to the recorded value (changed), its anchor is no
     // longer in the transcript (gone) or the transcript was deleted
     // (retracted); only the lines resting on that one answer are affected.
@@ -156,7 +158,7 @@ public static class PersonaEvidence
                     var hash = PageHash(page.Body);
                     if (hash != e.Hash)
                         stale.Add(PageStale(e.Page!, path, page.Slug, StaleChanged, e.Hash, hash));
-                    else if (!PageService.CitesPersonaSource(v, cfg, idmap, page.Front.Sources))
+                    else if (!PageService.IsEndorsedNote(v, cfg, idmap, page.Front.Sources))
                         stale.Add(PageStale(e.Page!, path, page.Slug, StaleNotEndorsed, e.Hash, hash));
                 }
                 foreach (var e in recorded.Evidence.Where(e => e.Kind == PersonaEvidenceKind.OwnerStated && e.Path is not null))
@@ -212,7 +214,7 @@ public static class PersonaEvidence
             {
                 StaleChanged => $"{label} changed since the line was accepted (recorded sha256 {Short(e.RecordedHash)}, now {Short(e.CurrentHash)})",
                 StaleGone => $"{label} is gone",
-                _ => $"{label} no longer cites a source in a persona-source category",
+                _ => $"{label} is no longer an endorsed note (a cited source is outside the persona-source categories)",
             };
         });
         return string.Join("; ", parts)

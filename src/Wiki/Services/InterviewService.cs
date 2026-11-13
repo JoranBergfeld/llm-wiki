@@ -48,11 +48,11 @@ public sealed class InterviewService
     public const string ShippedGuideVersion = "1";
     public const string GuideOverrideRelPath = "persona/interview-guide.md";
 
-    private readonly Func<DateTimeOffset> _now;
+    private readonly Func<long> _nowUnixMs;
 
-    public InterviewService(Func<DateTimeOffset>? now = null)
+    public InterviewService(Func<long>? nowUnixMs = null)
     {
-        _now = now ?? (() => DateTimeOffset.UtcNow);
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
     }
 
     public static InterviewGuideView Guide(Vault v)
@@ -77,6 +77,9 @@ public sealed class InterviewService
         if (question is not null && string.IsNullOrWhiteSpace(question))
             question = null;
 
+        // One reading of the clock: the transcript's date and the entry's
+        // `recorded` stamp must agree, even across midnight.
+        var nowMs = _nowUnixMs();
         string id;
         bool created;
         int next;
@@ -86,15 +89,19 @@ public sealed class InterviewService
             var existing = Load(v, id)
                 ?? throw new ValidationException("not-found",
                     $"no interview transcript '{id}' ({InterviewTranscript.RelPath(id)}); omit --transcript to start a new one");
+            // A ValidationException (exit 1), not a StateConflictException
+            // (exit 3): exit 3 means "already done" and the MCP adapter reports
+            // it as success, while here the answer was NOT recorded and would
+            // be lost (amendment AT).
             if (!existing.Candidate)
-                throw new StateConflictException("transcript-finished",
+                throw new ValidationException("transcript-finished",
                     $"interview transcript '{id}' is finished (a distillation pass considered it) and is never appended to; omit --transcript to start a new one");
             created = false;
             next = existing.Entries.Select(e => int.Parse(e.Anchor[1..], CultureInfo.InvariantCulture)).DefaultIfEmpty(0).Max() + 1;
         }
         else
         {
-            var date = _now().UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            var date = Timestamp.Date(nowMs);
             var n = 1;
             while (File.Exists(FullPath(v, InterviewTranscript.IdFor(date, n))))
                 n++;
@@ -110,7 +117,7 @@ public sealed class InterviewService
             question,
             answer,
             Guide(v).Version,
-            _now().UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture),
+            Timestamp.Iso(nowMs),
             via,
             origin.Transport switch { Transport.Stdio => "stdio", Transport.Http => "http", _ => null },
             origin.Transport == Transport.Http ? origin.TokenUsed : null);
@@ -186,6 +193,9 @@ public sealed class InterviewService
         var cleared = InterviewTranscript.WithoutCandidateFlag(File.ReadAllText(path));
         if (cleared is null)
             return false;
+
+        // --- Validation complete ---
+
         AtomicFile.Write(path, cleared);
         return true;
     }

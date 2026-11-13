@@ -401,8 +401,10 @@ public class OnboardingInterviewTests
         Assert.DoesNotContain("persona-stale-evidence", tv.Run("issues", "list", "--json").Stdout);
     }
 
+    // Exit 1, not 3: exit 3 means "already done" and reads as success over
+    // MCP, but here the answer was NOT recorded (amendment AT).
     [Fact]
-    public void AFinishedTranscript_IsNeverAppendedTo()
+    public void AFinishedTranscript_IsNeverAppendedTo_AndTheRefusalIsAnError()
     {
         using var tv = new TempVault(); Init(tv);
         var t = Data(Record(tv, "values", "Q?", "Careful craft.")).GetProperty("transcript").GetString()!;
@@ -411,7 +413,7 @@ public class OnboardingInterviewTests
 
         var r = Record(tv, "values", "Q2?", "More.", transcript: t);
 
-        Assert.Equal(3, r.ExitCode);
+        Assert.Equal(1, r.ExitCode);
         Assert.Equal("transcript-finished", r.Envelope.Errors[0].Code);
         Assert.Equal(before, File.ReadAllBytes(Path.Combine(tv.Path, "persona", "interviews", t + ".md")));
     }

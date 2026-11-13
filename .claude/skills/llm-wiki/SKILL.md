@@ -292,7 +292,9 @@ Do these **never**; surface them and stop:
 - `wiki review approve` / `reject` — the review gate is theirs.
 - `wiki schema approve` / `reject` — you may *propose*, they dispose.
 - `wiki category add` — categories are schema. You may `wiki category
-  propose`; they dispose.
+  propose`; they dispose. You may take back your own pending proposal or
+  persona changeset (`wiki category|schema withdraw <id> --reason "…"`,
+  `wiki review withdraw <changeset-id> --reason "…"`); the reason is logged.
 - `wiki source retract` — destructive and cascading.
 
 Running unattended, collect these into one clear report at the end of the tick

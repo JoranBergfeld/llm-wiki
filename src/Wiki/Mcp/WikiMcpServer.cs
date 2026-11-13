@@ -25,21 +25,22 @@ namespace Wiki.Mcp;
 // differ.
 public static class WikiMcpServer
 {
-    // `lockTimeout`: seconds (invariant culture) passed as --lock-timeout to
-    // every CLI step; null leaves each step to WIKI_LOCK_TIMEOUT / the default.
+    // `options.LockTimeout`: seconds (invariant culture) passed as
+    // --lock-timeout to every CLI step; null leaves each step to
+    // WIKI_LOCK_TIMEOUT / the default.
     //
     // stdio is built on a bare ServiceCollection rather than the generic host:
     // the host's console lifetime and default console logger would write to
     // the process stdout, which in stdio mode carries the JSON-RPC stream.
-    public static int RunStdio(string vaultRoot, IReadOnlySet<string> excludedTools, IngestInbox inbox, string? lockTimeout, StdioStreams streams)
+    public static int RunStdio(WikiServerOptions options, StdioStreams streams)
     {
-        var cli = new CliAdapter(vaultRoot, new InvocationOrigin(Transport.Stdio, TokenUsed: false), lockTimeout);
+        var cli = new CliAdapter(options.VaultRoot, new InvocationOrigin(Transport.Stdio, TokenUsed: false), options.LockTimeout);
 
         var services = new ServiceCollection();
         var builder = services
             .AddMcpServer(Configure)
             .WithStreamServerTransport(streams.Input, streams.Output);
-        AddTools(builder, cli, inbox, streams, excludedTools);
+        AddTools(builder, cli, options, streams);
 
         return Serve(services).GetAwaiter().GetResult();
     }
@@ -51,14 +52,13 @@ public static class WikiMcpServer
     //
     // Every step it runs is audited `via=http`, or `via=http+token` when the
     // server has a token: every request that reaches a tool then presented it.
-    public static int RunHttp(string vaultRoot, IReadOnlySet<string> excludedTools, IngestInbox inbox, string? lockTimeout,
-        McpHttpSettings settings, StdioStreams seam, TextWriter stdout, bool json)
+    public static int RunHttp(WikiServerOptions options, McpHttpSettings settings, StdioStreams seam, TextWriter stdout, bool json)
     {
-        var cli = new CliAdapter(vaultRoot, new InvocationOrigin(Transport.Http, TokenUsed: settings.Token is not null), lockTimeout);
+        var cli = new CliAdapter(options.VaultRoot, new InvocationOrigin(Transport.Http, TokenUsed: settings.Token is not null), options.LockTimeout);
 
         // No args and an explicit content root: neither the working
         // directory's appsettings.json nor command-line config can reach it.
-        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = vaultRoot });
+        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = options.VaultRoot });
         // Logging would go to the process console; the CLI owns stdout.
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls(settings.Listen);
@@ -67,7 +67,7 @@ public static class WikiMcpServer
         var mcp = builder.Services
             .AddMcpServer(Configure)
             .WithHttpTransport(o => o.Stateless = true);
-        AddTools(mcp, cli, inbox, seam, excludedTools);
+        AddTools(mcp, cli, options, seam);
         seam.ConfigureHttpForTests?.Invoke(builder);
 
         return ServeHttp(builder, settings, seam, stdout, json).GetAwaiter().GetResult();
@@ -104,14 +104,14 @@ public static class WikiMcpServer
     private static void Configure(McpServerOptions options)
         => options.ServerInfo = new Implementation { Name = "wiki", Version = Version() };
 
-    private static void AddTools(IMcpServerBuilder builder, CliAdapter cli, IngestInbox inbox, StdioStreams seam, IReadOnlySet<string> excludedTools)
+    private static void AddTools(IMcpServerBuilder builder, CliAdapter cli, WikiServerOptions options, StdioStreams seam)
     {
         builder
             .WithToolArgumentGuard()
-            .WithDedicatedToolThreads()
-            .AddWikiTools(cli, inbox);
+            .WithDedicatedToolThreads(options.MaxConcurrentCalls)
+            .AddWikiTools(cli, options.Inbox);
         seam.ConfigureForTests?.Invoke(builder, cli);
-        builder.Services.AddToolNarrowing(excludedTools);
+        builder.Services.AddToolNarrowing(options.ExcludedTools);
     }
 
     private static async Task<int> Serve(ServiceCollection services)
@@ -136,11 +136,31 @@ public static class WikiMcpServer
     // would hold the pool Kestrel and the SDK need to accept and answer
     // requests at all. So the tool itself runs on a thread of its own; the
     // request's thread only awaits it. One thread per call in flight.
-    private static IMcpServerBuilder WithDedicatedToolThreads(this IMcpServerBuilder builder)
-        => builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => (context, cancellationToken) =>
-            new ValueTask<CallToolResult>(Task.Factory.StartNew(
-                () => next(context, cancellationToken).AsTask(),
-                CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap())));
+    //
+    // At most `maxConcurrentCalls` are in flight (amendment BA): a burst of
+    // calls would otherwise be a burst of threads, most of them parked on
+    // the one vault lock anyway. A call over the cap waits its turn without
+    // holding any thread (an async semaphore wait), so it is queued, never
+    // refused, and the server keeps answering other requests meanwhile. A
+    // call cancelled while it waits never runs.
+    private static IMcpServerBuilder WithDedicatedToolThreads(this IMcpServerBuilder builder, int maxConcurrentCalls)
+    {
+        var slots = new SemaphoreSlim(maxConcurrentCalls, maxConcurrentCalls);
+        return builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
+        {
+            await slots.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await Task.Factory.StartNew(
+                    () => next(context, cancellationToken).AsTask(),
+                    CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap().ConfigureAwait(false);
+            }
+            finally
+            {
+                slots.Release();
+            }
+        }));
+    }
 
     private static string Version()
         => typeof(WikiMcpServer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";

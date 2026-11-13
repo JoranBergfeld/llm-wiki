@@ -26,26 +26,23 @@ public static class AtomicFile
 {
     // Note: creates any missing parent directories (mkdir -p) before writing, so
     // callers can write into wiki/summaries etc. before those dirs exist on disk.
+    // Text is UTF-8 without a BOM. Not flushed before the rename: the write
+    // journal flushes every touched file when the command commits (#47).
     public static void Write(string path, string content)
+    {
+        CreateParent(path);
+        WriteJournal.BeforeChange(path, append: false);
+        FileReplace.Write(path, Utf8NoBom.GetBytes(content), flushToDisk: false);
+        WriteJournal.AfterChange();
+    }
+
+    private static readonly System.Text.UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
+    private static void CreateParent(string path)
     {
         var dir = System.IO.Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir))
-        {
             System.IO.Directory.CreateDirectory(dir);
-        }
-        WriteJournal.BeforeChange(path, append: false);
-        var tmp = path + "." + System.Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            System.IO.File.WriteAllText(tmp, content);
-            System.IO.File.Move(tmp, path, overwrite: true);
-        }
-        catch
-        {
-            try { System.IO.File.Delete(tmp); } catch { }
-            throw;
-        }
-        WriteJournal.AfterChange();
     }
 
     // Binary content (an archived audit segment, issue #45). Unlike the text
@@ -54,27 +51,9 @@ public static class AtomicFile
     // names it) needs the content durable, not only renamed into place.
     public static void Write(string path, byte[] content)
     {
-        var dir = System.IO.Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir))
-        {
-            System.IO.Directory.CreateDirectory(dir);
-        }
+        CreateParent(path);
         WriteJournal.BeforeChange(path, append: false);
-        var tmp = path + "." + System.Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            using (var fs = new System.IO.FileStream(tmp, System.IO.FileMode.CreateNew, System.IO.FileAccess.Write))
-            {
-                fs.Write(content, 0, content.Length);
-                fs.Flush(flushToDisk: true);
-            }
-            System.IO.File.Move(tmp, path, overwrite: true);
-        }
-        catch
-        {
-            try { System.IO.File.Delete(tmp); } catch { }
-            throw;
-        }
+        FileReplace.Write(path, content, flushToDisk: true);
         WriteJournal.AfterChange();
     }
 
@@ -84,11 +63,7 @@ public static class AtomicFile
     // is a truncate back to the old length, or a delete for a new file.
     public static void Append(string path, string content)
     {
-        var dir = System.IO.Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir))
-        {
-            System.IO.Directory.CreateDirectory(dir);
-        }
+        CreateParent(path);
         WriteJournal.BeforeChange(path, append: true);
         System.IO.File.AppendAllText(path, content);
         WriteJournal.AfterChange();

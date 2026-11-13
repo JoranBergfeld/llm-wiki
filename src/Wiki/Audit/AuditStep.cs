@@ -44,7 +44,10 @@ namespace Wiki.Audit;
 // App.Main calls are safe.
 public static class AuditStep
 {
-    public static int Run(CommandInvocation invocation, Func<int> next)
+    public static int Run(CommandInvocation invocation, Func<int> next) => Run(invocation, next, Timestamp.NowUnixMs);
+
+    // The clock stamps the line (CONTRIBUTING: "Inject the clock and RNG").
+    public static int Run(CommandInvocation invocation, Func<int> next, Func<long> nowUnixMs)
     {
         var ctx = invocation.Context;
         AuditWriter? writer = null;
@@ -60,12 +63,12 @@ public static class AuditStep
             // broken chain: the command validates, then the live log is set
             // aside as an archived segment and its line starts the new one.
             if (vault is not null && invocation.Name == AuditLog.ReanchorCommand)
-                return Reanchor(AuditLog.For(vault), invocation, next);
+                return Reanchor(AuditLog.For(vault, nowUnixMs), invocation, next, nowUnixMs);
 
             if (vault is not null)
             {
                 using (WriteJournal.Suspend())
-                    writer = AuditLog.For(vault).OpenForAppend();
+                    writer = AuditLog.For(vault, nowUnixMs).OpenForAppend();
                 openedRoot = vault.Root;
             }
 
@@ -81,7 +84,7 @@ public static class AuditStep
                     try
                     {
                         using (WriteJournal.Suspend())
-                            writer.Append(Segments(writer, invocation, $"error={AuditLine.Escape(ex.GetType().Name)}"));
+                            writer.Append(Segments(writer, invocation, $"error={AuditLine.Escape(ex.GetType().Name)}", nowUnixMs));
                     }
                     catch (Exception) { /* the original failure is the one to report */ }
                 }
@@ -96,7 +99,7 @@ public static class AuditStep
                 // another vault): the line belongs in the new one.
                 writer?.Dispose();
                 using (WriteJournal.Suspend())
-                    writer = AuditLog.For(declared).OpenForAppend();
+                    writer = AuditLog.For(declared, nowUnixMs).OpenForAppend();
             }
 
             if (writer is null)
@@ -107,9 +110,19 @@ public static class AuditStep
                 return exit;
             }
 
+            List<string> segments;
+            using (WriteJournal.Suspend())
+                segments = Segments(writer, invocation, "exit=" + exit.ToString(CultureInfo.InvariantCulture), nowUnixMs);
+
+            // A write that names this line by its hash (AuditDraft.WriteOnSeal,
+            // amendment AY). Outside Suspend: it is a vault write like any
+            // other, journaled so recovery covers it, and it lands before the
+            // commit below so its after-hash is part of the sealed journal.
+            if (ctx.Audit.SealedWrite is { } sealedWrite)
+                sealedWrite(AuditLine.Seal(segments, writer.Prev).Hash);
+
             using (WriteJournal.Suspend())
             {
-                var segments = Segments(writer, invocation, "exit=" + exit.ToString(CultureInfo.InvariantCulture));
                 // Sealed into the journal BEFORE the append (#47): from here
                 // an interruption is finished by the next writer, line included.
                 WriteJournal.Current?.Commit(segments, writer.Prev);
@@ -127,7 +140,7 @@ public static class AuditStep
     // the broken chain); the command refuses an intact chain and a missing
     // reason itself, and only once it has returned 0 is the live log archived
     // and the re-anchor line appended, still under the vault lock.
-    private static int Reanchor(AuditLog log, CommandInvocation invocation, Func<int> next)
+    private static int Reanchor(AuditLog log, CommandInvocation invocation, Func<int> next, Func<long> nowUnixMs)
     {
         var exit = next();
         if (exit != 0)
@@ -135,7 +148,7 @@ public static class AuditStep
         using (WriteJournal.Suspend())
         using (var writer = log.Reanchor())
         {
-            var segments = Segments(writer, invocation, "exit=0");
+            var segments = Segments(writer, invocation, "exit=0", nowUnixMs);
             WriteJournal.Current?.Commit(segments, writer.Prev);
             writer.Append(segments);
         }
@@ -158,12 +171,12 @@ public static class AuditStep
         => b is not null && string.Equals(a, b, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     // The line's segments, before sealing. Stores any detail files it needs.
-    private static List<string> Segments(AuditWriter writer, CommandInvocation invocation, string outcome)
+    private static List<string> Segments(AuditWriter writer, CommandInvocation invocation, string outcome, Func<long> nowUnixMs)
     {
         var draft = invocation.Context.Audit;
         var segments = new List<string>
         {
-            DateTimeOffset.UtcNow.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture),
+            Timestamp.Iso(nowUnixMs()),
             AuditLine.Escape(draft.Action ?? invocation.Name.Replace(' ', '.')),
             AuditLine.Escape(draft.Subject ?? DefaultSubject(invocation)),
         };

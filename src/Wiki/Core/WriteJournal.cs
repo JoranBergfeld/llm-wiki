@@ -85,7 +85,10 @@ public sealed class WriteJournal
 
     // Changes made inside are not journaled. For the audit log's own files
     // (lines, detail files, rotated segments): they have their own integrity
-    // and must never be rolled back with the vault change they record.
+    // and must never be rolled back with the vault change they record. This
+    // is the documented exemption from the journaled write rule (audit log,
+    // journal and lock file are the recovery infrastructure itself; see
+    // CONTRIBUTING.md, "Every vault write goes through ...").
     public static IDisposable Suspend()
     {
         var journal = Ambient.Value;

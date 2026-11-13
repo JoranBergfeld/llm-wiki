@@ -101,12 +101,30 @@ blocking validation, then a literal `--- Validation complete ---` comment, then
 the writes. A rejected call must leave the vault byte-identical to how it found
 it. Don't interleave.
 
-**Every vault write goes through `AtomicFile.Write`, `AtomicFile.Delete` or
-`LogFile.Append`.** They record the file's before-image in the write journal
-(`.wiki/journal`, amendment AI) before touching it; that is what lets the next
-command finish or roll back a write that was interrupted. A `File.WriteAll*`,
-`File.Delete` or `File.Move` on a vault file elsewhere is a change recovery
-cannot see.
+**Every vault write goes through `AtomicFile.Write`, `AtomicFile.Append`,
+`AtomicFile.Delete` or `LogFile.Append`.** They record the file's before-image
+in the write journal (`.wiki/journal`, amendment AI) before touching it; that
+is what lets the next command finish or roll back a write that was
+interrupted. A `File.WriteAll*`, `File.Delete` or `File.Move` on a vault file
+elsewhere is a change recovery cannot see. (`Core/FileReplace` is the
+temp-file-then-rename underneath `AtomicFile`; it is not journaled, so never
+call it for a vault file yourself.)
+
+The one exemption is the recovery infrastructure itself, which cannot journal
+itself without going in circles:
+
+- **The audit log** (its lines, detail files, archived segments and manifest).
+  The line is what a journal commit seals, and the log has its own integrity
+  (the hash chain, amendments AE/AJ); rolling it back with the change it
+  records would erase the record. `AuditWriter.Append` writes and fsyncs the
+  line directly, and everything else the audit module writes runs inside
+  `WriteJournal.Suspend()`.
+- **The write journal** (`.wiki/journal`, `JournalFile`): journaling the
+  journal is circular by definition.
+- **The vault lock file** (`.wiki/lock`, `VaultLock`): it is opened, never
+  written, and is held before any journal exists.
+
+Anything else is a vault file and takes the journaled path.
 
 **Error codes are an API.** `ValidationException` takes a stable kebab-case
 code (`duplicate-title`, `unknown-source`) that agents branch on. Reuse an

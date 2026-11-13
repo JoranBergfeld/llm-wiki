@@ -304,7 +304,46 @@ default 10) before failing with exit 5.
 Persona changesets wait in `wiki review` by default. Set
 `WIKI_PERSONA_AUTO_ACCEPT=1` (for manual runs and the MCP server alike) to accept
 a valid changeset as soon as it is proposed; lint still rejects an invalid one,
-and the audit log records the accept as `decidedVia=auto-accept`.
+and the audit log records the accept as `decidedVia=auto-accept`. A pending
+changeset (or category or schema proposal) can be taken back with
+`wiki review withdraw <id> --reason "…"` (`category withdraw`, `schema withdraw`);
+the reason is recorded in the audit log.
+
+### Serving a vault over MCP
+
+`wiki mcp` serves one vault to MCP clients. Over stdio (the default) the
+client starts it and restarts it if it dies. `wiki mcp --http` serves
+streamable HTTP at `http://127.0.0.1:8765/mcp` until stopped; set
+`WIKI_MCP_TOKEN` to require a bearer token and `--allowed-hosts` when it sits
+behind a reverse proxy. At most 16 tool calls run at once
+(`--max-concurrent-calls <n>` or `WIKI_MCP_MAX_CONCURRENT_CALLS`); further calls
+wait their turn.
+
+**The HTTP server needs a supervisor.** Nothing restarts it after a fatal
+error, so run it under one that restarts it when it exits non-zero (spec
+amendment BB). With systemd:
+
+```ini
+[Unit]
+Description=llm-wiki MCP server
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/wiki mcp --http --vault /srv/vault --listen http://127.0.0.1:8765
+Environment=WIKI_MCP_TOKEN=change-me
+Restart=on-failure
+RestartSec=5
+# A startup refusal (bad option, exit 1) recurs on every restart: give up
+# after a few tries instead of looping.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+In Docker the equivalent is `restart: unless-stopped`; on Windows, a service
+with recovery actions. Ctrl+C or SIGTERM stops it cleanly with exit 0.
 
 Then open the vault in Obsidian and look at the graph.
 
@@ -371,16 +410,17 @@ recurring lint issues; you approve or reject. The agent never edits it directly.
 | Group | Commands |
 |---|---|
 | Vault | `init` · `reindex` |
-| Categories | `category add\|list\|propose\|proposals\|approve\|reject` |
+| Categories | `category add\|list\|propose\|proposals\|approve\|reject\|withdraw` |
 | Sources | `source add\|scan\|list\|show\|impact\|retract` |
 | Ingest | `ingest status\|advance\|resume` |
 | Pages | `page upsert\|show\|list\|rename\|set-status\|backlinks` |
 | Retrieval | `search` · `index show` |
 | Health | `lint` · `issues list\|show\|resolve` · `links check` |
 | Quality | `eval` · `audit [--deep]` · `audit next\|record\|list\|reanchor` |
-| Review | `review list\|approve\|reject` |
-| Reflect | `schema propose\|proposals\|approve\|reject` |
+| Review | `review list\|approve\|reject\|withdraw` |
+| Reflect | `schema propose\|proposals\|approve\|reject\|withdraw` |
 | Persona | `persona read\|distill\|propose`, `persona interview guide\|record` |
+| MCP server | `mcp [--http]` |
 
 `wiki <group> --help` documents every flag.
 

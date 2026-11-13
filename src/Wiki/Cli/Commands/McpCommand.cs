@@ -42,6 +42,13 @@ public static class McpCommand
         mcp.Add(inboxRootOption);
         mcp.Add(maxUploadOption);
 
+        // Amendment BA: how many tool calls run at once; the rest wait.
+        var maxCallsOption = new Option<string?>(WikiServerOptions.MaxConcurrentCallsOption)
+        {
+            Description = $"Most tool calls run at once; further calls wait their turn (overrides {WikiServerOptions.MaxConcurrentCallsEnv}; default: {WikiServerOptions.DefaultMaxConcurrentCalls})",
+        };
+        mcp.Add(maxCallsOption);
+
         // Issue #61: streamable HTTP instead of stdio, and its server config.
         var httpOption = new Option<bool>(McpHttpSettings.HttpOption)
         {
@@ -81,6 +88,8 @@ public static class McpCommand
                 Environment.GetEnvironmentVariable(ToolNarrowing.Env));
 
             var inbox = IngestInbox.Resolve(parseResult.GetValue(inboxRootOption), parseResult.GetValue(maxUploadOption), vault.Root);
+            var maxCalls = WikiServerOptions.ResolveMaxConcurrentCalls(parseResult.GetValue(maxCallsOption),
+                Environment.GetEnvironmentVariable(WikiServerOptions.MaxConcurrentCallsEnv));
 
             // The global --lock-timeout, given to `wiki mcp`, is the lock
             // timeout of every CLI step this server runs (a step's argv
@@ -92,6 +101,8 @@ public static class McpCommand
                 ? VaultLock.ResolveTimeout(flag, env: null).TotalSeconds.ToString(CultureInfo.InvariantCulture)
                 : null;
 
+            var options = new WikiServerOptions(vault.Root, excluded, inbox, lockTimeout, maxCalls);
+
             if (!parseResult.GetValue(httpOption))
             {
                 // A transport setting without the transport is a mistake the
@@ -99,7 +110,7 @@ public static class McpCommand
                 foreach (var name in new[] { McpHttpSettings.ListenOption, McpHttpSettings.TokenOption, McpHttpSettings.AllowedHostsOption })
                     if (parseResult.GetResult(name) is not null)
                         throw new ValidationException("http-only-option", $"{name} only applies with {McpHttpSettings.HttpOption}");
-                return WikiMcpServer.RunStdio(vault.Root, excluded, inbox, lockTimeout, stdio);
+                return WikiMcpServer.RunStdio(options, stdio);
             }
 
             var http = McpHttpSettings.Resolve(
@@ -107,7 +118,7 @@ public static class McpCommand
                 parseResult.GetValue(tokenOption),
                 parseResult.GetResult(allowedHostsOption) is null ? null : parseResult.GetValue(allowedHostsOption),
                 inbox);
-            return WikiMcpServer.RunHttp(vault.Root, excluded, inbox, lockTimeout, http, stdio, ctx.Out, ctx.Json);
+            return WikiMcpServer.RunHttp(options, http, stdio, ctx.Out, ctx.Json);
         }));
 
         return mcp;

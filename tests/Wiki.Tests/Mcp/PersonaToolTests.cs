@@ -240,6 +240,27 @@ public class PersonaToolTests
                      && Directory.EnumerateFiles(Path.Combine(tv.Path, "persona", "interviews")).Any());
     }
 
+    // The answer is not recorded, so the client must see an error: exit 3
+    // would read as success and the owner's words would be lost (amendment AT).
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task RecordOwnerStatement_IntoAFinishedTranscript_IsAnError(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+        var first = await Record(mcp, "values", "Careful craft.");
+        var id = first.Structured().GetProperty("data").GetProperty("record").GetProperty("transcript").GetString()!;
+        Assert.Equal(0, tv.RunStdin("{\"reason\":\"pass\",\"considered\":[\"" + id + "\"],\"changes\":[]}",
+            "persona", "propose", "--stdin", "--json").ExitCode);
+
+        var result = await Record(mcp, "values", "More.", transcript: id);
+
+        Assert.True(result.IsError, result.Text());
+        Assert.Equal(1, result.Structured().GetProperty("exitCode").GetInt32());
+        Assert.Contains("transcript-finished", Codes(result.Structured()));
+        Assert.DoesNotContain("More.", File.ReadAllText(Path.Combine(tv.Path, "persona", "interviews", id + ".md")));
+    }
+
     [Theory]
     [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
     public async Task RecordOwnerStatement_SectionOutsideThePersona_IsInvalidParams(string transport)

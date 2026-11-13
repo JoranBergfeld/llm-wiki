@@ -52,8 +52,8 @@ public sealed class CategoryProposals
         return created;
     }
 
-    // "approved" or "rejected" - the only two terminal transitions out of
-    // "open". Callers own the not-found/already-decided preconditions.
+    // "approved", "rejected" or "withdrawn" (amendment AX) - the terminal
+    // transitions out of "open". Callers own the not-found/already-decided preconditions.
     public CategoryProposal SetStatus(string proposalId, string status, string? note)
     {
         var existing = _byId[proposalId];
