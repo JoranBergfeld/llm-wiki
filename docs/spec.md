@@ -687,3 +687,17 @@ Same standing as Appendices B and C: these override the original text where they
   show` without a query) and `read_page` (`page show`, `page backlinks` with
   `backlinks: true`). The `dotnet tool` channel now needs the ASP.NET Core
   runtime.
+- **AG. Browse and maintenance tools.** (issue #55) Four more intent tools.
+  A tool covering several commands takes a selector argument, advertised as
+  a JSON Schema `enum`; a value outside it, or a missing argument the chosen
+  value needs, is an `InvalidParams` error like any other schema failure.
+  Arguments the chosen value does not use are ignored.
+  `browse_wiki` (`view`: `pages` → `page list`; `sources` → `source list`;
+  `source` → `source show` then `source impact`; `categories` → `category
+  list`). `check_health` runs `lint` (`fixLinks` → `--fix-links`), then
+  `links check` (on by default, `links: false` skips it), then `eval` only
+  with `eval: true`, because `eval.yaml` is optional and a missing one would
+  stop the sequence. `--fail-under` is not an argument, so exit 4 cannot
+  happen over MCP; the agent reads `data.eval.score`. `work_issues`
+  (`action`: `list` | `show` | `resolve`) and `audit_page` (`action`:
+  `next` | `record` | `list`) map one to one onto `issues` and `audit`.
