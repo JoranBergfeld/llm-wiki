@@ -393,8 +393,16 @@ public sealed class LintService
         if (!File.Exists(v.PersonaPath))
             yield break;
 
-        foreach (var (kind, detail) in PersonaService.Load(v).Validate())
+        var doc = PersonaService.Load(v);
+        foreach (var (kind, detail) in doc.Validate())
             yield return new LintFinding(kind, PersonaDoc.FileName, detail);
+
+        // Evidence (issue #50): checked against what the audit log recorded
+        // for the accept that wrote the file. One finding listing every
+        // under-supported line, for the same (kind, subject) merge reason.
+        var evidence = PersonaEvidence.LintProblems(v, doc).ToArray();
+        if (evidence.Length > 0)
+            yield return new LintFinding(IssueKind.PersonaEvidence, PersonaDoc.FileName, string.Join("; ", evidence));
     }
 
     // `rename-drift` (spec §11): a page file that actually exists at path P

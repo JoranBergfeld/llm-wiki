@@ -175,6 +175,13 @@ public enum IssueKind
     PersonaEntryLength,
     PersonaSectionCap,
     PersonaToneLength,
+
+    // A persona line without the support it needs (issue #50, ADR 0001):
+    // fewer than two endorsed-note pages and no owner-stated evidence, or a
+    // tone-of-voice line not resting on owner-stated text. Read from the
+    // evidence the audit log recorded for the accept PERSONA.md's
+    // `audit_entry` names. Error, like the structural rules.
+    PersonaEvidence,
 }
 
 public static class IssueKindX
@@ -202,6 +209,7 @@ public static class IssueKindX
         IssueKind.PersonaEntryLength => "persona-entry-length",
         IssueKind.PersonaSectionCap => "persona-section-cap",
         IssueKind.PersonaToneLength => "persona-tone-length",
+        IssueKind.PersonaEvidence => "persona-evidence",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
     };
 
@@ -213,7 +221,7 @@ public static class IssueKindX
     public static string Severity(IssueKind value) => value switch
     {
         IssueKind.PersonaFrontmatter or IssueKind.PersonaSections or IssueKind.PersonaLink
-            or IssueKind.PersonaEntryLength or IssueKind.PersonaSectionCap => "error",
+            or IssueKind.PersonaEntryLength or IssueKind.PersonaSectionCap or IssueKind.PersonaEvidence => "error",
         _ => "warning",
     };
 
@@ -240,6 +248,7 @@ public static class IssueKindX
         "persona-entry-length" => IssueKind.PersonaEntryLength,
         "persona-section-cap" => IssueKind.PersonaSectionCap,
         "persona-tone-length" => IssueKind.PersonaToneLength,
+        "persona-evidence" => IssueKind.PersonaEvidence,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }

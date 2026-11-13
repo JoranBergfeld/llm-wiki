@@ -654,7 +654,7 @@ public sealed class PageService
     // Reads each cited source's frontmatter for its category; the ids were
     // already checked against the idmap by the caller, so this is a read
     // during validation, not a precondition of its own.
-    private static bool CitesPersonaSource(Vault v, VaultConfig cfg, IdMap idmap, string[] sources)
+    internal static bool CitesPersonaSource(Vault v, VaultConfig cfg, IdMap idmap, string[] sources)
     {
         if (!cfg.Categories.Any(c => c.PersonaSource))
             return false;
@@ -664,7 +664,10 @@ public sealed class PageService
             // A stale idmap entry (raw file deleted outside the CLI) is not
             // this check's to report - the upsert has always accepted it - and
             // a source that is not there endorses nothing.
-            var fullPath = System.IO.Path.Combine(v.Root, idmap.PathFor(sourceId)!);
+            var relPath = idmap.PathFor(sourceId);
+            if (relPath is null)
+                continue;
+            var fullPath = System.IO.Path.Combine(v.Root, relPath);
             if (!File.Exists(fullPath))
                 continue;
             var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(fullPath));
