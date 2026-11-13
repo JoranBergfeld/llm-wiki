@@ -346,6 +346,7 @@ summarized | integrated | linted` · source status `active | retracted`.
 | `precondition-summary` / `precondition-index` / `precondition-lint` | The artifact that state requires does not exist yet. Produce it, then advance. |
 | `state-conflict` (exit 3) | Already done. Move on. |
 | `vault-busy` (exit 5) | Another `wiki` command holds the vault; nothing was changed. Retry the same command shortly. |
+| `repair-needed` (exit 2) | An interrupted write could not be recovered automatically; every write is refused until a human repairs it. Stop writing, report the message (it names `.wiki/journal`); reads still work. |
 | `dangling-link` | Create the targets, or re-run with `--allow-dangling` and own the filed issue. |
 | `duplicate-title` | A page with this title exists. Update it with `--id` instead of creating. |
 | `duplicate-source` | Identical content already registered. Not an error — reuse the existing id. Line endings do not matter; the hash is newline-insensitive. |

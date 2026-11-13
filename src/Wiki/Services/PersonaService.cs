@@ -597,9 +597,7 @@ public sealed class PersonaService
 
     private static void DeletePending(Vault v)
     {
-        var path = Path.Combine(v.Root, PendingRelPath);
-        if (File.Exists(path))
-            File.Delete(path);
+        AtomicFile.Delete(Path.Combine(v.Root, PendingRelPath));
     }
 
     private sealed record PageEntry(string Slug, PageFrontmatter Front, string Body, string RelPath);
