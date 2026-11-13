@@ -111,7 +111,7 @@ public sealed class LintService
         findings.AddRange(CheckMissingTags(pages));
         findings.AddRange(CheckBacklog(pages, PageStatus.NeedsReview, IssueKind.NeedsReviewBacklog, today));
         findings.AddRange(CheckBacklog(pages, PageStatus.PendingReview, IssueKind.PendingBacklog, today));
-        findings.AddRange(CheckPersona(v));
+        findings.AddRange(CheckPersona(v, cfg));
 
         var renameDrifts = CheckRenameDrift(v, pages, idmap);
         foreach (var d in renameDrifts)
@@ -388,7 +388,7 @@ public sealed class LintService
     // share one definition. A vault without PERSONA.md has an empty persona
     // and nothing to check. Subject is always the file name: there is one
     // persona per vault and its lines have no ids (issue #31).
-    private static IEnumerable<LintFinding> CheckPersona(Vault v)
+    private static IEnumerable<LintFinding> CheckPersona(Vault v, VaultConfig cfg)
     {
         if (!File.Exists(v.PersonaPath))
             yield break;
@@ -403,6 +403,11 @@ public sealed class LintService
         var evidence = PersonaEvidence.LintProblems(v, doc).ToArray();
         if (evidence.Length > 0)
             yield return new LintFinding(IssueKind.PersonaEvidence, PersonaDoc.FileName, string.Join("; ", evidence));
+
+        // Stale evidence (issue #52): one warning per line, each the
+        // re-check proposal a distillation pass picks up.
+        foreach (var line in PersonaEvidence.StaleLines(v, cfg, doc))
+            yield return new LintFinding(IssueKind.PersonaStaleEvidence, line.Subject, PersonaEvidence.StaleDetail(line));
     }
 
     // `rename-drift` (spec §11): a page file that actually exists at path P

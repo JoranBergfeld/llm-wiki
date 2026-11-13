@@ -7,6 +7,7 @@ using System.Text.Json;
 using Wiki.Audit;
 using Wiki.Core;
 using Wiki.Json;
+using Wiki.State;
 
 namespace Wiki.Services;
 
@@ -104,6 +105,87 @@ public static class PersonaEvidence
         return null;
     }
 
+    // Why a recorded piece of page evidence no longer holds (issue #52).
+    public const string StaleChanged = "changed";
+    public const string StaleGone = "gone";
+    public const string StaleNotEndorsed = "not-endorsed";
+
+    // The issue subject of one persona line: lines have no ids (issue #31),
+    // so section plus text is the line's identity. A reworded line is a new
+    // line, which is exactly when its old stale warning should retire.
+    public static string LineSubject(string sectionWire, string text) => $"{PersonaDoc.FileName}#{sectionWire}: {text}";
+
+    // Every line of PERSONA.md resting on at least one piece of evidence that
+    // no longer holds, judged against the ledger of the accept that wrote the
+    // file. Page evidence is stale when the page (looked up by id, so a
+    // rename is not staleness) is gone, its body no longer hashes to the
+    // recorded value, or it no longer cites a source in a persona-source
+    // category. Owner-stated evidence (issue #53) is not judged here yet.
+    // A line the ledger does not know is the persona-evidence error's
+    // business, not this check's.
+    public static IReadOnlyList<PersonaStaleLine> StaleLines(Vault v, VaultConfig cfg, PersonaDoc doc)
+    {
+        var ledger = LoadLedger(v, doc.AuditEntry);
+        if (ledger is null)
+            return Array.Empty<PersonaStaleLine>();
+
+        var idmap = new IdMap();
+        idmap.Load(v);
+        var pages = new Dictionary<string, (string Slug, PageFrontmatter Front, string Body)>(StringComparer.Ordinal);
+        foreach (var p in PageStore.EnumerateWithBody(v))
+            pages[p.Front.Id] = p;
+
+        var result = new List<PersonaStaleLine>();
+        foreach (var s in PersonaSectionX.InOrder)
+        {
+            var wire = PersonaSectionX.ToWire(s);
+            foreach (var line in doc.Section(s))
+            {
+                var recorded = ledger.FirstOrDefault(l => l.Section == wire && l.Text == line);
+                if (recorded is null)
+                    continue;
+                var stale = new List<PersonaStaleEvidence>();
+                foreach (var e in recorded.Evidence.Where(e => e.Kind == PersonaEvidenceKind.Page && e.Page is not null))
+                {
+                    if (!pages.TryGetValue(e.Page!, out var page))
+                    {
+                        stale.Add(new PersonaStaleEvidence(e.Page!, e.Path, null, StaleGone, e.Hash, null));
+                        continue;
+                    }
+                    var path = PagePaths.Relative(v, page.Slug, page.Front);
+                    var hash = PageHash(page.Body);
+                    if (hash != e.Hash)
+                        stale.Add(new PersonaStaleEvidence(e.Page!, path, page.Slug, StaleChanged, e.Hash, hash));
+                    else if (!PageService.CitesPersonaSource(v, cfg, idmap, page.Front.Sources))
+                        stale.Add(new PersonaStaleEvidence(e.Page!, path, page.Slug, StaleNotEndorsed, e.Hash, hash));
+                }
+                if (stale.Count > 0)
+                    result.Add(new PersonaStaleLine(wire, line, LineSubject(wire, line), stale.ToArray()));
+            }
+        }
+        return result;
+    }
+
+    // The lint detail for one stale line: every stale piece, then what to do.
+    public static string StaleDetail(PersonaStaleLine line)
+    {
+        var parts = line.Evidence.Select(e =>
+        {
+            var label = e.Slug is null ? $"page {e.Page} ({e.Path})" : $"[[{e.Slug}]] ({e.Path})";
+            return e.Reason switch
+            {
+                StaleChanged => $"{label} changed since the line was accepted (recorded sha256 {Short(e.RecordedHash)}, now {Short(e.CurrentHash)})",
+                StaleGone => $"{label} is gone",
+                _ => $"{label} no longer cites a source in a persona-source category",
+            };
+        });
+        return string.Join("; ", parts)
+               + ". Re-check the line in a distillation pass (`wiki persona distill` lists it under `recheck`): "
+               + "re-confirm it with current evidence, reword it or remove it.";
+    }
+
+    private static string Short(string? hash) => hash is null ? "?" : hash.Length > 12 ? hash[..12] : hash;
+
     // Lint: every line of PERSONA.md checked against the ledger of the accept
     // that produced it. A line the ledger does not know (added or reworded by
     // hand since) has no evidence at all. A file whose audit_entry resolves to
@@ -128,3 +210,12 @@ public static class PersonaEvidence
         }
     }
 }
+
+// One stale piece of evidence behind a persona line (issue #52). `Reason` is
+// changed | gone | not-endorsed. `Slug` is null when the page is gone; `Path`
+// is then the recorded path, else the page's current one.
+public sealed record PersonaStaleEvidence(string Page, string? Path, string? Slug, string Reason, string? RecordedHash, string? CurrentHash);
+
+// A persona line resting on stale evidence: the re-check a distillation pass
+// picks up. `Subject` is the line's `persona-stale-evidence` issue subject.
+public sealed record PersonaStaleLine(string Section, string Text, string Subject, PersonaStaleEvidence[] Evidence);

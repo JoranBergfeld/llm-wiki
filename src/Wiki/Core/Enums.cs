@@ -182,6 +182,17 @@ public enum IssueKind
     // evidence the audit log recorded for the accept PERSONA.md's
     // `audit_entry` names. Error, like the structural rules.
     PersonaEvidence,
+
+    // A persona line whose recorded evidence no longer holds (issue #52):
+    // an evidence page whose body hash differs from the one the accept
+    // recorded, a page that is gone, or a page that no longer cites a
+    // persona-source category. One issue per stale line (subject
+    // `PERSONA.md#<section>: <line>`), so each is its own re-check proposal
+    // for the next distillation pass. Warning: the line was valid when
+    // accepted; it needs a second look, not a block. Lint resolves the issue
+    // itself once the line is no longer stale (re-confirmed, reworded or
+    // removed), so retired evidence leaves no dangling warning.
+    PersonaStaleEvidence,
 }
 
 public static class IssueKindX
@@ -210,6 +221,7 @@ public static class IssueKindX
         IssueKind.PersonaSectionCap => "persona-section-cap",
         IssueKind.PersonaToneLength => "persona-tone-length",
         IssueKind.PersonaEvidence => "persona-evidence",
+        IssueKind.PersonaStaleEvidence => "persona-stale-evidence",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
     };
 
@@ -249,6 +261,7 @@ public static class IssueKindX
         "persona-section-cap" => IssueKind.PersonaSectionCap,
         "persona-tone-length" => IssueKind.PersonaToneLength,
         "persona-evidence" => IssueKind.PersonaEvidence,
+        "persona-stale-evidence" => IssueKind.PersonaStaleEvidence,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }
