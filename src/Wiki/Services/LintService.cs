@@ -23,7 +23,7 @@ public sealed record LintFinding(IssueKind Kind, string Subject, string Detail);
 // already an array of a small record, e.g. PageSummary[]/Hit[]).
 //
 // `Severity` ("error" | "warning", from IssueKindX.Severity) was added with
-// the PERSONA.md rules (amendment AB): those are errors - the rules a persona
+// the PERSONA.md rules (amendment AC): those are errors - the rules a persona
 // changeset must pass - while every earlier kind is advisory. It is a
 // property of the kind, so it lives here rather than on each stored issue.
 public sealed record LintKindCount(string Kind, int Count, string Severity);
@@ -383,7 +383,7 @@ public sealed class LintService
         }
     }
 
-    // PERSONA.md structural rules (amendment AB). The rules themselves live
+    // PERSONA.md structural rules (amendment AC). The rules themselves live
     // on PersonaDoc.Validate so lint and the persona changeset validation
     // share one definition. A vault without PERSONA.md has an empty persona
     // and nothing to check. Subject is always the file name: there is one

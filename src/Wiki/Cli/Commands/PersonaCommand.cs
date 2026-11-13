@@ -4,7 +4,7 @@ using Wiki.Services;
 
 namespace Wiki.Cli.Commands;
 
-// `wiki persona ...` (spec §8, amendment AB): the owner's persona in
+// `wiki persona ...` (spec §8, amendment AC): the owner's persona in
 // PERSONA.md. A command group from the start because distill, propose and
 // the onboarding interview (`persona interview guide|record`) join it in
 // later tickets - each as one more Build* method added in Build() below.

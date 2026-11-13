@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace Wiki.Core;
 
 // The four fixed PERSONA.md sections, in the order the file must hold them
-// (issue #31, spec amendment AB). Order of the enum IS the required file order.
+// (issue #31, spec amendment AC). Order of the enum IS the required file order.
 public enum PersonaSection { Values, Principles, ToneOfVoice, Boundaries }
 
 public static class PersonaSectionX

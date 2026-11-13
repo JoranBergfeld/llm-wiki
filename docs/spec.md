@@ -70,7 +70,7 @@ The same binary serves multiple independent vaults (e.g., one for work, one for 
 my-vault/                        # also the Obsidian vault root
 ├── wiki.yaml                    # vault config (human-owned)
 ├── AGENTS.md                    # agent instructions: conventions + playbooks (§13)
-├── PERSONA.md                   # optional: the owner's persona, written only by the CLI (amendment AB)
+├── PERSONA.md                   # optional: the owner's persona, written only by the CLI (amendment AC)
 ├── raw/                         # immutable sources
 │   ├── 01J9ZKM3....md           # source files, named by source ID
 │   └── assets/                  # attachments (Obsidian attachment folder)
@@ -108,6 +108,9 @@ categories:                      # source categories — fully user-defined
     description: "Web articles and blog posts"
   - id: paper
     description: "Research papers and reports"
+  - id: note
+    description: "My own notes"
+    persona-source: true         # optional (default false): the owner endorses what lands here (amendment AB)
 lint:
   staleness_days: 90             # advisory: summaries older than this with newer related sources
   max_page_lines: 400            # advisory: pages larger than this flagged for splitting
@@ -116,6 +119,7 @@ lint:
 
 Rules:
 - `categories[].id`: lowercase kebab-case, unique. Referenced by every source.
+- `categories[].persona-source`: optional, `true` or `false` (default `false`). Any other value, or any other key on a category, is a config error. Marks the category's sources as endorsed by the owner; see amendment AB.
 - Removing a category that sources still reference is a blocking config error, enforced on every config load (amendment N). `wiki category …` is exempt so the human can repair the config with the CLI rather than by hand.
 - Adding categories: `wiki category add <id> --description "…"` or direct file edit. **The CLI never adds categories on its own; there is no code path by which ingest creates one.** An unknown category on `wiki source add` is a blocking error instructing the human to add it first.
 
@@ -159,6 +163,7 @@ updated: 2026-07-13               # CLI-maintained on every write
 summary: "One-line routing description"  # REQUIRED; supplied via --summary; feeds index.md (§9)
 sources: [01J9ZKM1..., 01J9ZKM2...]  # source IDs this page cites — provenance backbone
 tags: []                          # optional, free-form, for Obsidian/Dataview
+persona: candidate                # CLI-set, present only when the page cites a persona-source category (amendment AB)
 ```
 
 Source files (`raw/`):
@@ -277,7 +282,7 @@ wiki schema proposals
 wiki schema approve <proposal-id>               Human applies the diff; logs amendment
 wiki schema reject <proposal-id> [--note "…"]
 
-# Persona (amendment AB)
+# Persona (amendment AC)
 wiki persona read                               PERSONA.md as four line arrays (values, principles, toneOfVoice,
                                                 boundaries) plus its frontmatter. No PERSONA.md is an empty
                                                 persona (exists: false), not an error. Never writes.
@@ -348,14 +353,14 @@ The canonical agent flow (encoded in AGENTS.md, enforced by ledger preconditions
 | `needs-review-backlog` | Pages in `needs-review` older than 14 days |
 | `pending-backlog` | Pages in `pending-review` older than 14 days |
 | `missing-tags` | Active, source-backed summary/entity/concept page has an empty tag set |
-| `persona-frontmatter` | **Error.** PERSONA.md frontmatter missing, or not exactly `schema_version` (`1`), `last_distilled` (yyyy-MM-dd) and a non-empty `audit_entry` (amendment AB) |
+| `persona-frontmatter` | **Error.** PERSONA.md frontmatter missing, or not exactly `schema_version` (`1`), `last_distilled` (yyyy-MM-dd) and a non-empty `audit_entry` (amendment AC) |
 | `persona-sections` | **Error.** PERSONA.md sections missing, duplicated, unknown, out of order, or content outside them |
 | `persona-link` | **Error.** Any link in PERSONA.md: wikilink, markdown link or image, autolink, bare URL |
 | `persona-entry-length` | **Error.** A persona entry over 200 characters |
 | `persona-section-cap` | **Error.** Values over 10 lines, Principles over 15, Boundaries over 10 |
 | `persona-tone-length` | Warning. Tone of voice past 600 words |
 
-Every kind above except the `persona-*` errors reports as severity `warning` in the lint report's per-kind counts; lint exits 0 regardless (amendment AB).
+Every kind above except the `persona-*` errors reports as severity `warning` in the lint report's per-kind counts; lint exits 0 regardless (amendment AC).
 
 Lint never edits page content. `--fix-links` repairs only mechanical link targets after renames. Everything else is filed as an issue for the agent/human.
 
@@ -599,6 +604,23 @@ Same standing as Appendices B and C: these override the original text where they
 
 ## Appendix F — Persona amendments (2026-11-13)
 
-Same standing as the earlier appendices: these override the original text where they conflict.
+- **AB. Persona-source categories and the `persona: candidate` flag.** (issue
+  #49, ADR 0001) §5 said a category is an id and a description; §7 said the
+  page frontmatter set is closed. The persona (issue #41) needs the owner to
+  say which material he endorses, without the vault guessing authorship and
+  without knowledge pages linking to the persona. So a category may carry
+  `persona-source: true`: the owner endorses what lands in it, per category,
+  all or nothing (a mixed inbox gets split). The value must be `true` or
+  `false`, and any other key on a category is a config error, because a
+  mistyped endorsement that is silently ignored is worse than a failed load.
+  `wiki page upsert` sets `persona: candidate` on a page when at least one
+  source it cites belongs to a persona-source category, and omits the key
+  otherwise. The flag is re-derived on every full-body write (new content
+  re-raises a flag a distillation pass cleared; a page that stops citing
+  endorsed sources stops being a candidate) and is carried unchanged by
+  status changes, renames and review rejects. `candidate` is the only legal
+  value; lint and every page read accept it, and reject anything else as
+  `frontmatter-schema`. This is the only change persona makes to the page
+  schema.
 
-- **AB. `PERSONA.md`: a fixed four-section schema, read by `wiki persona read`, checked by lint.** (issue #48; decisions in issues #31, #33 and ADR 0001) The owner's persona is one small file at the vault root, outside `wiki/`, so it is never a knowledge page, never indexed and never searched. **Format.** A frontmatter block with exactly three scalar keys — `schema_version: 1`, `last_distilled: <yyyy-MM-dd>`, `audit_entry: <audit-log entry that produced the file>` — then an optional `# ` title and four `## ` sections in this order: `Values` (max 10 lines), `Principles` (max 15), `Tone of voice` (no line cap), `Boundaries` (max 10). Every non-blank line inside a section is one entry; a leading `- ` or `* ` is presentation and is stripped. An entry is at most 200 characters, counted in Unicode scalar values so non-ASCII text is not penalised. The file holds no links and no ids: it must read as a standalone document, and knowledge pages never link to it (ADR 0001). **Ownership.** Only the `wiki persona` command group writes it; ingest has no path to it. This amendment adds the read side only — writing arrives with persona changesets. **Read.** `wiki persona read` is lenient: it returns whatever entries it can find, with frontmatter fields null when absent or malformed, because an assistant is better served by the lines that are there than by nothing; reporting a malformed file is lint's job. A vault without the file reads as an empty persona with `exists: false`. **Lint.** One issue kind per rule, all with subject `PERSONA.md`, because issues merge on `(kind, subject)` and a shared kind would let the rules overwrite each other's detail and occurrences; a rule broken several times files one issue listing every occurrence. The structural rules are **errors** and tone of voice past 600 words is a **warning**; the lint report's per-kind `counts` now carry that `severity`, and every pre-existing kind reports `warning`. Lint still exits 0 on errors — it reports and files; it does not gate. The errors are exactly the rules a persona changeset will have to pass before it can be queued, so the rules are defined once and shared. **Not in this amendment:** the evidence rules (two supporting pages for a line distilled from endorsed notes, and the stale-evidence warning) need the audit log and arrive with it; and ids are not detected beyond links, because no id format is reliably distinguishable from prose.
+- **AC. `PERSONA.md`: a fixed four-section schema, read by `wiki persona read`, checked by lint.** (issue #48; decisions in issues #31, #33 and ADR 0001) The owner's persona is one small file at the vault root, outside `wiki/`, so it is never a knowledge page, never indexed and never searched. **Format.** A frontmatter block with exactly three scalar keys — `schema_version: 1`, `last_distilled: <yyyy-MM-dd>`, `audit_entry: <audit-log entry that produced the file>` — then an optional `# ` title and four `## ` sections in this order: `Values` (max 10 lines), `Principles` (max 15), `Tone of voice` (no line cap), `Boundaries` (max 10). Every non-blank line inside a section is one entry; a leading `- ` or `* ` is presentation and is stripped. An entry is at most 200 characters, counted in Unicode scalar values so non-ASCII text is not penalised. The file holds no links and no ids: it must read as a standalone document, and knowledge pages never link to it (ADR 0001). **Ownership.** Only the `wiki persona` command group writes it; ingest has no path to it. This amendment adds the read side only — writing arrives with persona changesets. **Read.** `wiki persona read` is lenient: it returns whatever entries it can find, with frontmatter fields null when absent or malformed, because an assistant is better served by the lines that are there than by nothing; reporting a malformed file is lint's job. A vault without the file reads as an empty persona with `exists: false`. **Lint.** One issue kind per rule, all with subject `PERSONA.md`, because issues merge on `(kind, subject)` and a shared kind would let the rules overwrite each other's detail and occurrences; a rule broken several times files one issue listing every occurrence. The structural rules are **errors** and tone of voice past 600 words is a **warning**; the lint report's per-kind `counts` now carry that `severity`, and every pre-existing kind reports `warning`. Lint still exits 0 on errors — it reports and files; it does not gate. The errors are exactly the rules a persona changeset will have to pass before it can be queued, so the rules are defined once and shared. **Not in this amendment:** the evidence rules (two supporting pages for a line distilled from endorsed notes, and the stale-evidence warning) need the audit log and arrive with it; and ids are not detected beyond links, because no id format is reliably distinguishable from prose.

@@ -6,7 +6,7 @@ using Xunit;
 
 namespace Wiki.Tests.Commands;
 
-// PERSONA.md structural lint (issue #48, amendment AB). Each rule is its own
+// PERSONA.md structural lint (issue #48, amendment AC). Each rule is its own
 // issue kind with subject `PERSONA.md`, filed by `wiki lint` like any other
 // finding. The lint report's per-kind counts carry a severity: the
 // structural rules are errors, tone-of-voice length is a warning. Lint still

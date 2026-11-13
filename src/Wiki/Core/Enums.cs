@@ -163,7 +163,7 @@ public enum IssueKind
     // workflow reads, with a finding that a flaky network can produce.
     BrokenExternalLink,
 
-    // PERSONA.md structural lint (issue #48, spec amendment AB). One kind
+    // PERSONA.md structural lint (issue #48, spec amendment AC). One kind
     // per rule rather than one `persona` kind: issues merge on
     // (kind, subject) and every persona finding has the same subject
     // (`PERSONA.md`), so a shared kind would make the rules overwrite each
@@ -208,7 +208,7 @@ public static class IssueKindX
     // Lint severity of a kind. Every pre-persona kind is advisory (spec §11)
     // and reports as "warning"; the PERSONA.md structural rules are "error"
     // because they are the rules a persona changeset must pass before it can
-    // be queued (spec §11 table, amendment AB). Lint itself still exits 0 on
+    // be queued (spec §11 table, amendment AC). Lint itself still exits 0 on
     // errors - it reports and files, it never gates.
     public static string Severity(IssueKind value) => value switch
     {
