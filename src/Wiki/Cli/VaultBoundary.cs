@@ -32,9 +32,11 @@ public delegate int BoundaryStep(CommandInvocation invocation, Func<int> next);
 //                             wraps the audit step, so the audit tail read,
 //                             the command and the audit append (and
 //                             rotation, #45) happen under one hold.
-//   2. write recovery (#47):  replays or rolls back an interrupted write
-//                             before next(); needs the lock held, so it goes
-//                             between the lock and the audit step.
+//   2. write recovery (#47):  WriteRecovery.Step - recovers an interrupted
+//                             write before next() (finishes a committed one,
+//                             rolls back a pending one, else repair-needed),
+//                             then journals this command's writes; needs the
+//                             lock held, so it goes between lock and audit.
 //   3. audit log (#44):       AuditStep - opens the log before next() (fail
 //                             closed), appends one chained line after it.
 // Note `init` is Mutate but runs before a vault exists: a step that needs
@@ -45,12 +47,16 @@ public delegate int BoundaryStep(CommandInvocation invocation, Func<int> next);
 // derive everything (vault path, clock) from the invocation.
 public static class VaultBoundary
 {
-    // Ordered outermost first. The vault lock stays outermost: every later
-    // step (write recovery #47, the audit append and rotation #44/#45) must
-    // run while it is held, so new steps go AFTER it. Recovery (#47) slots
-    // in between the lock and the audit step.
-    private static readonly BoundaryStep[] MutationSteps = [VaultLock.Step, Audit.AuditStep.Run];
-    private static readonly BoundaryStep[] ReadSteps = [VaultLock.Step];
+    // Ordered outermost first. In MutationSteps the vault lock stays
+    // outermost: every later step (write recovery #47, the audit append and
+    // rotation #44/#45) must run while it is held, so new steps go AFTER it.
+    private static readonly BoundaryStep[] MutationSteps = [VaultLock.Step, WriteRecovery.Step, Audit.AuditStep.Run];
+
+    // Reads: WriteRecovery.BeforeRead is the one step outside the lock. It
+    // must take the lock exclusively itself (to undo a dead writer's half
+    // change) before this reader takes it shared; ReadGuard then re-checks
+    // under the shared hold. See WriteRecovery.
+    private static readonly BoundaryStep[] ReadSteps = [WriteRecovery.BeforeRead, VaultLock.Step, WriteRecovery.ReadGuard];
     // Host commands (`wiki mcp`) run inside no boundary: see CommandKind.Host.
     // Never add a step here; the steps it hosts each take their own.
     private static readonly BoundaryStep[] HostSteps = [];

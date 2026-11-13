@@ -16,6 +16,12 @@ namespace Wiki.Core;
 // safety code is worse than none, because it invites the assumption that
 // something is being checked. If a command ever does take a caller-supplied
 // write path, reintroduce the guard AND call it.
+//
+// Write recovery (issue #47): this class and LogFile.Append are the ONLY ways
+// a command changes a vault file. Each tells the ambient WriteJournal before
+// the change, so the journal holds the file's before-image on disk before the
+// file is touched. A new write path that bypasses them is a change recovery
+// cannot see; route it through here instead.
 public static class AtomicFile
 {
     // Note: creates any missing parent directories (mkdir -p) before writing, so
@@ -27,6 +33,7 @@ public static class AtomicFile
         {
             System.IO.Directory.CreateDirectory(dir);
         }
+        WriteJournal.BeforeChange(path, append: false);
         var tmp = path + "." + System.Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
@@ -38,5 +45,17 @@ public static class AtomicFile
             try { System.IO.File.Delete(tmp); } catch { }
             throw;
         }
+        WriteJournal.AfterChange();
+    }
+
+    // Deletes a vault file (a renamed page's old path, a cleared review
+    // shadow). Journaled like Write, so an interrupted delete can be undone.
+    public static void Delete(string path)
+    {
+        if (!System.IO.File.Exists(path))
+            return;
+        WriteJournal.BeforeChange(path, append: false);
+        System.IO.File.Delete(path);
+        WriteJournal.AfterChange();
     }
 }
