@@ -1,3 +1,9 @@
+// The process entry point is the ONE file allowed to touch the real console
+// (issue #43). Everywhere else System.Console and AnsiConsole.Console are banned
+// (BannedSymbols.txt, RS0030 as error): under `wiki mcp` stdio the process
+// stdout carries JSON-RPC, so every command writes only to the TextWriter that
+// App.Main is handed.
+#pragma warning disable RS0030
 using System;
 using System.CommandLine;
 using System.IO;
@@ -76,7 +82,15 @@ public static class App
     public static int Main(string[] args, TextWriter stdout, TextReader stdin)
     {
         var (root, jsonOption) = BuildRootCommand(stdout, stdin);
-        var parseResult = root.Parse(args);
+
+        // Response files are OFF for the whole CLI (issue #43). System.CommandLine
+        // expands `@file` tokens into that file's contents by default; once the
+        // CLI is hosted in-process behind the MCP server, argv values can come
+        // from a remote client, and expansion would let one make the server read
+        // an arbitrary file and splice it into argv - `--vault` included. With
+        // the replacer gone, `@anything` is always a literal value.
+        var parserConfig = new ParserConfiguration { ResponseFileTokenReplacer = null };
+        var parseResult = root.Parse(args, parserConfig);
 
         // Whether failures render as JSON or as Spectre (amendment P). Taken
         // from the parsed result when the parse succeeded; on a parse error
