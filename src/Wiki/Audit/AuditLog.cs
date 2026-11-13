@@ -81,6 +81,59 @@ public sealed class AuditLog
 
     public string SegmentPath(string file) => Path.Combine(_dir, file);
 
+    // Every raw line of the log, newest first: the live segment from its end,
+    // then each archived segment from the newest back (issue #52: the accept
+    // a PERSONA.md names may have rotated away). A lookup, not a verifier:
+    // an unreadable manifest leaves only the live segment, and a missing or
+    // corrupt segment is skipped; `wiki audit --deep` is where those surface.
+    // Lazy, so a caller that finds what it needs early decompresses nothing.
+    public IEnumerable<string> LinesNewestFirst()
+    {
+        if (File.Exists(LogPath))
+        {
+            string live;
+            // ReadWrite share: a mutating command reads while its own audit
+            // writer holds the file open.
+            using (var s = new FileStream(LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var r = new StreamReader(s, Utf8NoBom))
+                live = r.ReadToEnd();
+            var lines = live.Split('\n');
+            for (var i = lines.Length - 1; i >= 0; i--)
+                yield return lines[i];
+        }
+
+        var manifest = LoadManifest();
+        if (manifest is null)
+            yield break;
+        for (var k = manifest.Segments.Count - 1; k >= 0; k--)
+        {
+            var text = ReadSegment(manifest.Segments[k]);
+            if (text is null)
+                continue;
+            var lines = text.Split('\n');
+            for (var i = lines.Length - 1; i >= 0; i--)
+                yield return lines[i];
+        }
+    }
+
+    private string? ReadSegment(AuditSegment seg)
+    {
+        var path = SegmentPath(seg.File);
+        if (!File.Exists(path))
+            return null;
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var gz = new GZipStream(fs, CompressionMode.Decompress);
+            using var r = new StreamReader(gz, Utf8NoBom);
+            return r.ReadToEnd();
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException)
+        {
+            return null;
+        }
+    }
+
     // The file name the next archived segment gets.
     public string NextSegmentFile()
         => NextSegmentFile(LoadManifest() ?? new AuditManifest());

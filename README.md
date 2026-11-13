@@ -301,6 +301,11 @@ an MCP server and a manual run can work on one vault at once. A command waits
 for a busy vault up to `--lock-timeout <seconds>` (or `WIKI_LOCK_TIMEOUT`;
 default 10) before failing with exit 5.
 
+Persona changesets wait in `wiki review` by default. Set
+`WIKI_PERSONA_AUTO_ACCEPT=1` (for manual runs and the MCP server alike) to accept
+a valid changeset as soon as it is proposed; lint still rejects an invalid one,
+and the audit log records the accept as `decidedVia=auto-accept`.
+
 Then open the vault in Obsidian and look at the graph.
 
 To see what that produces before installing anything, **[docs/example-vault.md](docs/example-vault.md)**

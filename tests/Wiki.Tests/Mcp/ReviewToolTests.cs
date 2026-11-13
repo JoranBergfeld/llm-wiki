@@ -162,6 +162,7 @@ public class ReviewToolTests
         Assert.False(result.IsError, result.Text());
         var data = result.Structured().GetProperty("data").GetProperty("persona");
         Assert.Equal("open", data.GetProperty("changeset").GetProperty("status").GetString());
+        Assert.False(data.GetProperty("autoAccepted").GetBoolean());
         Assert.False(File.Exists(Path.Combine(tv.Path, "PERSONA.md")));
         Assert.Contains(CliData(tv.Run("review", "list", "--json")).EnumerateArray(),
             r => r.GetProperty("kind").GetString() == "persona");

@@ -6,9 +6,10 @@ using Wiki.Services;
 
 namespace Wiki.Cli.Commands;
 
-// `wiki persona ...` (spec §8, amendments AC and AG): the owner's persona in
+// `wiki persona ...` (spec §8, amendments AC, AH and AM): the owner's persona in
 // PERSONA.md. `read` serves it, `distill` is the read side of a distillation
-// pass, `propose` queues the pass's changeset for `wiki review`. The
+// pass, `propose` queues the pass's changeset for `wiki review`, or accepts it
+// at once when WIKI_PERSONA_AUTO_ACCEPT is on. The
 // onboarding interview (`persona interview guide|record`) joins as a nested
 // command in a later ticket.
 public static class PersonaCommand
@@ -72,9 +73,30 @@ public static class PersonaCommand
 
         propose.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
         {
+            // Read first: a malformed value fails before anything is written.
+            var autoAccept = PersonaAutoAccept.Enabled();
             var input = BodyInput.Resolve(ctx, parseResult.GetValue(bodyFileOption), parseResult.GetValue(stdinOption));
             var vault = ctx.ResolveVault();
-            var result = new PersonaService().Propose(vault, input);
+            var service = new PersonaService();
+            var result = service.Propose(vault, input);
+
+            if (autoAccept && result.Changeset is not null)
+            {
+                // Auto-accept skips only the human: Propose has validated the
+                // changeset against persona lint, and Accept validates it
+                // again against PERSONA.md, exactly as `review approve` does.
+                // The step gets one audit line, the accept, carrying what the
+                // propose line would have said about supersession and flags.
+                var (decision, ledger, retired) = service.Accept(vault, result.Changeset.Id);
+                result = result with { Changeset = decision.Changeset, PendingPath = null, AutoAccepted = true };
+                PersonaAudit.Accept(ctx, decision, ledger, retired, PersonaAutoAccept.DecidedVia);
+                if (result.Superseded is not null)
+                    ctx.Audit.Field("supersedes", result.Superseded);
+                if (result.Cleared.Length > 0)
+                    ctx.Audit.Field("cleared", string.Join(",", result.Cleared));
+                ctx.EmitOk(result);
+                return 0;
+            }
 
             ctx.Audit.Action = "persona.propose";
             ctx.Audit.Subject = result.Changeset?.Id ?? "-";
@@ -109,15 +131,42 @@ internal static class PersonaAudit
     public static string LedgerJson(PersonaLedgerLine[] ledger)
         => System.Text.Json.JsonSerializer.Serialize(ledger, Json.WikiJsonContext.Default.PersonaLedgerLineArray);
 
-    // `cli` or `mcp` (issue #32); auto-accept (#51) sets its own value.
+    // `cli` or `mcp` (issue #32; shared with every decision, DecisionAudit);
+    // auto-accept (#51) records PersonaAutoAccept.DecidedVia instead.
     public static string DecidedVia(CommandContext ctx) => DecisionAudit.DecidedVia(ctx);
+
+    // The `persona.accept` audit line, for `review approve` and for
+    // auto-accept alike: who decided, every evidence reference with its hash,
+    // and the full evidence ledger of the new PERSONA.md, which lint reads
+    // back by `changeset=<audit_entry>`. `retired` is the evidence the
+    // previous ledger held and the new one does not (issue #52): removing or
+    // rewording a line retires what supported it, on the record; the field
+    // is omitted when nothing is retired.
+    public static void Accept(CommandContext ctx, PersonaDecisionResult result, PersonaLedgerLine[] ledger,
+        PersonaEvidenceData[] retired, string decidedVia)
+    {
+        var c = result.Changeset;
+        ctx.Audit.Action = PersonaEvidence.AcceptAction;
+        ctx.Audit.Subject = PersonaDoc.FileName;
+        ctx.Audit.Field(PersonaEvidence.ChangesetField, c.Id)
+                 .Field("lines", $"+{result.Added} ~{result.Changed} -{result.Removed}")
+                 .Field("evidence", EvidenceList(c))
+                 .Field("decidedVia", decidedVia)
+                 .Field("reason", c.Reason)
+                 .Detail("changeset-detail", ChangesetJson(c))
+                 .Detail(PersonaEvidence.LedgerField, LedgerJson(ledger));
+        if (retired.Length > 0)
+            ctx.Audit.Field("retired", EvidenceRefs(retired));
+    }
 
     // Every evidence reference of the lines the changeset introduces, as
     // `<path>@<sha256>` (or `<path>#<anchor>@<sha256>` for owner-stated).
     public static string EvidenceList(PersonaChangesetData c)
+        => EvidenceRefs(c.Changes.SelectMany(x => x.Evidence ?? System.Array.Empty<PersonaEvidenceData>()));
+
+    public static string EvidenceRefs(System.Collections.Generic.IEnumerable<PersonaEvidenceData> evidence)
     {
-        var refs = c.Changes
-            .SelectMany(x => x.Evidence ?? System.Array.Empty<PersonaEvidenceData>())
+        var refs = evidence
             .Select(e => (e.Anchor is null ? e.Path : e.Path + "#" + e.Anchor) + "@" + e.Hash)
             .Distinct(System.StringComparer.Ordinal)
             .ToArray();
