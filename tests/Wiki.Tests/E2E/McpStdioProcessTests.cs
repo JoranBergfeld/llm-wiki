@@ -36,7 +36,7 @@ public class McpStdioProcessTests
         options.EnvironmentVariables = new Dictionary<string, string?> { ["WIKI_VAULT"] = null };
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await using var client = await McpClient.CreateAsync(new StdioClientTransport(options), cancellationToken: timeout.Token);
+        await using var client = await McpClient.CreateAsync(new StdioClientTransport(options), McpHarness.ClientOptions(), cancellationToken: timeout.Token);
 
         Assert.Equal("wiki", client.ServerInfo?.Name);
 
@@ -87,7 +87,7 @@ public class McpStdioProcessTests
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await using var client = await McpClient.CreateAsync(new StdioClientTransport(
-            Server(tv, new() { ["WIKI_MCP_EXCLUDE_TOOLS"] = "read_page" })), cancellationToken: timeout.Token);
+            Server(tv, new() { ["WIKI_MCP_EXCLUDE_TOOLS"] = "read_page" })), McpHarness.ClientOptions(), cancellationToken: timeout.Token);
 
         var tools = (await client.ListToolsAsync(cancellationToken: timeout.Token)).Select(t => t.Name).ToArray();
         Assert.DoesNotContain("read_page", tools);
@@ -104,7 +104,7 @@ public class McpStdioProcessTests
         await Assert.ThrowsAnyAsync<Exception>(async () =>
         {
             await using var client = await McpClient.CreateAsync(new StdioClientTransport(
-                Server(tv, new() { ["WIKI_MCP_EXCLUDE_TOOLS"] = "no_such_tool" })), cancellationToken: timeout.Token);
+                Server(tv, new() { ["WIKI_MCP_EXCLUDE_TOOLS"] = "no_such_tool" })), McpHarness.ClientOptions(), cancellationToken: timeout.Token);
         });
         Assert.False(timeout.IsCancellationRequested, "the server should exit at startup, not hang");
     }

@@ -317,7 +317,10 @@ wiki persona propose --stdin|--body-file <p>    One changeset as JSON (amendment
 # MCP server (Appendix I)
 wiki mcp [--exclude-tools <tool,...>]           Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout).
                                                 --exclude-tools (else WIKI_MCP_EXCLUDE_TOOLS) removes tools from
-                                                this instance; default: every tool is exposed (amendment AG)
+                                                this instance; default: every tool is exposed (amendment AG).
+                                                The global --lock-timeout given to `wiki mcp` is validated at
+                                                startup and applied to every CLI step the server runs; absent,
+                                                each step uses WIKI_LOCK_TIMEOUT, then 10 s
     [--inbox-root <dir>] [--max-upload-bytes <n>] --inbox-root (else WIKI_MCP_INBOX_ROOT): where ingest_source lands
                                                 uploads, outside the vault; --max-upload-bytes (else
                                                 WIKI_MCP_MAX_UPLOAD_BYTES, default 10485760) caps one upload (AP)

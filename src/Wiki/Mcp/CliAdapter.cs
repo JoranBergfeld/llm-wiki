@@ -14,11 +14,16 @@ namespace Wiki.Mcp;
 //
 // The vault is bound once at startup to an absolute path and added to every
 // call as --vault=<abs>, so neither WIKI_VAULT nor the working directory
-// decides anything after startup. The adapter never sets environment
-// variables or changes directory.
-public sealed class CliAdapter(string vaultRoot, InvocationOrigin origin)
+// decides anything after startup. Likewise the server's lock timeout
+// (`wiki mcp --lock-timeout`), when given, is added as --lock-timeout=<s>.
+// The adapter never sets environment variables or changes directory.
+public sealed class CliAdapter(string vaultRoot, InvocationOrigin origin, string? lockTimeout = null)
 {
     public string VaultRoot { get; } = vaultRoot;
+
+    // Seconds (invariant culture), or null for each step's own fallback
+    // (WIKI_LOCK_TIMEOUT, then the 10 s default).
+    public string? LockTimeout { get; } = lockTimeout;
 
     // How this server's steps arrived; the audit log records it per step.
     public InvocationOrigin Origin { get; } = origin;
@@ -31,7 +36,7 @@ public sealed class CliAdapter(string vaultRoot, InvocationOrigin origin)
     {
         var stdout = new StringWriter();
         var stdin = new StringReader(step.StdinText ?? "");
-        var exit = App.Main(step.ToArgv(VaultRoot), stdout, stdin, Origin);
+        var exit = App.Main(step.ToArgv(VaultRoot, LockTimeout), stdout, stdin, Origin);
 
         // --json guarantees the envelope is the last line.
         var lines = stdout.ToString().Trim().Split('\n');

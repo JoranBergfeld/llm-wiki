@@ -1,5 +1,6 @@
 using System;
 using System.CommandLine;
+using System.Globalization;
 using System.IO;
 using Wiki.Core;
 using Wiki.Mcp;
@@ -57,7 +58,17 @@ public static class McpCommand
 
             var inbox = IngestInbox.Resolve(parseResult.GetValue(inboxRootOption), parseResult.GetValue(maxUploadOption), vault.Root);
 
-            return WikiMcpServer.RunStdio(vault.Root, excluded, inbox, stdio);
+            // The global --lock-timeout, given to `wiki mcp`, is the lock
+            // timeout of every CLI step this server runs (a step's argv
+            // cannot carry one: tools never build raw argv). Validated now,
+            // so a bad value refuses to start instead of failing every later
+            // tool call. Absent, each step falls back to WIKI_LOCK_TIMEOUT,
+            // then the 10 s default, exactly as on the command line.
+            var lockTimeout = parseResult.GetValue<string?>(VaultLock.TimeoutOption) is { Length: > 0 } flag
+                ? VaultLock.ResolveTimeout(flag, env: null).TotalSeconds.ToString(CultureInfo.InvariantCulture)
+                : null;
+
+            return WikiMcpServer.RunStdio(vault.Root, excluded, inbox, lockTimeout, stdio);
         }));
 
         return mcp;

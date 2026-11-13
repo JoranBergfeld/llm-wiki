@@ -51,7 +51,12 @@ public sealed class McpHarness : IAsyncDisposable
         var streams = new StdioStreams(c2s.Reader.AsStream(), s2c.Writer.AsStream()) { ConfigureForTests = extraTools };
 
         var serverStdout = new StringWriter();
-        var server = Task.Run(() => App.Main(["mcp", "--vault", vault.Path, .. serverArgs], serverStdout, TextReader.Null, streams));
+        // App.Main blocks its thread for the server's lifetime (RunStdio is
+        // the process's synchronous entry point), so it gets a dedicated
+        // thread rather than holding a pool thread the async MCP traffic needs.
+        var server = Task.Factory.StartNew(
+            () => App.Main(["mcp", "--vault", vault.Path, .. serverArgs], serverStdout, TextReader.Null, streams),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         // A server that refuses to start never answers initialize; closing
         // its side of the pipe makes the client fail now, not at the timeout.
         _ = server.ContinueWith(_ => s2c.Writer.Complete(), TaskScheduler.Default);
@@ -61,7 +66,7 @@ public sealed class McpHarness : IAsyncDisposable
         McpClient client;
         try
         {
-            client = await McpClient.CreateAsync(clientTransport, cancellationToken: timeout.Token);
+            client = await McpClient.CreateAsync(clientTransport, ClientOptions(), cancellationToken: timeout.Token);
         }
         catch
         {
@@ -74,6 +79,20 @@ public sealed class McpHarness : IAsyncDisposable
         }
         return new McpHarness(c2s, s2c, server, serverStdout, client);
     }
+
+    // The options every test MCP client uses (harness and E2E). The SDK
+    // client's default handshake probes with server/discover and, when no
+    // reply arrives within DiscoverProbeTimeout (5 s), falls back to
+    // initialize on the same connection - meant for servers that silently
+    // drop the unknown method. `wiki mcp` speaks 2026-07-28: it answers the
+    // probe, however late, and then rejects the fallback ("Method
+    // 'initialize' is not available on protocol version '2026-07-28'"). In
+    // the full parallel suite the reply is routinely > 5 s late because the
+    // client's own continuations wait for a thread-pool thread, not because
+    // the server is slow. So the probe gets no separate deadline: a late
+    // reply is just late, bounded by the caller's connect timeout. See
+    // HandshakeTests and ThreadPoolFloor.
+    public static McpClientOptions ClientOptions() => new() { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan };
 
     public Task<CallToolResult> CallAsync(string tool, IReadOnlyDictionary<string, object?>? args = null)
         => Client.CallToolAsync(tool, args ?? new Dictionary<string, object?>()).AsTask();
