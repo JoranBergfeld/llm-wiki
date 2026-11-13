@@ -317,7 +317,11 @@ public class HttpTransportTests
             Assert.All(blocked, b => Assert.False(b.IsCompleted));
             held.Release();
             await writer;
-            await Task.WhenAll(blocked).WaitAsync(TimeSpan.FromSeconds(60));
+            // Only liveness: 200 writes drain one at a time, each fsyncing
+            // and checking the audit chain, which takes well over a minute
+            // on a loaded 4-core Windows runner. What this test is about was
+            // asserted above.
+            await Task.WhenAll(blocked).WaitAsync(TimeSpan.FromMinutes(5));
         }
         finally
         {

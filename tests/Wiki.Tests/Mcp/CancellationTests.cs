@@ -28,8 +28,22 @@ public class CancellationTests
         => CliData(tv.RunStdin("Body.", "page", "upsert", "--type", "entity", "--title", title, "--summary", "s", "--json"))
             .GetProperty("id").GetString()!;
 
+    // Read while the server may still be writing: a read refused with the
+    // retryable vault-busy (exit 5, data null) is retried, as an agent would.
+    // Any other failure fails the test with the CLI's own output.
     private static string PageStatus(TempVault tv, string id)
-        => CliData(tv.Run("page", "show", id, "--frontmatter-only", "--json")).GetProperty("status").GetString()!;
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (true)
+        {
+            var r = tv.Run("page", "show", id, "--frontmatter-only", "--json");
+            if (r.ExitCode == 0)
+                return CliData(r).GetProperty("status").GetString()!;
+            Assert.True(r.ExitCode == 5 && DateTime.UtcNow < deadline,
+                $"page show exited {r.ExitCode}: {r.Stdout}");
+            Thread.Sleep(100);
+        }
+    }
 
     // A real `notifications/cancelled` from the client. The first step is
     // held inside the CLI: a manual writer is parked holding the vault lock,
