@@ -63,6 +63,13 @@ public static class VaultLock
         return next();
     }
 
+    // The exclusive lock outside the mutation pipeline, with the invocation's
+    // timeout: a reader that must put an interrupted write's before-images
+    // back takes it for that moment only (WriteRecovery.BeforeRead, #47).
+    internal static IDisposable AcquireExclusive(CommandInvocation invocation, Vault vault)
+        => Acquire(vault, exclusive: true, ResolveTimeout(invocation.ParseResult.GetValue<string?>(TimeoutOption),
+            Environment.GetEnvironmentVariable(TimeoutEnv)));
+
     // Seconds, invariant culture, fractions allowed, 0 meaning "do not wait".
     internal static TimeSpan ResolveTimeout(string? flag, string? env)
     {
