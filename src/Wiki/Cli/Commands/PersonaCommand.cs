@@ -72,9 +72,30 @@ public static class PersonaCommand
 
         propose.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
         {
+            // Read first: a malformed value fails before anything is written.
+            var autoAccept = PersonaAutoAccept.Enabled();
             var input = BodyInput.Resolve(ctx, parseResult.GetValue(bodyFileOption), parseResult.GetValue(stdinOption));
             var vault = ctx.ResolveVault();
-            var result = new PersonaService().Propose(vault, input);
+            var service = new PersonaService();
+            var result = service.Propose(vault, input);
+
+            if (autoAccept && result.Changeset is not null)
+            {
+                // Auto-accept skips only the human: Propose has validated the
+                // changeset against persona lint, and Accept validates it
+                // again against PERSONA.md, exactly as `review approve` does.
+                // The step gets one audit line, the accept, carrying what the
+                // propose line would have said about supersession and flags.
+                var (decision, ledger) = service.Accept(vault, result.Changeset.Id);
+                result = result with { Changeset = decision.Changeset, PendingPath = null, AutoAccepted = true };
+                PersonaAudit.Accept(ctx, decision, ledger, PersonaAutoAccept.DecidedVia);
+                if (result.Superseded is not null)
+                    ctx.Audit.Field("supersedes", result.Superseded);
+                if (result.Cleared.Length > 0)
+                    ctx.Audit.Field("cleared", string.Join(",", result.Cleared));
+                ctx.EmitOk(result);
+                return 0;
+            }
 
             ctx.Audit.Action = "persona.propose";
             ctx.Audit.Subject = result.Changeset?.Id ?? "-";
@@ -110,8 +131,27 @@ internal static class PersonaAudit
         => System.Text.Json.JsonSerializer.Serialize(ledger, Json.WikiJsonContext.Default.PersonaLedgerLineArray);
 
     // `cli` for a person or agent at the terminal, `mcp` for either MCP
-    // transport (issue #32); auto-accept (#51) sets its own value.
+    // transport (issue #32); auto-accept (#51) records
+    // PersonaAutoAccept.DecidedVia instead.
     public static string DecidedVia(CommandContext ctx) => ctx.Origin.Transport == Transport.Cli ? "cli" : "mcp";
+
+    // The `persona.accept` audit line, for `review approve` and for
+    // auto-accept alike: who decided, every evidence reference with its hash,
+    // and the full evidence ledger of the new PERSONA.md, which lint reads
+    // back by `changeset=<audit_entry>`.
+    public static void Accept(CommandContext ctx, PersonaDecisionResult result, PersonaLedgerLine[] ledger, string decidedVia)
+    {
+        var c = result.Changeset;
+        ctx.Audit.Action = PersonaEvidence.AcceptAction;
+        ctx.Audit.Subject = PersonaDoc.FileName;
+        ctx.Audit.Field(PersonaEvidence.ChangesetField, c.Id)
+                 .Field("lines", $"+{result.Added} ~{result.Changed} -{result.Removed}")
+                 .Field("evidence", EvidenceList(c))
+                 .Field("decidedVia", decidedVia)
+                 .Field("reason", c.Reason)
+                 .Detail("changeset-detail", ChangesetJson(c))
+                 .Detail(PersonaEvidence.LedgerField, LedgerJson(ledger));
+    }
 
     // Every evidence reference of the lines the changeset introduces, as
     // `<path>@<sha256>` (or `<path>#<anchor>@<sha256>` for owner-stated).

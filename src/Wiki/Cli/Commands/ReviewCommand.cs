@@ -137,18 +137,7 @@ public static class ReviewCommand
     private static int ApprovePersona(CommandContext ctx, Vault vault, string id)
     {
         var (result, ledger) = new PersonaService().Accept(vault, id);
-        var c = result.Changeset;
-
-        ctx.Audit.Action = PersonaEvidence.AcceptAction;
-        ctx.Audit.Subject = PersonaDoc.FileName;
-        ctx.Audit.Field(PersonaEvidence.ChangesetField, c.Id)
-                 .Field("lines", $"+{result.Added} ~{result.Changed} -{result.Removed}")
-                 .Field("evidence", PersonaAudit.EvidenceList(c))
-                 .Field("decidedVia", PersonaAudit.DecidedVia(ctx))
-                 .Field("reason", c.Reason)
-                 .Detail("changeset-detail", PersonaAudit.ChangesetJson(c))
-                 .Detail(PersonaEvidence.LedgerField, PersonaAudit.LedgerJson(ledger));
-
+        PersonaAudit.Accept(ctx, result, ledger, PersonaAudit.DecidedVia(ctx));
         ctx.EmitOk(result);
         return 0;
     }
