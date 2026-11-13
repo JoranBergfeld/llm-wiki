@@ -72,7 +72,7 @@ my-vault/                        # also the Obsidian vault root
 ├── AGENTS.md                    # agent instructions: conventions + playbooks (§13)
 ├── PERSONA.md                   # optional: the owner's persona, written only by the CLI (amendment AC)
 ├── persona/
-│   └── changeset.md             # the pending persona changeset, rendered for reading; review is `wiki review` (amendment AF)
+│   └── changeset.md             # the pending persona changeset, rendered for reading; review is `wiki review` (amendment AG)
 ├── raw/                         # immutable sources
 │   ├── 01J9ZKM3....md           # source files, named by source ID
 │   └── assets/                  # attachments (Obsidian attachment folder)
@@ -284,7 +284,7 @@ wiki review list
 wiki review approve <page-id>                   pending-review → active
 wiki review reject <page-id> [--note "…"]       pending-review → archived; files an issue for the agent
                                                 Both also take the pending persona changeset's id: approve writes
-                                                PERSONA.md, reject requires --note (amendment AF)
+                                                PERSONA.md, reject requires --note (amendment AG)
 
 # Reflect loop (§13)
 wiki schema propose --section "<heading>" --stdin Full-section replacement (amendment C): LLM submits the new full
@@ -298,11 +298,14 @@ wiki schema reject <proposal-id> [--note "…"]
 wiki persona read                               PERSONA.md as four line arrays (values, principles, toneOfVoice,
                                                 boundaries) plus its frontmatter. No PERSONA.md is an empty
                                                 persona (exists: false), not an error. Never writes.
-wiki persona distill                            Read side of a distillation pass (amendment AF): candidate pages
+wiki persona distill                            Read side of a distillation pass (amendment AG): candidate pages
                                                 (persona: candidate), the current persona, the pending changeset.
-wiki persona propose --stdin|--body-file <p>    One changeset as JSON (amendment AF): validated against persona
+wiki persona propose --stdin|--body-file <p>    One changeset as JSON (amendment AG): validated against persona
                                                 lint and the evidence rules, queued for `wiki review`, superseding
                                                 any pending one; clears the candidate flags the pass considered.
+
+# MCP server (Appendix I)
+wiki mcp                                        Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout)
 ```
 
 ---
@@ -376,7 +379,7 @@ The canonical agent flow (encoded in AGENTS.md, enforced by ledger preconditions
 | `persona-entry-length` | **Error.** A persona entry over 200 characters |
 | `persona-section-cap` | **Error.** Values over 10 lines, Principles over 15, Boundaries over 10 |
 | `persona-tone-length` | Warning. Tone of voice past 600 words |
-| `persona-evidence` | **Error.** A persona line whose recorded evidence (the audit log's `ledger` for the accept named by `audit_entry`) is fewer than two endorsed pages and no owner-stated text, or a tone-of-voice line not resting on owner-stated text (amendment AF) |
+| `persona-evidence` | **Error.** A persona line whose recorded evidence (the audit log's `ledger` for the accept named by `audit_entry`) is fewer than two endorsed pages and no owner-stated text, or a tone-of-voice line not resting on owner-stated text (amendment AG) |
 
 Every kind above except the `persona-*` errors reports as severity `warning` in the lint report's per-kind counts; lint exits 0 regardless (amendment AC).
 
@@ -672,6 +675,29 @@ Same standing as Appendices B and C: these override the original text where they
 
 - **AE. Every mutation appends one line to a hash-chained audit log.** (issue #44; design in #35, transport field in #34) `.wiki/ledger.json` is a rebuildable snapshot and `wiki/log.md` has no integrity and skips five mutations (`schema propose`, `category add`, `reindex`, `init`, lint's drift rewrites), so neither can say verifiably what changed. Every command classified `Mutate` (issue #42) now appends exactly one line, through one step on the mutation boundary rather than per command; reads append none. A line is `<utc> | <action> | <subject> | key=value… | exit=<n> | via=<cli|stdio|http|http+token> | prev=<sha256> | hash=<sha256>`, where `hash` is the SHA-256 of everything before ` | hash=` and `prev` is the previous line's hash (64 zeros on the first). `|`, `%`, line breaks and a leading `@` in values are percent-escaped. A value of the form `@<sha256>` references `details/<sha256>.txt`; values over 200 characters move there automatically, so the chain covers details without bloating lines. **Fail closed:** the log is opened and its last line checked before the command runs; if that fails the command does not run (exit 2, or 3 `audit-chain-broken` for an unsealed or altered last line) and the vault is byte-identical. A command that throws `ValidationException`/`StateConflictException` wrote nothing and gets no line; any other exception gets a line with `error=` instead of `exit=`, because it may have written part of a change. **Location:** `audit.path` in `wiki.yaml`, default `audit/audit.log`, rejected inside `.wiki/`, which `reindex` regenerates. **Origin:** `via` records the transport and whether a token was used, never a client identity (#34). It is passed into `App.Main` as a typed value by the MCP adapter, never through argv or the environment, so a remote caller cannot claim to be the CLI. **`wiki audit`** (bare) reports the live segment's chain (each line sealed, chained, and its detail files matching) separately from the faithfulness counts; a broken chain is reported with exit 0 and `chain.intact: false`. Blocking writes after a break, re-anchoring, rotation and `--deep` are issue #45. `wiki/log.md` and the ledger are unchanged.
 
-## Appendix I — Persona changeset amendment (2026-11-13)
+## Appendix I — MCP amendments (2026-11-13)
 
-- **AF. Persona changesets: `persona distill`, `persona propose`, reviewed in `wiki review`.** (issue #50; design in #32 as narrowed by #33, ADR 0001) **Distill** is read-only: candidate pages (endorsed notes still flagged `persona: candidate`), the persona as `persona read` returns it, and the pending changeset or `null`. Scheduling is external. **Propose** takes one JSON changeset on stdin or `--body-file`: `{"reason": "…", "considered": [<page id or slug>…], "changes": [{"op": "add"|"change"|"remove", "section": "values"|"principles"|"tone-of-voice"|"boundaries", "from": "<current line, for change/remove>", "text": "<new line, for add/change>", "evidence": [{"kind": "page", "page": "<id or slug>"}]}]}`. `reason` is required. The CLI resolves each evidence reference itself to `{kind, page, path, hash}`, where `hash` is the SHA-256 of the page **body** (frontmatter is CLI-managed metadata, so clearing a flag or renaming does not make evidence stale). It then rejects (exit 1, nothing written) a changeset whose operations do not apply (`unknown-persona-line`, `duplicate-persona-line`), whose evidence page cites no persona-source category (`evidence-not-endorsed`), whose added or changed line lacks support (`persona-evidence`: at least two distinct endorsed pages, or any owner-stated evidence; tone of voice only from owner-stated text), or whose resulting `PERSONA.md` has any error under the amendment AC rules (`persona-lint`). Accepted, it is stored in `.wiki/persona-changesets.json` (the `proposals.json` pattern), rendered read-only to `persona/changeset.md` for Obsidian, and supersedes any open changeset; the propose audit line carries `supersedes=<id>`. The candidate flag is cleared on every `considered` page and every evidence page. A changeset with no `changes` but some `considered` pages queues nothing and only clears flags, so a pass that finds nothing persona-worthy still converges. **Review** goes through `wiki review`: `list` adds a row with `kind: "persona"`, a diff of `PERSONA.md` and the changeset; `approve <id>` re-applies the changeset to the current file (`changeset-stale` if it moved on), re-runs lint, and writes `PERSONA.md` canonically with `schema_version: 1`, `last_distilled` = the date the changeset was proposed, and `audit_entry` = the changeset id; `reject <id> --note "…"` requires the reason (`reason-required`). Superseded or decided changesets are exit 3. **Audit.** `persona.accept | PERSONA.md | changeset=<id> | lines=+a ~c -r | evidence=<path>@<sha256>,… | decidedVia=cli|mcp | reason=… | changeset-detail=@… | ledger=@…`; `ledger` is every line of the new file with its evidence (carried forward for lines the changeset did not touch), and is what lint reads: a line the ledger does not support is the `persona-evidence` error. A `PERSONA.md` whose `audit_entry` names no recorded accept is not evidence-checked. `persona.reject | <id> | decidedVia=… | reason=…`. **Not in this amendment:** auto-accept (#51), stale evidence (#52), owner-stated evidence from the onboarding interview (#53: evidence `{kind: "owner-stated", path: <transcript>, anchor: <answer>, hash: <answer sha256>}`).
+- **AF. `wiki mcp` over stdio.** (issue #54, spec issue #41) §2 kept the CLI
+  the only interface. `wiki mcp` now serves the vault to MCP clients over
+  stdio from the same binary. The vault is resolved once at startup
+  (`--vault`, `WIKI_VAULT` or the working directory) to an absolute path,
+  and the server refuses to start (`no-vault`, exit 1) when it cannot be.
+  Every tool is a thin sequence of CLI steps run in-process with argv built
+  only from typed arguments (option values as `--opt=value`, positional
+  values after `--`) plus the bound `--vault` and `--json`, so validation,
+  the vault lock, the audit log and logging apply per step exactly as on the
+  command line. Tool results: all steps exit 0 → `isError: false`,
+  structured content `{v, ok, data:{<step key>: <data>}, errors, exitCode:0,
+  completedSteps}`; a step exits non-zero → the sequence stops and the
+  structured content is that step's envelope unchanged plus `exitCode` and
+  `completedSteps`, with `isError: true` for every exit except 3 (state
+  conflict, idempotent no-op; exit 5 `vault-busy` is an error). Unknown tools and arguments that fail the
+  tool's input schema (missing, wrongly typed or undeclared) are JSON-RPC
+  `InvalidParams` errors. First tools: `search_wiki` (`search`, or `index
+  show` without a query) and `read_page` (`page show`, `page backlinks` with
+  `backlinks: true`). The `dotnet tool` channel now needs the ASP.NET Core
+  runtime.
+
+## Appendix J — Persona changeset amendment (2026-11-13)
+
+- **AG. Persona changesets: `persona distill`, `persona propose`, reviewed in `wiki review`.** (issue #50; design in #32 as narrowed by #33, ADR 0001) **Distill** is read-only: candidate pages (endorsed notes still flagged `persona: candidate`), the persona as `persona read` returns it, and the pending changeset or `null`. Scheduling is external. **Propose** takes one JSON changeset on stdin or `--body-file`: `{"reason": "…", "considered": [<page id or slug>…], "changes": [{"op": "add"|"change"|"remove", "section": "values"|"principles"|"tone-of-voice"|"boundaries", "from": "<current line, for change/remove>", "text": "<new line, for add/change>", "evidence": [{"kind": "page", "page": "<id or slug>"}]}]}`. `reason` is required. The CLI resolves each evidence reference itself to `{kind, page, path, hash}`, where `hash` is the SHA-256 of the page **body** (frontmatter is CLI-managed metadata, so clearing a flag or renaming does not make evidence stale). It then rejects (exit 1, nothing written) a changeset whose operations do not apply (`unknown-persona-line`, `duplicate-persona-line`), whose evidence page cites no persona-source category (`evidence-not-endorsed`), whose added or changed line lacks support (`persona-evidence`: at least two distinct endorsed pages, or any owner-stated evidence; tone of voice only from owner-stated text), or whose resulting `PERSONA.md` has any error under the amendment AC rules (`persona-lint`). Accepted, it is stored in `.wiki/persona-changesets.json` (the `proposals.json` pattern), rendered read-only to `persona/changeset.md` for Obsidian, and supersedes any open changeset; the propose audit line carries `supersedes=<id>`. The candidate flag is cleared on every `considered` page and every evidence page. A changeset with no `changes` but some `considered` pages queues nothing and only clears flags, so a pass that finds nothing persona-worthy still converges. **Review** goes through `wiki review`: `list` adds a row with `kind: "persona"`, a diff of `PERSONA.md` and the changeset; `approve <id>` re-applies the changeset to the current file (`changeset-stale` if it moved on), re-runs lint, and writes `PERSONA.md` canonically with `schema_version: 1`, `last_distilled` = the date the changeset was proposed, and `audit_entry` = the changeset id; `reject <id> --note "…"` requires the reason (`reason-required`). Superseded or decided changesets are exit 3. **Audit.** `persona.accept | PERSONA.md | changeset=<id> | lines=+a ~c -r | evidence=<path>@<sha256>,… | decidedVia=cli|mcp | reason=… | changeset-detail=@… | ledger=@…`; `ledger` is every line of the new file with its evidence (carried forward for lines the changeset did not touch), and is what lint reads: a line the ledger does not support is the `persona-evidence` error. A `PERSONA.md` whose `audit_entry` names no recorded accept is not evidence-checked. `persona.reject | <id> | decidedVia=… | reason=…`. **Not in this amendment:** auto-accept (#51), stale evidence (#52), owner-stated evidence from the onboarding interview (#53: evidence `{kind: "owner-stated", path: <transcript>, anchor: <answer>, hash: <answer sha256>}`).

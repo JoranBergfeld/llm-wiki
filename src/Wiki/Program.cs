@@ -12,6 +12,7 @@ using Wiki.Cli;
 using Wiki.Cli.Commands;
 using Wiki.Core;
 using Wiki.Json;
+using Wiki.Mcp;
 
 namespace Wiki;
 
@@ -58,7 +59,11 @@ public static class App
         using var _in = stdin;
         try
         {
-            return Main(args, stdout, stdin);
+            // The raw streams under the UTF-8 reader/writer, for `wiki mcp`:
+            // its JSON-RPC transport speaks bytes, and this file is the only
+            // one allowed to reach the process's standard streams. Nothing
+            // has been read from or written to either wrapper yet.
+            return Main(args, stdout, stdin, new StdioStreams(stdin.BaseStream, stdout.BaseStream));
         }
         finally
         {
@@ -88,8 +93,18 @@ public static class App
     // on purpose: nothing in argv or the environment can set it, so a remote
     // client cannot pass itself off as a local CLI run.
     public static int Main(string[] args, TextWriter stdout, TextReader stdin, InvocationOrigin origin)
+        => Run(args, stdout, stdin, origin, stdio: null);
+
+    // With the raw standard streams, so `wiki mcp` can serve JSON-RPC over
+    // them (issue #54). Only the process entry point above and the MCP test
+    // seam call this; every other caller has no streams, so a nested
+    // `wiki mcp` cannot start.
+    public static int Main(string[] args, TextWriter stdout, TextReader stdin, StdioStreams stdio)
+        => Run(args, stdout, stdin, InvocationOrigin.Cli, stdio);
+
+    private static int Run(string[] args, TextWriter stdout, TextReader stdin, InvocationOrigin origin, StdioStreams? stdio)
     {
-        var (root, jsonOption) = BuildRootCommand(stdout, stdin, origin);
+        var (root, jsonOption) = BuildRootCommand(stdout, stdin, origin, stdio);
 
         // Response files are OFF for the whole CLI (issue #43). System.CommandLine
         // expands `@file` tokens into that file's contents by default; once the
@@ -164,7 +179,7 @@ public static class App
     // The command tree App.Main parses against, with null streams. For
     // walking the tree (CommandClassificationTests enumerate it to prove every
     // command is classified read or mutate); never for invoking.
-    public static RootCommand CommandTree() => BuildRootCommand(TextWriter.Null, TextReader.Null, InvocationOrigin.Cli).Root;
+    public static RootCommand CommandTree() => BuildRootCommand(TextWriter.Null, TextReader.Null, InvocationOrigin.Cli, stdio: null).Root;
 
     // argv fallback for the parse-error path. Matches the bare flag and the
     // `--json=true` / `--json:true` forms System.CommandLine also accepts.
@@ -186,7 +201,7 @@ public static class App
     // Extension point for later tasks: add more `root.Add(XCommand.Build(...))`
     // calls here as command groups land. Nothing else in this method needs to
     // change.
-    private static (RootCommand Root, Option<bool> JsonOption) BuildRootCommand(TextWriter stdout, TextReader stdin, InvocationOrigin origin)
+    private static (RootCommand Root, Option<bool> JsonOption) BuildRootCommand(TextWriter stdout, TextReader stdin, InvocationOrigin origin, StdioStreams? stdio)
     {
         var vaultOption = new Option<string?>("--vault")
         {
@@ -230,6 +245,7 @@ public static class App
         root.Add(AuditCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(LinksCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(PersonaCommand.Build(vaultOption, jsonOption, stdout, stdin));
+        root.Add(McpCommand.Build(vaultOption, jsonOption, stdout, stdin, stdio));
 
         return (root, jsonOption);
     }

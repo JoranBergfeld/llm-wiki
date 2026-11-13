@@ -6,7 +6,7 @@ using Wiki.Services;
 
 namespace Wiki.Cli.Commands;
 
-// `wiki persona ...` (spec §8, amendments AC and AF): the owner's persona in
+// `wiki persona ...` (spec §8, amendments AC and AG): the owner's persona in
 // PERSONA.md. `read` serves it, `distill` is the read side of a distillation
 // pass, `propose` queues the pass's changeset for `wiki review`. The
 // onboarding interview (`persona interview guide|record`) joins as a nested
