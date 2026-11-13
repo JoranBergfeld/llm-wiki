@@ -17,5 +17,10 @@ public static class McpToolCatalog
 {
     public static IMcpServerBuilder AddWikiTools(this IMcpServerBuilder builder, CliAdapter cli) => builder
         .WithTools(new SearchWikiTool(cli))
-        .WithTools(new ReadPageTool(cli));
+        .WithTools(new ReadPageTool(cli))
+        .WithTools(new WritePageTool(cli))
+        .WithTools(new RenamePageTool(cli))
+        .WithTools(new AddCategoryTool(cli))
+        .WithTools(new RetractSourceTool(cli))
+        .WithTools(new RepairVaultTool(cli));
 }
