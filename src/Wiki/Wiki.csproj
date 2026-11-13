@@ -102,13 +102,10 @@
     </PackageReference>
     <AdditionalFiles Include="BannedSymbols.txt" />
   </ItemGroup>
-  <!-- The test suite reaches internals for one thing: the write-recovery
+  <!-- Internals visible to the test suite. Among them the write-recovery
        fault hook (WriteJournal.FaultHook, issue #47), which simulates an
-       interrupted write. Internal so no argv flag, environment variable or
+       interrupted write: internal so no argv flag, environment variable or
        MCP client can reach it. -->
-  <ItemGroup>
-    <InternalsVisibleTo Include="Wiki.Tests" />
-  </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Wiki.Tests" />
   </ItemGroup>
