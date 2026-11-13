@@ -150,6 +150,9 @@ public sealed class PersonaDoc
         foreach (var (where, link) in FindLinks(Body))
             Add(IssueKind.PersonaLink, $"{where}: '{link}'");
 
+        foreach (var (where, id) in FindIds(Body))
+            Add(IssueKind.PersonaId, $"{where}: '{id}'");
+
         foreach (var s in PersonaSectionX.InOrder)
         {
             var lines = Section(s);
@@ -376,6 +379,39 @@ public sealed class PersonaDoc
         @"|\b(?:https?|ftp)://\S+" +              // bare URL
         @"|\bwww\.[^\s/]+\.\S+",                  // bare www. host
         System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    // "No IDs" (issue #31, amendment AZ): a line naming a page, source,
+    // changeset or transcript by its id does not read as a standalone
+    // document. AC first left this unchecked because no id format is
+    // reliably distinguishable from prose; this check takes only the shapes
+    // prose does not: a ULID (26 Crockford base32 characters with a digit,
+    // which no word or acronym is), a hex run of 16 or more with both a digit
+    // and a letter (hashes; a colour or a short word like "deadbeef" is
+    // shorter), and a vault path ending in `.md` with a directory (README.md
+    // alone is a filename people mention). Slugs on their own are not
+    // checked: `open-source` is a slug and a word. Wikilinks are persona-link.
+    // The frontmatter is not scanned: audit_entry is a hash by design.
+    private static readonly System.Text.RegularExpressions.Regex IdPattern = new(
+        @"(?<![0-9A-Za-z])(?=[0-9A-HJKMNP-TV-Z]*[0-9])[0-9A-HJKMNP-TV-Z]{26}(?![0-9A-Za-z])" +   // ULID
+        @"|(?<![0-9A-Za-z])(?=[0-9a-fA-F]*[0-9])(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{16,}(?![0-9A-Za-z])" + // hex hash
+        @"|(?<![\w/.-])[\w.-]+(?:/[\w.-]+)+\.md(?![\w])",                                            // vault .md path
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static IEnumerable<(string Where, string Id)> FindIds(string body)
+    {
+        var where = "before the first section";
+        foreach (var raw in body.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith("## ", StringComparison.Ordinal))
+            {
+                where = line[3..].Trim();
+                continue;
+            }
+            foreach (System.Text.RegularExpressions.Match m in IdPattern.Matches(line))
+                yield return (where, Truncate(m.Value));
+        }
+    }
 
     private static IEnumerable<(string Where, string Link)> FindLinks(string body)
     {

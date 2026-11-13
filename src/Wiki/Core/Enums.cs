@@ -193,6 +193,12 @@ public enum IssueKind
     // itself once the line is no longer stale (re-confirmed, reworded or
     // removed), so retired evidence leaves no dangling warning.
     PersonaStaleEvidence,
+
+    // An id in PERSONA.md (issue #31 "no links, no IDs", amendment AZ): a
+    // ULID, a long hex hash or a vault path to a Markdown file. Conservative
+    // by design - only shapes ordinary prose never takes - so it never flags
+    // a sentence the owner actually wrote. Error, like persona-link.
+    PersonaId,
 }
 
 public static class IssueKindX
@@ -222,6 +228,7 @@ public static class IssueKindX
         IssueKind.PersonaToneLength => "persona-tone-length",
         IssueKind.PersonaEvidence => "persona-evidence",
         IssueKind.PersonaStaleEvidence => "persona-stale-evidence",
+        IssueKind.PersonaId => "persona-id",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
     };
 
@@ -233,7 +240,8 @@ public static class IssueKindX
     public static string Severity(IssueKind value) => value switch
     {
         IssueKind.PersonaFrontmatter or IssueKind.PersonaSections or IssueKind.PersonaLink
-            or IssueKind.PersonaEntryLength or IssueKind.PersonaSectionCap or IssueKind.PersonaEvidence => "error",
+            or IssueKind.PersonaEntryLength or IssueKind.PersonaSectionCap or IssueKind.PersonaEvidence
+            or IssueKind.PersonaId => "error",
         _ => "warning",
     };
 
@@ -262,6 +270,7 @@ public static class IssueKindX
         "persona-tone-length" => IssueKind.PersonaToneLength,
         "persona-evidence" => IssueKind.PersonaEvidence,
         "persona-stale-evidence" => IssueKind.PersonaStaleEvidence,
+        "persona-id" => IssueKind.PersonaId,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }

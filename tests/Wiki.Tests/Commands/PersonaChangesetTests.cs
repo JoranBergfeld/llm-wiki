@@ -145,6 +145,7 @@ public class PersonaChangesetTests
     [Theory]
     [InlineData("I value [[craft]].", "persona-link")]
     [InlineData("I value craft, see https://example.com", "persona-link")]
+    [InlineData("I value craft, as 01JC9Z6Q4X0V6M8T2K3B5N7P9R shows", "persona-id")]
     public void Propose_ChangesetThatWouldFailPersonaLint_IsRejected_AndNothingChanges(string text, string kind)
     {
         using var tv = new TempVault(); Init(tv);
