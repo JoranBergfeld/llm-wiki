@@ -42,6 +42,15 @@ public sealed class VaultConfig
 
     public const int DefaultContentLossPercent = 25;
 
+    // `audit.path` (issue #44): where the hash-chained audit log lives,
+    // relative to the vault root or absolute. Optional; defaults to
+    // audit/audit.log so it sits OUTSIDE `.wiki/`, which is a rebuildable
+    // cache that `wiki reindex` regenerates - the audit log is history and can
+    // never be rebuilt. Detail files go in a `details/` directory beside it.
+    public string AuditPath { get; init; } = DefaultAuditPath;
+
+    public const string DefaultAuditPath = "audit/audit.log";
+
     public bool HasCategory(string id)
     {
         foreach (var c in Categories)
@@ -77,6 +86,7 @@ public sealed class VaultConfig
         string? stalenessDays = null;
         string? maxPageLines = null;
         string? contentLossPercent = null;
+        string? auditPath = null;
 
         int i = 0;
         while (i < lines.Length)
@@ -130,6 +140,19 @@ public sealed class VaultConfig
                 continue;
             }
 
+            if (trimmed == "audit:")
+            {
+                i++;
+                while (i < lines.Length && IsIndentedKey(lines[i]))
+                {
+                    var kv = lines[i].Trim();
+                    if (TryScalarLine(kv, "path", out var ap)) auditPath = ap;
+                    else throw new ValidationException("config", $"unknown 'audit' key: '{kv}'", yamlPath);
+                    i++;
+                }
+                continue;
+            }
+
             throw new ValidationException("config", $"unrecognized config line: '{line}'", yamlPath);
         }
 
@@ -170,6 +193,14 @@ public sealed class VaultConfig
                     $"'lint.content_loss_percent' must be between 0 and 100, got {contentLossPercentNum}", yamlPath);
         }
 
+        if (auditPath is not null)
+        {
+            if (auditPath.Length == 0)
+                throw new ValidationException("config", "'audit.path' must not be empty", yamlPath);
+            // Containment outside .wiki/ is checked where the vault root is
+            // known: AuditLog.For.
+        }
+
         var seenIds = new HashSet<string>();
         foreach (var category in categories)
         {
@@ -188,6 +219,7 @@ public sealed class VaultConfig
             StalenessDays = stalenessDaysNum,
             MaxPageLines = maxPageLinesNum,
             ContentLossPercent = contentLossPercentNum,
+            AuditPath = auditPath ?? DefaultAuditPath,
         };
     }
 

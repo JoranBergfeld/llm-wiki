@@ -74,8 +74,16 @@ public static class App
             new StreamReader(System.Console.OpenStandardInput(), Utf8NoBom));
 
     public static int Main(string[] args, TextWriter stdout, TextReader stdin)
+        => Main(args, stdout, stdin, InvocationOrigin.Cli);
+
+    // The overload the MCP adapter calls (#37): identical to the one above,
+    // plus how the call arrived. The origin is recorded on the audit line of
+    // any mutation this invocation makes (issue #44). It is a typed parameter
+    // on purpose: nothing in argv or the environment can set it, so a remote
+    // client cannot pass itself off as a local CLI run.
+    public static int Main(string[] args, TextWriter stdout, TextReader stdin, InvocationOrigin origin)
     {
-        var (root, jsonOption) = BuildRootCommand(stdout, stdin);
+        var (root, jsonOption) = BuildRootCommand(stdout, stdin, origin);
         var parseResult = root.Parse(args);
 
         // Whether failures render as JSON or as Spectre (amendment P). Taken
@@ -137,7 +145,7 @@ public static class App
     // The command tree App.Main parses against, with null streams. For
     // walking the tree (CommandClassificationTests enumerate it to prove every
     // command is classified read or mutate); never for invoking.
-    public static RootCommand CommandTree() => BuildRootCommand(TextWriter.Null, TextReader.Null).Root;
+    public static RootCommand CommandTree() => BuildRootCommand(TextWriter.Null, TextReader.Null, InvocationOrigin.Cli).Root;
 
     // argv fallback for the parse-error path. Matches the bare flag and the
     // `--json=true` / `--json:true` forms System.CommandLine also accepts.
@@ -159,7 +167,7 @@ public static class App
     // Extension point for later tasks: add more `root.Add(XCommand.Build(...))`
     // calls here as command groups land. Nothing else in this method needs to
     // change.
-    private static (RootCommand Root, Option<bool> JsonOption) BuildRootCommand(TextWriter stdout, TextReader stdin)
+    private static (RootCommand Root, Option<bool> JsonOption) BuildRootCommand(TextWriter stdout, TextReader stdin, InvocationOrigin origin)
     {
         var vaultOption = new Option<string?>("--vault")
         {
@@ -172,7 +180,7 @@ public static class App
             Description = "Emit a machine-readable JSON envelope instead of human-readable output",
         };
 
-        var root = new RootCommand("wiki - a CLI-maintained, LLM-legible knowledge base")
+        var root = new WikiRootCommand("wiki - a CLI-maintained, LLM-legible knowledge base", origin)
         {
             vaultOption,
             jsonOption,

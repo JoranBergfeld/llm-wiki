@@ -25,17 +25,16 @@ public delegate int BoundaryStep(CommandInvocation invocation, Func<int> next);
 // inside exactly one of them, chosen by its CommandCatalog classification;
 // CommandBinding.Bind is the only caller, so no command can bypass it.
 //
-// Both are empty today: this is the prefactor, and an empty pipeline calls
-// the command directly, so behaviour is unchanged. The cross-cutting
-// concerns that follow plug in as steps here, in one place, instead of
-// command by command:
-//   - vault lock (#46):       a MutationSteps entry that acquires before
-//                             next() and releases in a finally.
-//   - audit log (#44):        a MutationSteps entry that appends after next()
-//                             returns (Name says what ran).
-//   - write recovery (#47):   a MutationSteps entry, outermost, that replays
-//                             or rolls back an interrupted write before
-//                             next().
+// The cross-cutting concerns plug in as steps here, in one place, instead of
+// command by command. Intended order of MutationSteps, outermost first:
+//   1. vault lock (#46):      acquires before next() and releases in a
+//                             finally. MUST wrap the audit step: the audit
+//                             tail read, the command and the audit append
+//                             (and rotation, #45) happen under one hold.
+//   2. write recovery (#47):  replays or rolls back an interrupted write
+//                             before next(); needs the lock held.
+//   3. audit log (#44):       AuditStep - opens the log before next() (fail
+//                             closed), appends one chained line after it.
 // Note `init` is Mutate but runs before a vault exists: a step that needs
 // one must tolerate ctx.ResolveVault() failing for that command.
 //
@@ -45,7 +44,11 @@ public delegate int BoundaryStep(CommandInvocation invocation, Func<int> next);
 public static class VaultBoundary
 {
     // Ordered outermost first.
-    private static readonly BoundaryStep[] MutationSteps = [];
+    private static readonly BoundaryStep[] MutationSteps =
+    [
+        // #46 lock goes here, before the audit step.
+        Audit.AuditStep.Run,
+    ];
     private static readonly BoundaryStep[] ReadSteps = [];
 
     public static int Run(CommandInvocation invocation, Func<int> command)

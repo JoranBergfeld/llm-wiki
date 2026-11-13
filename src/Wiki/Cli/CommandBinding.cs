@@ -33,6 +33,9 @@ public static class CommandBinding
                 Json = parseResult.GetValue(jsonOption),
                 Out = stdout,
                 In = stdin,
+                // The tree's root carries the origin App.Main was given; a
+                // plain RootCommand (a test building its own tree) is the CLI.
+                Origin = (parseResult.RootCommandResult.Command as WikiRootCommand)?.Origin ?? InvocationOrigin.Cli,
             };
 
             var name = CommandPath(parseResult.CommandResult);
