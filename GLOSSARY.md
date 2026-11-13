@@ -23,5 +23,17 @@ _Avoid_: self-authored category
 **Owner-stated**
 Evidence the owner gave directly, such as onboarding interview answers or a dictated line. Sufficient on its own to support a persona line, and the only evidence for tone of voice.
 
+**Onboarding interview**
+A conversation in which an agent asks the owner about their values, principles, tone of voice and boundaries. The answers are owner-stated evidence. It can be re-run.
+_Avoid_: questionnaire, survey
+
+**Interview guide**
+The versioned set of starter questions per persona section, plus the rules the interviewing agent follows. The agent may ask follow-ups beyond it.
+_Avoid_: question bank, script
+
+**Interview transcript**
+The word-for-word record of one onboarding interview session: each question and the owner's answer. A dictated line outside an interview is a one-entry transcript. The owner may edit or delete it; deleting it retracts what was said. It is not a knowledge page.
+_Avoid_: statement, answers file
+
 **Persona candidate**
 A page built from a persona-source category that a distillation pass has not yet considered.
