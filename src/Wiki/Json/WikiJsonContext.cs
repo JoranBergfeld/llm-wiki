@@ -66,5 +66,6 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(CategoryProposalView[]))]
 [JsonSerializable(typeof(CategoryData))]
 [JsonSerializable(typeof(CategoryData[]))]
+[JsonSerializable(typeof(PersonaView))]
 [JsonSerializable(typeof(string[]))]
 public partial class WikiJsonContext : JsonSerializerContext { }

@@ -12,8 +12,9 @@ public sealed record CategoryAddResult(string Id, string Description) : IHumanRe
     public string HumanSummary() => $"Added category '{Id}'";
 }
 
-// `wiki category list` row shape.
-public sealed record CategoryData(string Id, string Description);
+// `wiki category list` row shape. `PersonaSource` lets an agent see which
+// categories hold endorsed notes (issue #49) without reading wiki.yaml.
+public sealed record CategoryData(string Id, string Description, bool PersonaSource);
 
 // `wiki category propose/proposals/approve/reject` row shape - the wire view
 // of a CategoryProposal, mirroring how ProposalData surfaces a Proposal.
@@ -290,7 +291,7 @@ public sealed class CategoryService
     {
         var result = new List<CategoryData>();
         foreach (var c in cfg.Categories)
-            result.Add(new CategoryData(c.Id, c.Description));
+            result.Add(new CategoryData(c.Id, c.Description, c.PersonaSource));
         return result.ToArray();
     }
 
@@ -321,6 +322,11 @@ public sealed class CategoryService
                 !VaultConfig.StripInlineComment(lines[i + 1]).Trim().StartsWith("description:", System.StringComparison.Ordinal))
                 break;
             i += 2;
+            // Step over the item's optional keys (`persona-source:`) too, so
+            // the new item lands after the whole previous one instead of
+            // splitting it and inheriting its flag.
+            while (i < lines.Count && IsIndentedContinuation(lines[i]))
+                i++;
             insertAt = i;
         }
 

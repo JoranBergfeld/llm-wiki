@@ -1,3 +1,9 @@
+// The process entry point is the ONE file allowed to touch the real console
+// (issue #43). Everywhere else System.Console and AnsiConsole.Console are banned
+// (BannedSymbols.txt, RS0030 as error): under `wiki mcp` stdio the process
+// stdout carries JSON-RPC, so every command writes only to the TextWriter that
+// App.Main is handed.
+#pragma warning disable RS0030
 using System;
 using System.CommandLine;
 using System.IO;
@@ -84,7 +90,15 @@ public static class App
     public static int Main(string[] args, TextWriter stdout, TextReader stdin, InvocationOrigin origin)
     {
         var (root, jsonOption) = BuildRootCommand(stdout, stdin, origin);
-        var parseResult = root.Parse(args);
+
+        // Response files are OFF for the whole CLI (issue #43). System.CommandLine
+        // expands `@file` tokens into that file's contents by default; once the
+        // CLI is hosted in-process behind the MCP server, argv values can come
+        // from a remote client, and expansion would let one make the server read
+        // an arbitrary file and splice it into argv - `--vault` included. With
+        // the replacer gone, `@anything` is always a literal value.
+        var parserConfig = new ParserConfiguration { ResponseFileTokenReplacer = null };
+        var parseResult = root.Parse(args, parserConfig);
 
         // Whether failures render as JSON or as Spectre (amendment P). Taken
         // from the parsed result when the parse succeeded; on a parse error
@@ -135,6 +149,11 @@ public static class App
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = scex.Code, Message = scex.Message, Path = scex.Path });
             return 3;
         }
+        catch (VaultBusyException vbex)
+        {
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = VaultBusyException.Code, Message = vbex.Message, Path = vbex.Path });
+            return VaultBusyException.ExitCode;
+        }
         catch (Exception ex)
         {
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = "io-error", Message = ex.Message });
@@ -180,10 +199,19 @@ public static class App
             Description = "Emit a machine-readable JSON envelope instead of human-readable output",
         };
 
+        // Read by name in VaultLock.Step rather than threaded through every
+        // command's Build signature.
+        var lockTimeoutOption = new Option<string?>(VaultLock.TimeoutOption)
+        {
+            Recursive = true,
+            Description = $"Seconds to wait for a busy vault before failing with vault-busy (overrides {VaultLock.TimeoutEnv}; default 10)",
+        };
+
         var root = new WikiRootCommand("wiki - a CLI-maintained, LLM-legible knowledge base", origin)
         {
             vaultOption,
             jsonOption,
+            lockTimeoutOption,
         };
 
         root.Add(InitCommand.Build(vaultOption, jsonOption, stdout, stdin));
@@ -201,6 +229,7 @@ public static class App
         root.Add(EvalCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(AuditCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(LinksCommand.Build(vaultOption, jsonOption, stdout, stdin));
+        root.Add(PersonaCommand.Build(vaultOption, jsonOption, stdout, stdin));
 
         return (root, jsonOption);
     }

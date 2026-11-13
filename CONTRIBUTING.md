@@ -108,7 +108,14 @@ overloading one that means something else somewhere else.
 **No `System.Console`.** Streams come in through `App.Main` and travel via
 `CommandContext`. Spectre gets a local console instance writing to that stream,
 never the process-global `AnsiConsole.Console` — the tests run in-process and
-in parallel.
+in parallel, and under `wiki mcp` the process stdout carries JSON-RPC. The
+banned-API analyzer (`src/Wiki/BannedSymbols.txt`, `RS0030` as an error) fails
+the build on either outside `Program.cs`. It cannot see the static
+`AnsiConsole.Write`/`MarkupLine` helpers, so those are on you.
+
+**No response files.** `@file` tokens are always literal values; the parser runs
+with `ResponseFileTokenReplacer = null` so a remote MCP client can't splice a
+file into argv.
 
 **Register every DTO in `WikiJsonContext`.** Native AOT has no reflection
 fallback; an unregistered type fails at runtime, not at build time.
@@ -149,7 +156,7 @@ What a change should come with:
   version, with no vault flags, JSON parsing, or policy prerequisites. The
   functional tests in `E2E/VersionTests.cs` run the real process outside a vault
   and with invalid vault state, and check that existing files are unchanged.
-- Exit codes asserted, not just `ok`. 1 (rejected), 2 (IO), 3 (state conflict)
+- Exit codes asserted, not just `ok`. 1 (rejected), 2 (IO), 3 (state conflict), 5 (vault busy)
   are distinct promises.
 - For anything touching derived state, a reindex assertion: idmap byte-identity
   and structural ledger state are rebuilt exactly; history is only

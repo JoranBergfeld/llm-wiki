@@ -64,6 +64,7 @@ Never scan bodies to discover relevance.
 | Write or replace a page body | `wiki page upsert --type <t> --title "…" [--id <id>] --summary "…" --sources <ids> --body-file <path>` |
 | Record ingest progress | `wiki ingest advance <source-id> --to <state> [--touched <ids>]` |
 | Check vault health | `wiki lint` |
+| Read who the owner is | `wiki persona read` |
 | Score retrieval quality | `wiki eval [--k N]` (needs a human-owned eval.yaml) |
 | List/check external URLs | `wiki links check [--external]` |
 | Pick a page to audit | `wiki audit next` |
@@ -76,7 +77,8 @@ For the vault operations above, pass `--vault <path>` and `--json` explicitly.
 Exit codes: 0 success · 1 your input was rejected — read
 `errors[].code`, correct it, retry once, never retry blind · 2 environment/IO
 problem, do not retry · 3 state conflict, the world is already how you asked,
-treat as a no-op and move on.
+treat as a no-op and move on · 5 `vault-busy`, another wiki command holds the
+vault and nothing was changed: retry the same command shortly.
 
 ### Ingest
 1. Registration. The human decides WHAT enters the vault; you may perform the

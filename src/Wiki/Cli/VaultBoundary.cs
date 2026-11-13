@@ -26,13 +26,15 @@ public delegate int BoundaryStep(CommandInvocation invocation, Func<int> next);
 // CommandBinding.Bind is the only caller, so no command can bypass it.
 //
 // The cross-cutting concerns plug in as steps here, in one place, instead of
-// command by command. Intended order of MutationSteps, outermost first:
-//   1. vault lock (#46):      acquires before next() and releases in a
-//                             finally. MUST wrap the audit step: the audit
-//                             tail read, the command and the audit append
-//                             (and rotation, #45) happen under one hold.
+// command by command. Order of MutationSteps, outermost first:
+//   1. vault lock (#46):      VaultLock.Step, outermost in BOTH pipelines:
+//                             shared for reads, exclusive for mutations. It
+//                             wraps the audit step, so the audit tail read,
+//                             the command and the audit append (and
+//                             rotation, #45) happen under one hold.
 //   2. write recovery (#47):  replays or rolls back an interrupted write
-//                             before next(); needs the lock held.
+//                             before next(); needs the lock held, so it goes
+//                             between the lock and the audit step.
 //   3. audit log (#44):       AuditStep - opens the log before next() (fail
 //                             closed), appends one chained line after it.
 // Note `init` is Mutate but runs before a vault exists: a step that needs
@@ -43,13 +45,12 @@ public delegate int BoundaryStep(CommandInvocation invocation, Func<int> next);
 // derive everything (vault path, clock) from the invocation.
 public static class VaultBoundary
 {
-    // Ordered outermost first.
-    private static readonly BoundaryStep[] MutationSteps =
-    [
-        // #46 lock goes here, before the audit step.
-        Audit.AuditStep.Run,
-    ];
-    private static readonly BoundaryStep[] ReadSteps = [];
+    // Ordered outermost first. The vault lock stays outermost: every later
+    // step (write recovery #47, the audit append and rotation #44/#45) must
+    // run while it is held, so new steps go AFTER it. Recovery (#47) slots
+    // in between the lock and the audit step.
+    private static readonly BoundaryStep[] MutationSteps = [VaultLock.Step, Audit.AuditStep.Run];
+    private static readonly BoundaryStep[] ReadSteps = [VaultLock.Step];
 
     public static int Run(CommandInvocation invocation, Func<int> command)
     {

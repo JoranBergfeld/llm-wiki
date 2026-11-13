@@ -5,7 +5,13 @@ using System.Text.RegularExpressions;
 namespace Wiki.Core;
 
 // One source category, as declared under `categories:` in wiki.yaml.
-public sealed record Category(string Id, string Description);
+//
+// `PersonaSource` (issue #49, ADR 0001) is the owner's endorsement: pages
+// built from sources in this category are endorsed notes and land flagged
+// `persona: candidate`. Endorsement is per category, all or nothing - a mixed
+// inbox gets split rather than marked per file. Optional, default false, so
+// every wiki.yaml written before it existed still loads.
+public sealed record Category(string Id, string Description, bool PersonaSource = false);
 
 // Hand-parsed, validated `wiki.yaml`. No YamlDotNet, no reflection: the file
 // shape is small and fixed (spec §5), so this walks the lines itself looking
@@ -56,6 +62,14 @@ public sealed class VaultConfig
         foreach (var c in Categories)
             if (c.Id == id)
                 return true;
+        return false;
+    }
+
+    public bool IsPersonaSource(string categoryId)
+    {
+        foreach (var c in Categories)
+            if (c.Id == categoryId)
+                return c.PersonaSource;
         return false;
     }
 
@@ -120,7 +134,24 @@ public sealed class VaultConfig
                         throw new ValidationException("config", $"category '{id}' is missing 'description'", yamlPath);
                     i++;
 
-                    categories.Add(new Category(id, description));
+                    // Optional per-category keys follow the description, one
+                    // per indented line, until the next `- ` item or the end
+                    // of the block. A closed set: an unknown key is a typo or
+                    // a guess at a flag that does not exist, and a silently
+                    // ignored endorsement is worse than a config error.
+                    var personaSource = false;
+                    while (i < lines.Length && IsIndentedKey(lines[i]))
+                    {
+                        var kv = lines[i].Trim();
+                        if (!TryScalarLine(kv, "persona-source", out var ps))
+                            throw new ValidationException("config", $"category '{id}' has unknown key: '{kv}'", yamlPath);
+                        if (!TryParseBool(ps, out personaSource))
+                            throw new ValidationException("config",
+                                $"category '{id}': 'persona-source' must be true or false, got '{ps}'", yamlPath);
+                        i++;
+                    }
+
+                    categories.Add(new Category(id, description, personaSource));
                 }
                 continue;
             }
