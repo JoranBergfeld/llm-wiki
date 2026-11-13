@@ -298,7 +298,10 @@ wiki persona read                               PERSONA.md as four line arrays (
 # MCP server (Appendix I)
 wiki mcp [--exclude-tools <tool,...>]           Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout).
                                                 --exclude-tools (else WIKI_MCP_EXCLUDE_TOOLS) removes tools from
-                                                this instance; default: every tool is exposed (amendment AG)
+                                                this instance; default: every tool is exposed (amendment AG).
+                                                The global --lock-timeout given to `wiki mcp` is validated at
+                                                startup and applied to every CLI step the server runs; absent,
+                                                each step uses WIKI_LOCK_TIMEOUT, then 10 s
 ```
 
 ---

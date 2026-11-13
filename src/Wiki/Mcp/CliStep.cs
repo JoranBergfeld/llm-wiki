@@ -8,7 +8,7 @@ namespace Wiki.Mcp;
 // `--opt=value` so a value can never be read as another option, positional
 // values go after `--` so a value like `--vault=x` or `@file` stays a plain
 // value. The adapter adds the bound `--vault=<abs>` and `--json` itself; a
-// tool cannot set either. There is deliberately no way to append raw argv.
+// tool cannot set either, nor the server's --lock-timeout (added the same way). There is deliberately no way to append raw argv.
 public sealed class CliStep
 {
     private readonly List<string> _options = [];
@@ -60,9 +60,11 @@ public sealed class CliStep
         return this;
     }
 
-    internal string[] ToArgv(string vaultRoot)
+    internal string[] ToArgv(string vaultRoot, string? lockTimeout = null)
     {
         var argv = new List<string>(Command) { "--vault=" + vaultRoot, "--json" };
+        if (lockTimeout is not null)
+            argv.Add(Cli.VaultLock.TimeoutOption + "=" + lockTimeout);
         argv.AddRange(_options);
         argv.Add("--");
         argv.AddRange(_positionals);
