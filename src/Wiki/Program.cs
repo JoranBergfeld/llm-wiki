@@ -174,6 +174,11 @@ public static class App
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = RepairNeededException.Code, Message = rnex.Message, Path = rnex.Path });
             return RepairNeededException.ExitCode;
         }
+        catch (AuditChainBrokenException acex)
+        {
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = AuditChainBrokenException.Code, Message = acex.Message, Path = acex.Path });
+            return AuditChainBrokenException.ExitCode;
+        }
         catch (Exception ex)
         {
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = "io-error", Message = ex.Message });

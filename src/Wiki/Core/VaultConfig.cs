@@ -57,6 +57,13 @@ public sealed class VaultConfig
 
     public const string DefaultAuditPath = "audit/audit.log";
 
+    // `audit.rotate_bytes` (issue #45): once the live audit log reaches this
+    // size, the next mutation first rolls it into a compressed segment. About
+    // 10 MB by default; a positive integer number of bytes.
+    public long AuditRotateBytes { get; init; } = DefaultAuditRotateBytes;
+
+    public const long DefaultAuditRotateBytes = 10L * 1024 * 1024;
+
     public bool HasCategory(string id)
     {
         foreach (var c in Categories)
@@ -101,6 +108,7 @@ public sealed class VaultConfig
         string? maxPageLines = null;
         string? contentLossPercent = null;
         string? auditPath = null;
+        string? auditRotateBytes = null;
 
         int i = 0;
         while (i < lines.Length)
@@ -178,6 +186,7 @@ public sealed class VaultConfig
                 {
                     var kv = lines[i].Trim();
                     if (TryScalarLine(kv, "path", out var ap)) auditPath = ap;
+                    else if (TryScalarLine(kv, "rotate_bytes", out var rb)) auditRotateBytes = rb;
                     else throw new ValidationException("config", $"unknown 'audit' key: '{kv}'", yamlPath);
                     i++;
                 }
@@ -232,6 +241,13 @@ public sealed class VaultConfig
             // known: AuditLog.For.
         }
 
+        var auditRotateBytesNum = DefaultAuditRotateBytes;
+        if (auditRotateBytes is not null
+            && (!long.TryParse(auditRotateBytes, NumberStyles.None, CultureInfo.InvariantCulture, out auditRotateBytesNum)
+                || auditRotateBytesNum < 1))
+            throw new ValidationException("config",
+                $"'audit.rotate_bytes' must be a positive whole number of bytes, got '{auditRotateBytes}'", yamlPath);
+
         var seenIds = new HashSet<string>();
         foreach (var category in categories)
         {
@@ -251,6 +267,7 @@ public sealed class VaultConfig
             MaxPageLines = maxPageLinesNum,
             ContentLossPercent = contentLossPercentNum,
             AuditPath = auditPath ?? DefaultAuditPath,
+            AuditRotateBytes = auditRotateBytesNum,
         };
     }
 

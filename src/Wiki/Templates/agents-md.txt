@@ -71,6 +71,7 @@ Never scan bodies to discover relevance.
 | List/check external URLs | `wiki links check [--external]` |
 | Pick a page to audit | `wiki audit next` |
 | Record an audit verdict | `wiki audit record <page-id> --verdict supported\|unsupported --note "…"` |
+| Restore writes after `audit-chain-broken` | `wiki audit reanchor --reason "…"` |
 | See outstanding repairs | `wiki issues list --status open [--kind <k>]` |
 | Close a repair | `wiki issues resolve <issue-id> --note "…"` |
 | Amend these instructions | `wiki schema propose --section "<heading>" --body-file <path>` |
@@ -81,7 +82,10 @@ Exit codes: 0 success · 1 your input was rejected — read
 problem, do not retry (`repair-needed`: an interrupted write needs a human; stop
 writing and report it) · 3 state conflict, the world is already how you asked,
 treat as a no-op and move on · 5 `vault-busy`, another wiki command holds the
-vault and nothing was changed: retry the same command shortly.
+vault and nothing was changed: retry the same command shortly · 6
+`audit-chain-broken`, the audit log was altered and every write is refused:
+run `wiki audit`, then `wiki audit reanchor --reason "…"` once the cause is
+understood.
 
 ### Ingest
 1. Registration. The human decides WHAT enters the vault; you may perform the

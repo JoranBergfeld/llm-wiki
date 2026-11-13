@@ -93,6 +93,7 @@ public static class CommandCatalog
         ["audit"] = CommandKind.Read,
         ["audit next"] = CommandKind.Read,
         ["audit record"] = CommandKind.Mutate,
+        ["audit reanchor"] = CommandKind.Mutate,
         ["audit list"] = CommandKind.Read,
 
         ["links check"] = CommandKind.Mutate,
