@@ -78,14 +78,20 @@ public sealed record PersonaDistillView(
 // `wiki persona propose`: the queued changeset (null when the pass proposed
 // no line changes and only recorded what it considered), the id of the
 // changeset it superseded, and the pages whose candidate flag it cleared.
+// AutoAccepted: persona auto-accept (WIKI_PERSONA_AUTO_ACCEPT, issue #51)
+// accepted the changeset at once; it is then `approved`, PERSONA.md holds it
+// and nothing is pending.
 public sealed record PersonaProposeResult(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] PersonaChangesetData? Changeset,
     string? Superseded,
     string[] Cleared,
-    string? PendingPath) : IHumanRenderable
+    string? PendingPath,
+    bool AutoAccepted = false) : IHumanRenderable
 {
     public string HumanSummary()
-        => (Changeset is null ? "nothing queued" : $"queued persona changeset {Changeset.Id}")
+        => (Changeset is null ? "nothing queued"
+               : AutoAccepted ? $"auto-accepted persona changeset {Changeset.Id} -> PERSONA.md"
+               : $"queued persona changeset {Changeset.Id}")
            + (Superseded is null ? "" : $", superseding {Superseded}")
            + $"; cleared {Cleared.Length} candidate flag(s)";
 }
