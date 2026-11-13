@@ -95,6 +95,59 @@ public sealed class PersonaDoc
     public IReadOnlyList<string> Section(PersonaSection s)
         => Entries.TryGetValue(s, out var lines) ? lines : Array.Empty<string>();
 
+    // Every structural rule PERSONA.md must satisfy (issue #31/#48), as
+    // findings grouped one per kind: issues merge on (kind, subject) and the
+    // subject is always the file, so two over-long entries become one
+    // finding listing both rather than two findings overwriting each other.
+    // The single source of the rules - `wiki lint` files these, and the
+    // persona changeset validation (a later ticket) must reject on any whose
+    // IssueKindX.Severity is "error".
+    public IReadOnlyList<(IssueKind Kind, string Detail)> Validate()
+    {
+        var byKind = new SortedDictionary<IssueKind, List<string>>();
+        void Add(IssueKind kind, string detail)
+        {
+            if (!byKind.TryGetValue(kind, out var list)) byKind[kind] = list = new List<string>();
+            list.Add(detail);
+        }
+
+        foreach (var (kind, detail) in Problems)
+            Add(kind, detail);
+
+        foreach (var (where, link) in FindLinks(Body))
+            Add(IssueKind.PersonaLink, $"{where}: '{link}'");
+
+        foreach (var s in PersonaSectionX.InOrder)
+        {
+            var lines = Section(s);
+            var heading = PersonaSectionX.Heading(s);
+
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var length = CharacterCount(lines[i]);
+                if (length > MaxEntryCharacters)
+                    Add(IssueKind.PersonaEntryLength,
+                        $"{heading} entry {i + 1} has {length} characters (max {MaxEntryCharacters})");
+            }
+
+            var cap = PersonaSectionX.LineCap(s);
+            if (cap is not null && lines.Count > cap.Value)
+                Add(IssueKind.PersonaSectionCap, $"{heading} has {lines.Count} lines (max {cap.Value})");
+        }
+
+        var toneWords = 0;
+        foreach (var line in Section(PersonaSection.ToneOfVoice))
+            toneWords += line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+        if (toneWords > ToneWordWarning)
+            Add(IssueKind.PersonaToneLength,
+                $"Tone of voice has {toneWords} words (warning past about {ToneWordWarning}); keep it small enough to hand to any assistant");
+
+        var result = new List<(IssueKind, string)>();
+        foreach (var (kind, details) in byKind)
+            result.Add((kind, string.Join("; ", details)));
+        return result;
+    }
+
     public static PersonaDoc Parse(string fileText)
     {
         var text = fileText.Replace("\r\n", "\n");
@@ -263,4 +316,47 @@ public sealed class PersonaDoc
     }
 
     private static string Truncate(string s) => s.Length <= 60 ? s : s[..57] + "...";
+
+    public const int MaxEntryCharacters = 200;
+    public const int ToneWordWarning = 600;
+
+    // Unicode scalar values, not UTF-16 code units: "200 characters" is a
+    // promise to a person, and an accented name or a CJK sentence must not
+    // hit the cap earlier than the same length in ASCII would.
+    private static int CharacterCount(string s)
+    {
+        var n = 0;
+        foreach (var _ in s.EnumerateRunes()) n++;
+        return n;
+    }
+
+    // "No links anywhere in the file" (issue #31): the persona must read as a
+    // standalone document, and knowledge pages never link to it (ADR 0001),
+    // so a link in either direction is a defect. Deliberately broader than
+    // Wikilinks/MarkdownLinks (which skip code fences and only match what
+    // their checkers can resolve): here every link shape counts - wikilinks,
+    // markdown links and images, <scheme:...> autolinks and bare URLs.
+    private static readonly System.Text.RegularExpressions.Regex LinkPattern = new(
+        @"\[\[[^\]]*\]\]" +                       // [[wikilink]]
+        @"|!?\[[^\]]*\]\([^)]*\)" +               // [text](url), ![alt](src)
+        @"|<[A-Za-z][A-Za-z0-9+.\-]*:[^>\s]*>" +  // <https://...>, <mailto:...>
+        @"|\b(?:https?|ftp)://\S+" +              // bare URL
+        @"|\bwww\.[^\s/]+\.\S+",                  // bare www. host
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    private static IEnumerable<(string Where, string Link)> FindLinks(string body)
+    {
+        var where = "before the first section";
+        foreach (var raw in body.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith("## ", StringComparison.Ordinal))
+                where = line[3..].Trim();
+
+            // One finding per link, but the same span is never reported twice
+            // (a bare URL inside a markdown link is part of that link).
+            foreach (System.Text.RegularExpressions.Match m in LinkPattern.Matches(line))
+                yield return (where, Truncate(m.Value));
+        }
+    }
 }
