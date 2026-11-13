@@ -169,6 +169,26 @@ public class PersonaStaleEvidenceTests
     }
 
     [Fact]
+    public void TheAcceptBehindPersonaMd_IsFoundAfterTheAuditLogRotatedIt()
+    {
+        using var tv = new TempVault(); Init(tv);
+        // Roll the live log over before every mutation (issue #45), so the
+        // accept line is in an archived, gzipped segment by the time lint runs.
+        File.AppendAllText(Path.Combine(tv.Path, "wiki.yaml"), "audit:\n  rotate_bytes: 1\n");
+        var (a, _, _, _) = Persona(tv);
+        tv.Run("lint", "--json");
+        Assert.True(File.Exists(Path.Combine(tv.Path, "audit", "audit.000002.log.gz")));
+        Assert.DoesNotContain("persona.accept", File.ReadAllText(Path.Combine(tv.Path, "audit", "audit.log")));
+
+        EditBody(tv, a.Path);
+        tv.Run("lint", "--json");
+
+        var issue = Assert.Single(StaleIssues(tv));
+        Assert.Equal("PERSONA.md#values: " + Craft, issue.GetProperty("subject").GetString());
+        Assert.Single(Data(tv.Run("persona", "distill", "--json")).GetProperty("recheck").EnumerateArray());
+    }
+
+    [Fact]
     public void DeletingAnEvidencePage_WarnsThatItIsGone()
     {
         using var tv = new TempVault(); Init(tv);

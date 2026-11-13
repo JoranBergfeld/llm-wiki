@@ -51,28 +51,18 @@ public static class PersonaEvidence
     // The evidence ledger recorded for the accept whose changeset id is
     // `auditEntry`, or null when there is none to read: no audit_entry, no
     // log, no such accept (a PERSONA.md written by hand or before this
-    // ticket), or its detail file missing. Reads the live segment only;
-    // rotation (#45) will need to look into older segments too.
+    // ticket), or its detail file missing. Searches newest first across the
+    // live segment and, once rotated away (#45), the archived segments, so
+    // an old accept costs a decompress only when it is not in the live log.
     public static IReadOnlyList<PersonaLedgerLine>? LoadLedger(Vault v, string? auditEntry)
     {
         if (string.IsNullOrWhiteSpace(auditEntry))
             return null;
 
         var log = AuditLog.For(v);
-        if (!File.Exists(log.LogPath))
-            return null;
-
-        string text;
-        // ReadWrite share: a mutating command (lint) reads while its own
-        // audit writer holds the file open.
-        using (var s = new FileStream(log.LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-        using (var r = new StreamReader(s, Utf8NoBom))
-            text = r.ReadToEnd();
-
-        var lines = text.Split('\n');
-        for (var i = lines.Length - 1; i >= 0; i--)
+        foreach (var raw in log.LinesNewestFirst())
         {
-            var parsed = AuditLine.Parse(lines[i]);
+            var parsed = AuditLine.Parse(raw);
             if (parsed is null || parsed.Segments.Length < 3 || parsed.Segments[1] != AcceptAction)
                 continue;
             if (Field(parsed, ChangesetField) != auditEntry)
