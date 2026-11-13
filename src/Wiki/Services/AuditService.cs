@@ -47,11 +47,16 @@ public sealed record AuditTarget(
 public sealed record FaithfulnessSummary(int Audited, int Supported, int Unsupported);
 
 // Bare `wiki audit` (issue #44): the audit-log chain and page faithfulness,
-// as two separate reports.
-public sealed record AuditReport(Wiki.Audit.ChainReport Chain, FaithfulnessSummary Faithfulness) : IHumanRenderable
+// as two separate reports. `Deep` (issue #45) is present only with --deep:
+// every archived segment and the live one, and the links between them.
+public sealed record AuditReport(
+    Wiki.Audit.ChainReport Chain,
+    FaithfulnessSummary Faithfulness,
+    Wiki.Audit.DeepChainReport? Deep = null) : IHumanRenderable
 {
     public string HumanSummary()
         => (Chain.Intact ? "audit log intact" : $"audit log BROKEN ({Chain.Problems.Length} problem(s))") +
+           (Deep is null ? "" : Deep.Intact ? $"; all {Deep.Segments.Length} segment(s) intact" : "; full chain BROKEN") +
            $"; {Faithfulness.Audited} page(s) audited for faithfulness";
 }
 
