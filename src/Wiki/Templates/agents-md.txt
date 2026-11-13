@@ -65,7 +65,7 @@ Never scan bodies to discover relevance.
 | Record ingest progress | `wiki ingest advance <source-id> --to <state> [--touched <ids>]` |
 | Check vault health | `wiki lint` |
 | Read who the owner is | `wiki persona read` |
-| Start a persona distillation pass | `wiki persona distill` |
+| Start a persona distillation pass | `wiki persona distill` (settle its `recheck` lines: re-confirm, reword or remove) |
 | Propose a persona changeset | `wiki persona propose --body-file <path>` (JSON; reviewed in `wiki review`, or accepted at once when `autoAccepted` comes back true) |
 | Score retrieval quality | `wiki eval [--k N]` (needs a human-owned eval.yaml) |
 | List/check external URLs | `wiki links check [--external]` |

@@ -136,8 +136,13 @@ public static class ReviewCommand
     // full evidence ledger of the new PERSONA.md, which lint reads back.
     private static int ApprovePersona(CommandContext ctx, Vault vault, string id)
     {
-        var (result, ledger) = new PersonaService().Accept(vault, id);
+        var (result, ledger, retired) = new PersonaService().Accept(vault, id);
         PersonaAudit.Accept(ctx, result, ledger, PersonaAudit.DecidedVia(ctx));
+        // Evidence no line rests on any more (issue #52): removing or
+        // rewording a line retires what supported it, on the record.
+        if (retired.Length > 0)
+            ctx.Audit.Field("retired", PersonaAudit.EvidenceRefs(retired));
+
         ctx.EmitOk(result);
         return 0;
     }

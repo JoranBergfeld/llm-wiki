@@ -45,3 +45,10 @@ _Avoid_: persona proposal, persona diff
 **Persona auto-accept**
 The opt-in mode (`WIKI_PERSONA_AUTO_ACCEPT`, off by default) in which a valid persona changeset is accepted as soon as it is proposed, skipping human review but not lint or the evidence rules. Its accepts are audited as `decidedVia=auto-accept`.
 _Avoid_: auto-approve, skip review
+
+**Stale evidence**
+Evidence that no longer holds for the persona line it supports: the page changed since the line was accepted, is gone, or no longer comes from a persona-source category.
+
+**Re-check proposal**
+The open lint warning for a persona line on stale evidence, which the next distillation pass settles by re-confirming, rewording or removing the line. It is not a changeset.
+_Avoid_: re-check changeset

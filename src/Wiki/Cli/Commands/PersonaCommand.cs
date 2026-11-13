@@ -87,7 +87,7 @@ public static class PersonaCommand
                 // again against PERSONA.md, exactly as `review approve` does.
                 // The step gets one audit line, the accept, carrying what the
                 // propose line would have said about supersession and flags.
-                var (decision, ledger) = service.Accept(vault, result.Changeset.Id);
+                var (decision, ledger, _) = service.Accept(vault, result.Changeset.Id);
                 result = result with { Changeset = decision.Changeset, PendingPath = null, AutoAccepted = true };
                 PersonaAudit.Accept(ctx, decision, ledger, PersonaAutoAccept.DecidedVia);
                 if (result.Superseded is not null)
@@ -157,9 +157,11 @@ internal static class PersonaAudit
     // Every evidence reference of the lines the changeset introduces, as
     // `<path>@<sha256>` (or `<path>#<anchor>@<sha256>` for owner-stated).
     public static string EvidenceList(PersonaChangesetData c)
+        => EvidenceRefs(c.Changes.SelectMany(x => x.Evidence ?? System.Array.Empty<PersonaEvidenceData>()));
+
+    public static string EvidenceRefs(System.Collections.Generic.IEnumerable<PersonaEvidenceData> evidence)
     {
-        var refs = c.Changes
-            .SelectMany(x => x.Evidence ?? System.Array.Empty<PersonaEvidenceData>())
+        var refs = evidence
             .Select(e => (e.Anchor is null ? e.Path : e.Path + "#" + e.Anchor) + "@" + e.Hash)
             .Distinct(System.StringComparer.Ordinal)
             .ToArray();
