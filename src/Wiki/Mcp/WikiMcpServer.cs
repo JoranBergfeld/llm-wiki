@@ -21,6 +21,7 @@ public static class WikiMcpServer
         var builder = services
             .AddMcpServer(options => options.ServerInfo = new Implementation { Name = "wiki", Version = Version() })
             .WithStreamServerTransport(streams.Input, streams.Output)
+            .WithToolArgumentGuard()
             .AddWikiTools(cli);
         streams.ConfigureForTests?.Invoke(builder, cli);
 

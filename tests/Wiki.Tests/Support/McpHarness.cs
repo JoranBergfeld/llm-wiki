@@ -35,14 +35,18 @@ public sealed class McpHarness : IAsyncDisposable
         Client = client;
     }
 
-    public static async Task<McpHarness> StartAsync(TempVault vault, string transport)
+    // `extraTools` registers test-only tools beside the catalogue, through the
+    // same CliAdapter (StdioStreams.ConfigureForTests), for adapter behaviour
+    // no shipped tool can trigger yet.
+    public static async Task<McpHarness> StartAsync(TempVault vault, string transport,
+        Action<Microsoft.Extensions.DependencyInjection.IMcpServerBuilder, CliAdapter>? extraTools = null)
     {
         if (transport != McpTransports.Stdio)
             throw new NotSupportedException($"transport '{transport}' is not wired into the harness yet");
 
         var c2s = new Pipe();
         var s2c = new Pipe();
-        var streams = new StdioStreams(c2s.Reader.AsStream(), s2c.Writer.AsStream());
+        var streams = new StdioStreams(c2s.Reader.AsStream(), s2c.Writer.AsStream()) { ConfigureForTests = extraTools };
 
         var serverStdout = new StringWriter();
         var server = Task.Run(() => App.Main(["mcp", "--vault", vault.Path], serverStdout, TextReader.Null, streams));
@@ -87,7 +91,9 @@ public static class McpTransports
     public const string Stdio = "stdio";
 
     // Add "http" here once the streamable HTTP transport lands (TestServer).
-    public static TheoryData<string> All => new() { Stdio };
+    public static readonly string[] Names = [Stdio];
+
+    public static TheoryData<string> All => new(Names);
 }
 
 // Reads the tool result's structuredContent as the CLI envelope (+ exitCode,
