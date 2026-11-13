@@ -19,9 +19,10 @@ public enum CommandKind
     // Hosts other invocations rather than touching the vault itself:
     // `wiki mcp` runs for the server's whole lifetime, and each tool call it
     // serves is its own App.Main invocation that passes the read or mutation
-    // boundary per CLI step. Runs inside NO boundary - a lock or audit step
-    // wrapped around the host would be held for the server's lifetime and
-    // block (or double-record) every step it hosts.
+    // boundary per CLI step. Runs inside NO boundary - the lock (even the
+    // shared read lock) or an audit step wrapped around the host would be
+    // held for the server's lifetime and block, or double-record, every step
+    // it hosts.
     Host,
 }
 
@@ -89,11 +90,13 @@ public static class CommandCatalog
 
         ["eval"] = CommandKind.Read,
 
+        ["audit"] = CommandKind.Read,
         ["audit next"] = CommandKind.Read,
         ["audit record"] = CommandKind.Mutate,
         ["audit list"] = CommandKind.Read,
 
         ["links check"] = CommandKind.Mutate,
+        ["persona read"] = CommandKind.Read,
 
         ["mcp"] = CommandKind.Host,
     };

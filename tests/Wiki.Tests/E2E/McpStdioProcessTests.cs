@@ -38,7 +38,7 @@ public class McpStdioProcessTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await using var client = await McpClient.CreateAsync(new StdioClientTransport(options), cancellationToken: timeout.Token);
 
-        Assert.Equal("wiki", client.ServerInfo.Name);
+        Assert.Equal("wiki", client.ServerInfo?.Name);
 
         var tools = (await client.ListToolsAsync(cancellationToken: timeout.Token)).Select(t => t.Name).ToArray();
         Assert.Contains("search_wiki", tools);

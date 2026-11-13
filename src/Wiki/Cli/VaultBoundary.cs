@@ -25,17 +25,18 @@ public delegate int BoundaryStep(CommandInvocation invocation, Func<int> next);
 // inside exactly one of them, chosen by its CommandCatalog classification;
 // CommandBinding.Bind is the only caller, so no command can bypass it.
 //
-// Both are empty today: this is the prefactor, and an empty pipeline calls
-// the command directly, so behaviour is unchanged. The cross-cutting
-// concerns that follow plug in as steps here, in one place, instead of
-// command by command:
-//   - vault lock (#46):       a MutationSteps entry that acquires before
-//                             next() and releases in a finally.
-//   - audit log (#44):        a MutationSteps entry that appends after next()
-//                             returns (Name says what ran).
-//   - write recovery (#47):   a MutationSteps entry, outermost, that replays
-//                             or rolls back an interrupted write before
-//                             next().
+// The cross-cutting concerns plug in as steps here, in one place, instead of
+// command by command. Order of MutationSteps, outermost first:
+//   1. vault lock (#46):      VaultLock.Step, outermost in BOTH pipelines:
+//                             shared for reads, exclusive for mutations. It
+//                             wraps the audit step, so the audit tail read,
+//                             the command and the audit append (and
+//                             rotation, #45) happen under one hold.
+//   2. write recovery (#47):  replays or rolls back an interrupted write
+//                             before next(); needs the lock held, so it goes
+//                             between the lock and the audit step.
+//   3. audit log (#44):       AuditStep - opens the log before next() (fail
+//                             closed), appends one chained line after it.
 // Note `init` is Mutate but runs before a vault exists: a step that needs
 // one must tolerate ctx.ResolveVault() failing for that command.
 //
@@ -44,10 +45,14 @@ public delegate int BoundaryStep(CommandInvocation invocation, Func<int> next);
 // derive everything (vault path, clock) from the invocation.
 public static class VaultBoundary
 {
-    // Ordered outermost first.
-    private static readonly BoundaryStep[] MutationSteps = [];
-    private static readonly BoundaryStep[] ReadSteps = [];
+    // Ordered outermost first. The vault lock stays outermost: every later
+    // step (write recovery #47, the audit append and rotation #44/#45) must
+    // run while it is held, so new steps go AFTER it. Recovery (#47) slots
+    // in between the lock and the audit step.
+    private static readonly BoundaryStep[] MutationSteps = [VaultLock.Step, Audit.AuditStep.Run];
+    private static readonly BoundaryStep[] ReadSteps = [VaultLock.Step];
     // Host commands (`wiki mcp`) run inside no boundary: see CommandKind.Host.
+    // Never add a step here; the steps it hosts each take their own.
     private static readonly BoundaryStep[] HostSteps = [];
 
     public static int Run(CommandInvocation invocation, Func<int> command)
@@ -56,7 +61,6 @@ public static class VaultBoundary
         {
             CommandKind.Mutate => MutationSteps,
             CommandKind.Read => ReadSteps,
-            // `wiki mcp`: the steps it hosts each pass their own boundary.
             CommandKind.Host => HostSteps,
             _ => throw new InvalidOperationException($"no boundary for command kind {invocation.Kind}"),
         };

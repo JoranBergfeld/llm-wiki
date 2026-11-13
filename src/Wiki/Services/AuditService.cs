@@ -44,6 +44,17 @@ public sealed record AuditTarget(
         => !HasTarget ? $"Nothing to audit: {Reason}" : $"Audit [[{Slug}]] against {Sources.Length} cited source(s) — {Why}";
 }
 
+public sealed record FaithfulnessSummary(int Audited, int Supported, int Unsupported);
+
+// Bare `wiki audit` (issue #44): the audit-log chain and page faithfulness,
+// as two separate reports.
+public sealed record AuditReport(Wiki.Audit.ChainReport Chain, FaithfulnessSummary Faithfulness) : IHumanRenderable
+{
+    public string HumanSummary()
+        => (Chain.Intact ? "audit log intact" : $"audit log BROKEN ({Chain.Problems.Length} problem(s))") +
+           $"; {Faithfulness.Audited} page(s) audited for faithfulness";
+}
+
 // `wiki audit record` result.
 public sealed record AuditRecordResult(
     string PageId,
@@ -230,6 +241,17 @@ public sealed class AuditService
         LogFile.Append(v, utcIso, "audit", slug, $"id={pageId} verdict={verdict}");
 
         return new AuditRecordResult(record.PageId, record.Slug, record.Verdict, record.Note, record.AuditedAt, record.Audits, issueFiled);
+    }
+
+    // The faithfulness half of bare `wiki audit`: counts of the last verdict
+    // per audited page.
+    public FaithfulnessSummary Summary(Vault v)
+    {
+        var audits = new Audits();
+        audits.Load(v);
+        var all = audits.List(null);
+        var supported = all.Count(a => a.Verdict == "supported");
+        return new FaithfulnessSummary(all.Count, supported, all.Count - supported);
     }
 
     public IReadOnlyList<AuditRecord> List(Vault v, string? verdict)

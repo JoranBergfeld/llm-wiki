@@ -145,6 +145,54 @@ public class ErrorContractTests
         Assert.Equal("not-found", result.Structured().GetProperty("errors")[0].GetProperty("code").GetString());
     }
 
+    // Issue #46: a busy vault (exit 5, vault-busy) means "not done, retry",
+    // so unlike exit 3 it is an error result. A real CLI writer is parked
+    // mid-step holding the exclusive lock; the tool's read step waits out the
+    // default lock timeout (the adapter passes none) and fails.
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task Exit5_VaultBusy_IsAnErrorResult(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+        var held = new HeldStdin("Body.");
+        var writer = Task.Run(() => tv.RunWith(held, new StringWriter(),
+            "page", "upsert", "--type", "entity", "--title", "Contoso", "--summary", "s", "--stdin", "--json"));
+        try
+        {
+            Assert.True(held.WaitUntilEntered(TimeSpan.FromSeconds(30)));
+
+            var result = await mcp.CallAsync("read_page", new Dictionary<string, object?> { ["page"] = "contoso" });
+
+            Assert.True(result.IsError);
+            Assert.Equal(5, result.Structured().GetProperty("exitCode").GetInt32());
+            Assert.StartsWith("vault-busy: ", result.Text());
+        }
+        finally
+        {
+            held.Release();
+            await writer;
+        }
+    }
+
+    // Issue #44 seam: every CLI step a stdio tool runs is recorded as
+    // arriving over stdio, passed as a typed origin (no env var, no argv).
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task MutationsThroughTheServer_AreAuditedWithTheTransport(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        var source = AddSource(tv);
+        await using var mcp = await McpHarness.StartAsync(tv, transport, (b, cli) => b.WithTools(new ProbeTools(cli)));
+
+        var result = await mcp.CallAsync("probe_retract", new Dictionary<string, object?> { ["source"] = source });
+
+        Assert.False(result.IsError);
+        var last = File.ReadAllLines(Path.Combine(tv.Path, "audit", "audit.log"))[^1];
+        Assert.Contains($" | {transport switch { McpTransports.Stdio => "via=stdio", _ => "via=" + transport }} | ", last);
+        Assert.Contains(" | source.retract | ", last);
+    }
+
     // Test-only tools, built through the real adapter and registered with the
     // generic WithTools<T> like the catalogue's own.
     [McpServerToolType]

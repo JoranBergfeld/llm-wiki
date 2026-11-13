@@ -16,12 +16,12 @@ namespace Wiki.Mcp;
 // call as --vault=<abs>, so neither WIKI_VAULT nor the working directory
 // decides anything after startup. The adapter never sets environment
 // variables or changes directory.
-public sealed class CliAdapter(string vaultRoot, CommandOrigin origin)
+public sealed class CliAdapter(string vaultRoot, InvocationOrigin origin)
 {
     public string VaultRoot { get; } = vaultRoot;
 
     // How this server's steps arrived; the audit log records it per step.
-    public CommandOrigin Origin { get; } = origin;
+    public InvocationOrigin Origin { get; } = origin;
 
     // Start an intent: a sequence of steps that stops at the first non-zero
     // exit. Cancellation is checked between steps, never during one.

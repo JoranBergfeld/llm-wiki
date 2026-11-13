@@ -84,23 +84,25 @@ public static class App
         => (new StreamWriter(System.Console.OpenStandardOutput(), Utf8NoBom) { AutoFlush = false },
             new StreamReader(System.Console.OpenStandardInput(), Utf8NoBom));
 
-    // The in-process entry point: the test suite's CLI seam, and (with an
-    // origin) the MCP adapter's, one call per CLI step.
     public static int Main(string[] args, TextWriter stdout, TextReader stdin)
-        => Run(args, stdout, stdin, CommandOrigin.Cli, stdio: null);
+        => Main(args, stdout, stdin, InvocationOrigin.Cli);
 
-    // One CLI step of an MCP tool call. `origin` is how the step arrived
-    // (transport, token); the audit log records it. Passed as a value, never
-    // via the environment, so concurrent calls cannot see each other's.
-    public static int Main(string[] args, TextWriter stdout, TextReader stdin, CommandOrigin origin)
+    // The overload the MCP adapter calls (#37): identical to the one above,
+    // plus how the call arrived. The origin is recorded on the audit line of
+    // any mutation this invocation makes (issue #44). It is a typed parameter
+    // on purpose: nothing in argv or the environment can set it, so a remote
+    // client cannot pass itself off as a local CLI run.
+    public static int Main(string[] args, TextWriter stdout, TextReader stdin, InvocationOrigin origin)
         => Run(args, stdout, stdin, origin, stdio: null);
 
     // With the raw standard streams, so `wiki mcp` can serve JSON-RPC over
-    // them. Only the process entry point above and the MCP test seam call this.
+    // them (issue #54). Only the process entry point above and the MCP test
+    // seam call this; every other caller has no streams, so a nested
+    // `wiki mcp` cannot start.
     public static int Main(string[] args, TextWriter stdout, TextReader stdin, StdioStreams stdio)
-        => Run(args, stdout, stdin, CommandOrigin.Cli, stdio);
+        => Run(args, stdout, stdin, InvocationOrigin.Cli, stdio);
 
-    private static int Run(string[] args, TextWriter stdout, TextReader stdin, CommandOrigin origin, StdioStreams? stdio)
+    private static int Run(string[] args, TextWriter stdout, TextReader stdin, InvocationOrigin origin, StdioStreams? stdio)
     {
         var (root, jsonOption) = BuildRootCommand(stdout, stdin, origin, stdio);
 
@@ -162,6 +164,11 @@ public static class App
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = scex.Code, Message = scex.Message, Path = scex.Path });
             return 3;
         }
+        catch (VaultBusyException vbex)
+        {
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = VaultBusyException.Code, Message = vbex.Message, Path = vbex.Path });
+            return VaultBusyException.ExitCode;
+        }
         catch (Exception ex)
         {
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = "io-error", Message = ex.Message });
@@ -172,7 +179,7 @@ public static class App
     // The command tree App.Main parses against, with null streams. For
     // walking the tree (CommandClassificationTests enumerate it to prove every
     // command is classified read or mutate); never for invoking.
-    public static RootCommand CommandTree() => BuildRootCommand(TextWriter.Null, TextReader.Null, CommandOrigin.Cli, stdio: null).Root;
+    public static RootCommand CommandTree() => BuildRootCommand(TextWriter.Null, TextReader.Null, InvocationOrigin.Cli, stdio: null).Root;
 
     // argv fallback for the parse-error path. Matches the bare flag and the
     // `--json=true` / `--json:true` forms System.CommandLine also accepts.
@@ -194,7 +201,7 @@ public static class App
     // Extension point for later tasks: add more `root.Add(XCommand.Build(...))`
     // calls here as command groups land. Nothing else in this method needs to
     // change.
-    private static (RootCommand Root, Option<bool> JsonOption) BuildRootCommand(TextWriter stdout, TextReader stdin, CommandOrigin origin, StdioStreams? stdio)
+    private static (RootCommand Root, Option<bool> JsonOption) BuildRootCommand(TextWriter stdout, TextReader stdin, InvocationOrigin origin, StdioStreams? stdio)
     {
         var vaultOption = new Option<string?>("--vault")
         {
@@ -207,10 +214,19 @@ public static class App
             Description = "Emit a machine-readable JSON envelope instead of human-readable output",
         };
 
+        // Read by name in VaultLock.Step rather than threaded through every
+        // command's Build signature.
+        var lockTimeoutOption = new Option<string?>(VaultLock.TimeoutOption)
+        {
+            Recursive = true,
+            Description = $"Seconds to wait for a busy vault before failing with vault-busy (overrides {VaultLock.TimeoutEnv}; default 10)",
+        };
+
         var root = new WikiRootCommand("wiki - a CLI-maintained, LLM-legible knowledge base", origin)
         {
             vaultOption,
             jsonOption,
+            lockTimeoutOption,
         };
 
         root.Add(InitCommand.Build(vaultOption, jsonOption, stdout, stdin));
@@ -228,6 +244,7 @@ public static class App
         root.Add(EvalCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(AuditCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(LinksCommand.Build(vaultOption, jsonOption, stdout, stdin));
+        root.Add(PersonaCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(McpCommand.Build(vaultOption, jsonOption, stdout, stdin, stdio));
 
         return (root, jsonOption);

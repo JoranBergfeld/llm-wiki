@@ -45,6 +45,11 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(AuditSource[]))]
 [JsonSerializable(typeof(AuditTarget))]
 [JsonSerializable(typeof(AuditRecordResult))]
+[JsonSerializable(typeof(AuditReport))]
+[JsonSerializable(typeof(FaithfulnessSummary))]
+[JsonSerializable(typeof(Wiki.Audit.ChainReport))]
+[JsonSerializable(typeof(Wiki.Audit.ChainProblem))]
+[JsonSerializable(typeof(Wiki.Audit.ChainProblem[]))]
 [JsonSerializable(typeof(AuditRecordData))]
 [JsonSerializable(typeof(AuditRecordData[]))]
 [JsonSerializable(typeof(ExternalLinkResult))]
@@ -61,5 +66,6 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(CategoryProposalView[]))]
 [JsonSerializable(typeof(CategoryData))]
 [JsonSerializable(typeof(CategoryData[]))]
+[JsonSerializable(typeof(PersonaView))]
 [JsonSerializable(typeof(string[]))]
 public partial class WikiJsonContext : JsonSerializerContext { }

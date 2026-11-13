@@ -288,7 +288,13 @@ Add `--json` to vault operations for the agent-facing envelope; without it you g
 Spectre-rendered human output. Exit codes are identical either way:
 `0` success · `1` your input was rejected · `2` environment/IO · `3` state
 conflict (idempotent no-op) · `4` a measurement came in under a threshold you
-asked for (`wiki eval --fail-under` only).
+asked for (`wiki eval --fail-under` only) · `5` the vault is busy (`vault-busy`):
+another `wiki` command holds it, nothing was changed, retry.
+
+Commands take a vault-wide lock (readers share it, writers hold it alone), so
+an MCP server and a manual run can work on one vault at once. A command waits
+for a busy vault up to `--lock-timeout <seconds>` (or `WIKI_LOCK_TIMEOUT`;
+default 10) before failing with exit 5.
 
 Then open the vault in Obsidian and look at the graph.
 
@@ -364,6 +370,7 @@ recurring lint issues; you approve or reject. The agent never edits it directly.
 | Quality | `eval` · `audit next\|record\|list` |
 | Review | `review list\|approve\|reject` |
 | Reflect | `schema propose\|proposals\|approve\|reject` |
+| Persona | `persona read` |
 
 `wiki <group> --help` documents every flag.
 

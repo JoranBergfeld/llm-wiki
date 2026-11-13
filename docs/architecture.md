@@ -110,11 +110,12 @@ flowchart TD
 
 | Namespace | Owns |
 |---|---|
-| `Wiki.Cli` | The `System.CommandLine` tree, one `Commands/*.cs` per command group, and the two output paths (`CommandContext.EmitOk`, `OutputMode.EmitFailure`), and the read/mutation boundary: `CommandCatalog` classifies every command as `Read` or `Mutate`, and `CommandBinding.Bind` runs each handler inside `VaultBoundary` accordingly |
+| `Wiki.Cli` | The `System.CommandLine` tree, one `Commands/*.cs` per command group, and the two output paths (`CommandContext.EmitOk`, `OutputMode.EmitFailure`), and the read/mutation boundary: `CommandCatalog` classifies every command as `Read` or `Mutate`, and `CommandBinding.Bind` runs each handler inside `VaultBoundary` accordingly; `VaultLock` is the outermost step of both boundaries (shared for reads, exclusive for mutations). `InvocationOrigin` (how the call arrived) rides on `WikiRootCommand` into `CommandContext.Origin` |
 | `Wiki.Mcp` | `wiki mcp`: the MCP server bound to one vault, its intent tools (`Tools/*`, one class per tool, registered in `McpToolCatalog`), and the adapter every tool goes through. A tool runs CLI steps via `App.Main(argv, stdout, stdin, origin)` and reads the `--json` envelope back, never a service; `IntentRun` maps exit codes onto MCP tool results and `ToolArgumentGuard` turns schema-invalid arguments into protocol errors. `wiki mcp` itself is `CommandKind.Host`: it runs inside no boundary, and every step it hosts passes its own |
 | `Wiki.Services` | One class per command group: preconditions, orchestration, and the order of validation-then-write. This is where the spec's rules live |
 | `Wiki.Core` | The vault's vocabulary — path model, config, frontmatter parse/serialize, slugs, ULIDs, wikilinks, atomic writes |
 | `Wiki.State` | The `.wiki/` JSON caches. Each store is a `Load` / mutate / `Save` object with deterministic, sorted serialization |
+| `Wiki.Audit` | The hash-chained audit log (spec amendment AE): `AuditStep` on the mutation boundary, `AuditDraft` (what a command adds to its line via `ctx.Audit`), `AuditLine` (format and hashing), `AuditLog` (location, append, live-segment verification) |
 | `Wiki.Docs` | The two CLI-generated markdown files, `index.md` (fully regenerated) and `log.md` (appended) |
 | `Wiki.Json` | The envelope type and the source-generated `JsonSerializerContext` every DTO is registered in |
 | `Wiki.Templates` | Embedded `wiki.yaml` and `AGENTS.md` scaffolds for `wiki init` |

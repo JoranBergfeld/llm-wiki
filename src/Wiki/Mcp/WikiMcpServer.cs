@@ -15,7 +15,7 @@ public static class WikiMcpServer
 {
     public static int RunStdio(string vaultRoot, StdioStreams streams)
     {
-        var cli = new CliAdapter(vaultRoot, CommandOrigin.Stdio);
+        var cli = new CliAdapter(vaultRoot, new InvocationOrigin(Transport.Stdio, TokenUsed: false));
 
         var services = new ServiceCollection();
         var builder = services
