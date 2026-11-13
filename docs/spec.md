@@ -773,3 +773,29 @@ Same standing as Appendices B and C: these override the original text where they
   steps, and the intent then returns the failure shape (`errors[0].code:
   cancelled`, `completedSteps`, no `exitCode`). Every step's audit line
   records the server's transport (`via=stdio`). `init` is not exposed.
+
+## Appendix O — MCP review tools amendment (2026-11-13)
+
+- **AM. Propose and decide over MCP; every decision records who decided.**
+  (issue #58, decision #30 "Catalogue" and "Exposure") `propose_change`
+  (`kind`: `category` → `category propose`, needs `category` and
+  `description`; `schema` → `schema propose`, needs `section` and `text`,
+  handed over on stdin; `persona` → `persona propose`, needs `changeset`,
+  the JSON of amendment AH, on stdin). Data is keyed by kind
+  (`data.category`, `data.schema`, `data.persona`). `review_queue` lists
+  every pending item in three read steps: `review list` (`data.review`:
+  pending pages and the open persona changeset, each row with its `kind`),
+  `category proposals --status open` (`data.categories`) and `schema
+  proposals --status open` (`data.schema`). `decide` (`kind`: `page` |
+  `persona` → `review approve|reject`; `category` → `category
+  approve|reject`; `schema` → `schema approve|reject`; `decision`:
+  `approve` | `reject`; `id`; `reason`, passed as `--note` on reject and
+  ignored on approve) returns the command's data as `data.decision`.
+  Rejecting a persona changeset without a reason is the CLI's
+  `reason-required` (exit 1); an item already decided is exit 3, a success
+  over MCP. **`decidedVia`.** Every approve and reject — `review`,
+  `category` and `schema`, not only the persona changeset of AH — now adds
+  `decidedVia=cli|mcp` to its audit line, next to `via=` (the transport and
+  token flag of AE). It is derived from the invocation origin the host
+  passes into `App.Main`, never from a tool argument, so a client cannot
+  claim to be the CLI; persona auto-accept writes `decidedVia=auto-accept`.
