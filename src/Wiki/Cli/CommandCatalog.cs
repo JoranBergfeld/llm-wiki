@@ -15,6 +15,15 @@ public enum CommandKind
     // `links check` is Mutate because `--external` files issues). Runs
     // inside the mutation boundary.
     Mutate,
+
+    // Hosts other invocations rather than touching the vault itself:
+    // `wiki mcp` runs for the server's whole lifetime, and each tool call it
+    // serves is its own App.Main invocation that passes the read or mutation
+    // boundary per CLI step. Runs inside NO boundary - the lock (even the
+    // shared read lock) or an audit step wrapped around the host would be
+    // held for the server's lifetime and block, or double-record, every step
+    // it hosts.
+    Host,
 }
 
 // The one place every command is classified (issue #42). Keyed by the full
@@ -88,6 +97,8 @@ public static class CommandCatalog
 
         ["links check"] = CommandKind.Mutate,
         ["persona read"] = CommandKind.Read,
+
+        ["mcp"] = CommandKind.Host,
     };
 
     // null means unclassified: a bug, which the tests catch before it ships

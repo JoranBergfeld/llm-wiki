@@ -294,6 +294,9 @@ wiki schema reject <proposal-id> [--note "…"]
 wiki persona read                               PERSONA.md as four line arrays (values, principles, toneOfVoice,
                                                 boundaries) plus its frontmatter. No PERSONA.md is an empty
                                                 persona (exists: false), not an error. Never writes.
+
+# MCP server (Appendix I)
+wiki mcp                                        Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout)
 ```
 
 ---
@@ -661,3 +664,26 @@ Same standing as Appendices B and C: these override the original text where they
 ## Appendix H — Audit log amendment (2026-11-13)
 
 - **AE. Every mutation appends one line to a hash-chained audit log.** (issue #44; design in #35, transport field in #34) `.wiki/ledger.json` is a rebuildable snapshot and `wiki/log.md` has no integrity and skips five mutations (`schema propose`, `category add`, `reindex`, `init`, lint's drift rewrites), so neither can say verifiably what changed. Every command classified `Mutate` (issue #42) now appends exactly one line, through one step on the mutation boundary rather than per command; reads append none. A line is `<utc> | <action> | <subject> | key=value… | exit=<n> | via=<cli|stdio|http|http+token> | prev=<sha256> | hash=<sha256>`, where `hash` is the SHA-256 of everything before ` | hash=` and `prev` is the previous line's hash (64 zeros on the first). `|`, `%`, line breaks and a leading `@` in values are percent-escaped. A value of the form `@<sha256>` references `details/<sha256>.txt`; values over 200 characters move there automatically, so the chain covers details without bloating lines. **Fail closed:** the log is opened and its last line checked before the command runs; if that fails the command does not run (exit 2, or 3 `audit-chain-broken` for an unsealed or altered last line) and the vault is byte-identical. A command that throws `ValidationException`/`StateConflictException` wrote nothing and gets no line; any other exception gets a line with `error=` instead of `exit=`, because it may have written part of a change. **Location:** `audit.path` in `wiki.yaml`, default `audit/audit.log`, rejected inside `.wiki/`, which `reindex` regenerates. **Origin:** `via` records the transport and whether a token was used, never a client identity (#34). It is passed into `App.Main` as a typed value by the MCP adapter, never through argv or the environment, so a remote caller cannot claim to be the CLI. **`wiki audit`** (bare) reports the live segment's chain (each line sealed, chained, and its detail files matching) separately from the faithfulness counts; a broken chain is reported with exit 0 and `chain.intact: false`. Blocking writes after a break, re-anchoring, rotation and `--deep` are issue #45. `wiki/log.md` and the ledger are unchanged.
+
+## Appendix I — MCP amendments (2026-11-13)
+
+- **AF. `wiki mcp` over stdio.** (issue #54, spec issue #41) §2 kept the CLI
+  the only interface. `wiki mcp` now serves the vault to MCP clients over
+  stdio from the same binary. The vault is resolved once at startup
+  (`--vault`, `WIKI_VAULT` or the working directory) to an absolute path,
+  and the server refuses to start (`no-vault`, exit 1) when it cannot be.
+  Every tool is a thin sequence of CLI steps run in-process with argv built
+  only from typed arguments (option values as `--opt=value`, positional
+  values after `--`) plus the bound `--vault` and `--json`, so validation,
+  the vault lock, the audit log and logging apply per step exactly as on the
+  command line. Tool results: all steps exit 0 → `isError: false`,
+  structured content `{v, ok, data:{<step key>: <data>}, errors, exitCode:0,
+  completedSteps}`; a step exits non-zero → the sequence stops and the
+  structured content is that step's envelope unchanged plus `exitCode` and
+  `completedSteps`, with `isError: true` for every exit except 3 (state
+  conflict, idempotent no-op; exit 5 `vault-busy` is an error). Unknown tools and arguments that fail the
+  tool's input schema (missing, wrongly typed or undeclared) are JSON-RPC
+  `InvalidParams` errors. First tools: `search_wiki` (`search`, or `index
+  show` without a query) and `read_page` (`page show`, `page backlinks` with
+  `backlinks: true`). The `dotnet tool` channel now needs the ASP.NET Core
+  runtime.
