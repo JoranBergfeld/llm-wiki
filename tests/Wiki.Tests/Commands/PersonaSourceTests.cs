@@ -104,6 +104,114 @@ public class PersonaSourceTests
     }
 
     [Fact]
+    public void PageFromPersonaSourceCategory_CarriesCandidateFlag()
+    {
+        using var tv = new TempVault();
+        InitWithPersonaSourceLine(tv, "persona-source: true");
+        var note = AddSource(tv, "article", "my-note");
+
+        var r = Upsert(tv, "My note", note);
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.True(r.Envelope.Ok);
+        Assert.Contains("\npersona: candidate\n", PageText(tv, r));
+    }
+
+    [Fact]
+    public void PageFromOtherCategory_NeverCarriesFlag()
+    {
+        using var tv = new TempVault();
+        InitWithPersonaSourceLine(tv, "persona-source: true");
+        var transcript = AddSource(tv, "meeting-transcript", "call");
+
+        var r = Upsert(tv, "Call", transcript);
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.DoesNotContain("persona:", PageText(tv, r));
+    }
+
+    [Fact]
+    public void PageFromCategoryMarkedFalse_NeverCarriesFlag()
+    {
+        using var tv = new TempVault();
+        InitWithPersonaSourceLine(tv, "persona-source: false");
+        var note = AddSource(tv, "article", "my-note");
+
+        var r = Upsert(tv, "My note", note);
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.DoesNotContain("persona:", PageText(tv, r));
+    }
+
+    [Fact]
+    public void PageWithoutSources_NeverCarriesFlag()
+    {
+        using var tv = new TempVault();
+        InitWithPersonaSourceLine(tv, "persona-source: true");
+
+        var r = tv.RunStdin("Body", "page", "upsert", "--type", "concept", "--title", "Idea",
+            "--summary", "An idea", "--stdin", "--json");
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.DoesNotContain("persona:", PageText(tv, r));
+    }
+
+    [Fact]
+    public void UpdateThatDropsThePersonaSource_ClearsFlag_AndUpdateThatAddsIt_SetsIt()
+    {
+        using var tv = new TempVault();
+        InitWithPersonaSourceLine(tv, "persona-source: true");
+        var note = AddSource(tv, "article", "my-note");
+        var transcript = AddSource(tv, "meeting-transcript", "call");
+
+        var created = Upsert(tv, "Mixed", transcript);
+        var id = Data(created).GetProperty("id").GetString()!;
+        Assert.DoesNotContain("persona:", PageText(tv, created));
+
+        var withNote = Upsert(tv, "Mixed", transcript + "," + note, id);
+        Assert.Equal(0, withNote.ExitCode);
+        Assert.Contains("\npersona: candidate\n", PageText(tv, withNote));
+
+        var withoutNote = Upsert(tv, "Mixed", transcript, id);
+        Assert.Equal(0, withoutNote.ExitCode);
+        Assert.DoesNotContain("persona:", PageText(tv, withoutNote));
+    }
+
+    [Fact]
+    public void CandidatePage_PassesLint_AndSurvivesAStatusChange()
+    {
+        using var tv = new TempVault();
+        InitWithPersonaSourceLine(tv, "persona-source: true");
+        var note = AddSource(tv, "article", "my-note");
+        var created = Upsert(tv, "My note", note);
+        var id = Data(created).GetProperty("id").GetString()!;
+
+        var lint = tv.Run("lint", "--json");
+        Assert.Equal(0, lint.ExitCode);
+        Assert.True(lint.Envelope.Ok);
+
+        var status = tv.Run("page", "set-status", id, "needs-review", "--json");
+        Assert.Equal(0, status.ExitCode);
+        Assert.Contains("\npersona: candidate\n", PageText(tv, created));
+    }
+
+    [Fact]
+    public void HandEditedPersonaValueOtherThanCandidate_IsRejectedByTheSchema()
+    {
+        using var tv = new TempVault();
+        InitWithPersonaSourceLine(tv, "persona-source: true");
+        var note = AddSource(tv, "article", "my-note");
+        var created = Upsert(tv, "My note", note);
+        var path = Path.Combine(tv.Path, Data(created).GetProperty("path").GetString()!);
+        File.WriteAllText(path, File.ReadAllText(path).Replace("persona: candidate", "persona: value"));
+
+        var lint = tv.Run("lint", "--json");
+
+        Assert.Equal(1, lint.ExitCode);
+        Assert.Contains(lint.Envelope.Errors, e => e.Code == "frontmatter-schema");
+    }
+
+    [Fact]
     public void CategoryAdd_AfterAPersonaSourceCategory_KeepsTheFlagOnItsOwnCategory()
     {
         using var tv = new TempVault();
