@@ -70,6 +70,7 @@ The same binary serves multiple independent vaults (e.g., one for work, one for 
 my-vault/                        # also the Obsidian vault root
 ├── wiki.yaml                    # vault config (human-owned)
 ├── AGENTS.md                    # agent instructions: conventions + playbooks (§13)
+├── PERSONA.md                   # optional: the owner's persona, written only by the CLI (amendment AB)
 ├── raw/                         # immutable sources
 │   ├── 01J9ZKM3....md           # source files, named by source ID
 │   └── assets/                  # attachments (Obsidian attachment folder)
@@ -275,6 +276,11 @@ wiki schema propose --section "<heading>" --stdin Full-section replacement (amen
 wiki schema proposals
 wiki schema approve <proposal-id>               Human applies the diff; logs amendment
 wiki schema reject <proposal-id> [--note "…"]
+
+# Persona (amendment AB)
+wiki persona read                               PERSONA.md as four line arrays (values, principles, toneOfVoice,
+                                                boundaries) plus its frontmatter. No PERSONA.md is an empty
+                                                persona (exists: false), not an error. Never writes.
 ```
 
 ---
@@ -342,6 +348,14 @@ The canonical agent flow (encoded in AGENTS.md, enforced by ledger preconditions
 | `needs-review-backlog` | Pages in `needs-review` older than 14 days |
 | `pending-backlog` | Pages in `pending-review` older than 14 days |
 | `missing-tags` | Active, source-backed summary/entity/concept page has an empty tag set |
+| `persona-frontmatter` | **Error.** PERSONA.md frontmatter missing, or not exactly `schema_version` (`1`), `last_distilled` (yyyy-MM-dd) and a non-empty `audit_entry` (amendment AB) |
+| `persona-sections` | **Error.** PERSONA.md sections missing, duplicated, unknown, out of order, or content outside them |
+| `persona-link` | **Error.** Any link in PERSONA.md: wikilink, markdown link or image, autolink, bare URL |
+| `persona-entry-length` | **Error.** A persona entry over 200 characters |
+| `persona-section-cap` | **Error.** Values over 10 lines, Principles over 15, Boundaries over 10 |
+| `persona-tone-length` | Warning. Tone of voice past 600 words |
+
+Every kind above except the `persona-*` errors reports as severity `warning` in the lint report's per-kind counts; lint exits 0 regardless (amendment AB).
 
 Lint never edits page content. `--fix-links` repairs only mechanical link targets after renames. Everything else is filed as an issue for the agent/human.
 
@@ -582,3 +596,9 @@ Same standing as Appendices B and C: these override the original text where they
   outside a vault with `WIKI_VAULT` absent or invalid, and with invalid vault
   configuration/state; output, exit status, directory layout, and existing
   vault/queue bytes are checked without requiring an envelope.
+
+## Appendix F — Persona amendments (2026-11-13)
+
+Same standing as the earlier appendices: these override the original text where they conflict.
+
+- **AB. `PERSONA.md`: a fixed four-section schema, read by `wiki persona read`, checked by lint.** (issue #48; decisions in issues #31, #33 and ADR 0001) The owner's persona is one small file at the vault root, outside `wiki/`, so it is never a knowledge page, never indexed and never searched. **Format.** A frontmatter block with exactly three scalar keys — `schema_version: 1`, `last_distilled: <yyyy-MM-dd>`, `audit_entry: <audit-log entry that produced the file>` — then an optional `# ` title and four `## ` sections in this order: `Values` (max 10 lines), `Principles` (max 15), `Tone of voice` (no line cap), `Boundaries` (max 10). Every non-blank line inside a section is one entry; a leading `- ` or `* ` is presentation and is stripped. An entry is at most 200 characters, counted in Unicode scalar values so non-ASCII text is not penalised. The file holds no links and no ids: it must read as a standalone document, and knowledge pages never link to it (ADR 0001). **Ownership.** Only the `wiki persona` command group writes it; ingest has no path to it. This amendment adds the read side only — writing arrives with persona changesets. **Read.** `wiki persona read` is lenient: it returns whatever entries it can find, with frontmatter fields null when absent or malformed, because an assistant is better served by the lines that are there than by nothing; reporting a malformed file is lint's job. A vault without the file reads as an empty persona with `exists: false`. **Lint.** One issue kind per rule, all with subject `PERSONA.md`, because issues merge on `(kind, subject)` and a shared kind would let the rules overwrite each other's detail and occurrences; a rule broken several times files one issue listing every occurrence. The structural rules are **errors** and tone of voice past 600 words is a **warning**; the lint report's per-kind `counts` now carry that `severity`, and every pre-existing kind reports `warning`. Lint still exits 0 on errors — it reports and files; it does not gate. The errors are exactly the rules a persona changeset will have to pass before it can be queued, so the rules are defined once and shared. **Not in this amendment:** the evidence rules (two supporting pages for a line distilled from endorsed notes, and the stale-evidence warning) need the audit log and arrive with it; and ids are not detected beyond links, because no id format is reliably distinguishable from prose.

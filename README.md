@@ -361,6 +361,7 @@ recurring lint issues; you approve or reject. The agent never edits it directly.
 | Quality | `eval` · `audit next\|record\|list` |
 | Review | `review list\|approve\|reject` |
 | Reflect | `schema propose\|proposals\|approve\|reject` |
+| Persona | `persona read` |
 
 `wiki <group> --help` documents every flag.
 
