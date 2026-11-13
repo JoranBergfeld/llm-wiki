@@ -785,3 +785,30 @@ Same standing as Appendices B and C: these override the original text where they
 ## Appendix P — Stale persona evidence amendment (2026-11-13)
 
 - **AN. Stale persona evidence and the re-check proposal.** (issue #52; decisions #33 "Removed persona lines", "A category losing persona-source" and #35 "Staleness", ADR 0001) **Stale.** `wiki lint` judges every line of `PERSONA.md` against the evidence ledger of the accept its `audit_entry` names, looking the accept up in the live audit log and, when rotated away, in the archived segments. A piece of page evidence is stale when the page (found by id, so a rename is not staleness) is gone, its body no longer hashes to the recorded SHA-256 (frontmatter changes never count), or it no longer cites a source in a persona-source category. Owner-stated evidence is not judged until #53 records it. **Warning, per line.** Each stale line is one `persona-stale-evidence` warning, subject `PERSONA.md#<section>: <line text>`, whose detail names each stale piece and why; lines resting only on intact evidence get none. **Re-check proposal.** The open issue *is* the re-check proposal: no changeset is generated, because which lines to keep, reword or drop is the distillation pass's judgement and the owner reviews it like any other changeset. `wiki persona distill` lists the open proposals that are still stale under `recheck: [{issue, section, text, evidence: [{page, path, slug, reason: changed|gone|not-endorsed, recordedHash, currentHash}]}]`. The pass settles each by proposing a `change` whose `text` equals `from` (re-confirm with current evidence; no longer a `duplicate-persona-line`), a reworded `change`, or a `remove`. **Retirement.** Lint resolves an open `persona-stale-evidence` issue once its line is no longer stale (re-confirmed, reworded, removed or the page restored), so retired evidence leaves no dangling warning; other kinds keep their manual lifecycle. The accept line, reviewed or auto-accepted (amendment AM) alike, gains `retired=<path>@<sha256>,…` listing every evidence reference the previous ledger held and the new one does not (removed and reworded lines, the old hashes of re-confirmed ones); the field is omitted when nothing is retired.
+
+## Appendix Q — MCP review tools amendment (2026-11-13)
+
+- **AO. Propose and decide over MCP; every decision records who decided.**
+  (issue #58, decision #30 "Catalogue" and "Exposure") `propose_change`
+  (`kind`: `category` → `category propose`, needs `category` and
+  `description`; `schema` → `schema propose`, needs `section` and `text`,
+  handed over on stdin; `persona` → `persona propose`, needs `changeset`,
+  the JSON of amendment AH, on stdin). Data is keyed by kind
+  (`data.category`, `data.schema`, `data.persona`). `review_queue` lists
+  every pending item in three read steps: `review list` (`data.review`:
+  pending pages and the open persona changeset, each row with its `kind`),
+  `category proposals --status open` (`data.categories`) and `schema
+  proposals --status open` (`data.schema`). `decide` (`kind`: `page` |
+  `persona` → `review approve|reject`; `category` → `category
+  approve|reject`; `schema` → `schema approve|reject`; `decision`:
+  `approve` | `reject`; `id`; `reason`, passed as `--note` on reject and
+  ignored on approve) returns the command's data as `data.decision`.
+  Rejecting a persona changeset without a reason is the CLI's
+  `reason-required` (exit 1); an item already decided is exit 3, a success
+  over MCP. **`decidedVia`.** Every approve and reject — `review`,
+  `category` and `schema`, not only the persona changeset of AH — now adds
+  `decidedVia=cli|mcp` to its audit line, next to `via=` (the transport and
+  token flag of AE). It is derived from the invocation origin the host
+  passes into `App.Main`, never from a tool argument, so a client cannot
+  claim to be the CLI; persona auto-accept (amendment AM) writes
+  `decidedVia=auto-accept`.

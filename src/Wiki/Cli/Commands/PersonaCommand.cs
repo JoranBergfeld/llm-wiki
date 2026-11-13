@@ -131,10 +131,9 @@ internal static class PersonaAudit
     public static string LedgerJson(PersonaLedgerLine[] ledger)
         => System.Text.Json.JsonSerializer.Serialize(ledger, Json.WikiJsonContext.Default.PersonaLedgerLineArray);
 
-    // `cli` for a person or agent at the terminal, `mcp` for either MCP
-    // transport (issue #32); auto-accept (#51) records
-    // PersonaAutoAccept.DecidedVia instead.
-    public static string DecidedVia(CommandContext ctx) => ctx.Origin.Transport == Transport.Cli ? "cli" : "mcp";
+    // `cli` or `mcp` (issue #32; shared with every decision, DecisionAudit);
+    // auto-accept (#51) records PersonaAutoAccept.DecidedVia instead.
+    public static string DecidedVia(CommandContext ctx) => DecisionAudit.DecidedVia(ctx);
 
     // The `persona.accept` audit line, for `review approve` and for
     // auto-accept alike: who decided, every evidence reference with its hash,

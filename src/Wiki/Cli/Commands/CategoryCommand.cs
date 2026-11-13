@@ -135,6 +135,7 @@ public static class CategoryCommand
 
             var service = new CategoryService();
             var updated = service.Approve(vault, cfg, id);
+            DecisionAudit.Record(ctx);
             ctx.EmitOk(updated);
             return 0;
         }));
@@ -167,6 +168,7 @@ public static class CategoryCommand
             var vault = ctx.ResolveVault();
             var service = new CategoryService();
             var updated = service.Reject(vault, id, note);
+            DecisionAudit.Record(ctx);
             ctx.EmitOk(updated);
             return 0;
         }));
