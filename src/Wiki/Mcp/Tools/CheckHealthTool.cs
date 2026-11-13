@@ -20,7 +20,8 @@ public sealed class CheckHealthTool(CliAdapter cli)
     [McpServerTool(Name = "check_health", ReadOnly = false, Idempotent = true, Destructive = false, OpenWorld = true)]
     [Description("Run the vault's health checks: lint (data.lint; files or refreshes issues, see work_issues), " +
                  "then the external-link inventory (data.links), then optionally the retrieval eval against eval.yaml " +
-                 "(data.eval: recall@k score per golden question). Stops at the first check that fails.")]
+                 "(data.eval: recall@k score per golden question). Stops at the first check that fails; checks already run " +
+                 "stay done, including the issues lint filed (completedSteps).")]
     public CallToolResult CheckHealth(
         [Description("lint: also repair wikilink targets and idmap entries broken by a rename done outside the CLI")]
         bool fixLinks = false,

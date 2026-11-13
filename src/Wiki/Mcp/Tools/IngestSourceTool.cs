@@ -37,7 +37,9 @@ public sealed class IngestSourceTool(CliAdapter cli, IngestInbox inbox)
                  "ingest plan of each new source is returned (wiki ingest resume, data.plans). data.upload has the landed " +
                  "path, the upload's outcome (registered | skipped-duplicate | skipped-empty | rejected) and its sourceId. " +
                  "If the category does not exist and categoryDescription is given, a category proposal is filed instead " +
-                 "(data.categoryProposal); call again once it is approved. Then drive the ingest with continue_ingest.")]
+                 "(data.categoryProposal); call again once it is approved. Then drive the ingest with continue_ingest. " +
+                 "Not all-or-nothing: if a later step fails, the landed upload and anything already registered stay " +
+                 "(completedSteps); calling again is safe, since the scan deduplicates.")]
     public CallToolResult IngestSource(
         [Description("Category id the source registers under (lowercase kebab-case; one inbox directory per category)")]
         string category,
