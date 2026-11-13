@@ -269,4 +269,82 @@ public class PersonaToolTests
         var required = tool.ProtocolTool.InputSchema.GetProperty("required").EnumerateArray().Select(e => e.GetString()!).ToArray();
         Assert.Equal(["section", "answer"], required);
     }
+
+    // ---- the whole loop ---------------------------------------------------
+
+    // Acceptance: a full onboarding interview over MCP, then distill and
+    // propose, produces a changeset the owner can review - every step a tool
+    // call, nothing done at the CLI.
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task AFullInterviewOverMcp_ThenDistillAndPropose_QueuesAReviewableChangeset(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+
+        // The agent reads the persona and the guide before it starts.
+        var read = (await mcp.CallAsync("read_persona", new Dictionary<string, object?> { ["includeGuide"] = true })).Structured();
+        Assert.Contains("word for word", read.GetProperty("data").GetProperty("guide").GetProperty("text").GetString());
+
+        // One answer per section; the first call starts the transcript.
+        (string Section, string Question, string Answer)[] interview =
+        [
+            ("values", "What do you care about most in your work?", "Careful craft over speed."),
+            ("principles", "How do you decide when to stop polishing?", "Ship when it is correct, not when it is perfect."),
+            ("tone-of-voice", "How do you write to colleagues?", "Short sentences, no jargon."),
+            ("boundaries", "What will you never do?", "I never publish anything I have not read myself."),
+        ];
+        string? transcript = null;
+        var anchors = new List<string>();
+        foreach (var (section, question, answer) in interview)
+        {
+            var r = await Record(mcp, section, answer, question, transcript);
+            Assert.False(r.IsError, r.Text());
+            var data = r.Structured().GetProperty("data").GetProperty("record");
+            transcript ??= data.GetProperty("transcript").GetString();
+            Assert.Equal(transcript, data.GetProperty("transcript").GetString());
+            anchors.Add(data.GetProperty("anchor").GetString()!);
+        }
+        Assert.Equal(["a1", "a2", "a3", "a4"], anchors);
+
+        // The pass reads the transcript as a candidate.
+        var distill = (await mcp.CallAsync("distill_persona")).Structured().GetProperty("data").GetProperty("distill");
+        var candidate = Assert.Single(distill.GetProperty("transcripts").EnumerateArray());
+        Assert.Equal(transcript, candidate.GetProperty("id").GetString());
+        var entries = candidate.GetProperty("entries").EnumerateArray().ToArray();
+        Assert.Equal(interview.Select(i => i.Answer), entries.Select(e => e.GetProperty("answer").GetString()!));
+
+        // ... and files one changeset, each line resting on the owner's own answer.
+        var changes = entries.Zip(interview, (e, i) =>
+            "{\"op\":\"add\",\"section\":\"" + i.Section + "\",\"text\":" + JsonSerializer.Serialize(i.Answer) +
+            ",\"evidence\":[{\"kind\":\"owner-stated\",\"path\":\"" + transcript + "\",\"anchor\":\"" +
+            e.GetProperty("anchor").GetString() + "\"}]}");
+        var changeset = "{\"reason\":\"onboarding interview\",\"considered\":[\"" + transcript + "\"],\"changes\":[" +
+                        string.Join(",", changes) + "]}";
+        var proposed = await mcp.CallAsync("propose_change", new Dictionary<string, object?> { ["kind"] = "persona", ["changeset"] = changeset });
+        Assert.False(proposed.IsError, proposed.Text());
+        var persona = proposed.Structured().GetProperty("data").GetProperty("persona");
+        var id = persona.GetProperty("changeset").GetProperty("id").GetString()!;
+        Assert.Equal("open", persona.GetProperty("changeset").GetProperty("status").GetString());
+        Assert.Contains(transcript, persona.GetProperty("cleared").EnumerateArray().Select(c => c.GetString()));
+
+        // Reviewable: it is in the queue, and nothing is applied until decided.
+        var queue = (await mcp.CallAsync("review_queue")).Structured().GetProperty("data").GetProperty("review");
+        var row = Assert.Single(queue.EnumerateArray(), r => r.GetProperty("kind").GetString() == "persona");
+        Assert.Equal(id, row.GetProperty("changeset").GetProperty("id").GetString());
+        Assert.Equal(4, row.GetProperty("changeset").GetProperty("changes").GetArrayLength());
+        Assert.False(File.Exists(Path.Combine(tv.Path, "PERSONA.md")));
+        // The considered transcript is no longer a candidate.
+        var after = (await mcp.CallAsync("distill_persona")).Structured().GetProperty("data").GetProperty("distill");
+        Assert.Equal(0, after.GetProperty("transcripts").GetArrayLength());
+
+        // The owner approves it, and the persona holds the owner's own words.
+        var decided = await mcp.CallAsync("decide", new Dictionary<string, object?>
+            { ["kind"] = "persona", ["id"] = id, ["decision"] = "approve" });
+        Assert.False(decided.IsError, decided.Text());
+        var values = (await mcp.CallAsync("read_persona")).Structured().GetProperty("data").GetProperty("persona");
+        Assert.Equal(["Careful craft over speed."], values.GetProperty("values").EnumerateArray().Select(v => v.GetString()!));
+        Assert.Equal(["Short sentences, no jargon."], values.GetProperty("toneOfVoice").EnumerateArray().Select(v => v.GetString()!));
+        Assert.Equal(0, tv.Run("lint", "--json").ExitCode);
+    }
 }
