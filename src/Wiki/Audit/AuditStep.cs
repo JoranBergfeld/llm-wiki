@@ -107,9 +107,19 @@ public static class AuditStep
                 return exit;
             }
 
+            List<string> segments;
+            using (WriteJournal.Suspend())
+                segments = Segments(writer, invocation, "exit=" + exit.ToString(CultureInfo.InvariantCulture));
+
+            // A write that names this line by its hash (AuditDraft.WriteOnSeal,
+            // amendment AY). Outside Suspend: it is a vault write like any
+            // other, journaled so recovery covers it, and it lands before the
+            // commit below so its after-hash is part of the sealed journal.
+            if (ctx.Audit.SealedWrite is { } sealedWrite)
+                sealedWrite(AuditLine.Seal(segments, writer.Prev).Hash);
+
             using (WriteJournal.Suspend())
             {
-                var segments = Segments(writer, invocation, "exit=" + exit.ToString(CultureInfo.InvariantCulture));
                 // Sealed into the journal BEFORE the append (#47): from here
                 // an interruption is finished by the next writer, line included.
                 WriteJournal.Current?.Commit(segments, writer.Prev);

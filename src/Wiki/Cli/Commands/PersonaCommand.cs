@@ -167,9 +167,9 @@ public static class PersonaCommand
                 // again against PERSONA.md, exactly as `review approve` does.
                 // The step gets one audit line, the accept, carrying what the
                 // propose line would have said about supersession and flags.
-                var (decision, ledger, retired) = service.Accept(vault, result.Changeset.Id);
-                result = result with { Changeset = decision.Changeset, PendingPath = null, AutoAccepted = true };
-                PersonaAudit.Accept(ctx, decision, ledger, retired, PersonaAutoAccept.DecidedVia);
+                var acceptance = service.Accept(vault, result.Changeset.Id);
+                result = result with { Changeset = acceptance.Result.Changeset, PendingPath = null, AutoAccepted = true };
+                PersonaAudit.Accept(ctx, acceptance, PersonaAutoAccept.DecidedVia);
                 if (result.Superseded is not null)
                     ctx.Audit.Field("supersedes", result.Superseded);
                 if (result.Cleared.Length > 0)
@@ -218,13 +218,15 @@ internal static class PersonaAudit
     // The `persona.accept` audit line, for `review approve` and for
     // auto-accept alike: who decided, every evidence reference with its hash,
     // and the full evidence ledger of the new PERSONA.md, which lint reads
-    // back by `changeset=<audit_entry>`. `retired` is the evidence the
+    // back by the line's hash, PERSONA.md's `audit_entry` (amendment AY): the
+    // file itself is written once the line is built, through WriteOnSeal.
+    // `retired` is the evidence the
     // previous ledger held and the new one does not (issue #52): removing or
     // rewording a line retires what supported it, on the record; the field
     // is omitted when nothing is retired.
-    public static void Accept(CommandContext ctx, PersonaDecisionResult result, PersonaLedgerLine[] ledger,
-        PersonaEvidenceData[] retired, string decidedVia)
+    public static void Accept(CommandContext ctx, PersonaAcceptance acceptance, string decidedVia)
     {
+        var (result, ledger, retired, writePersona) = acceptance;
         var c = result.Changeset;
         ctx.Audit.Action = PersonaEvidence.AcceptAction;
         ctx.Audit.Subject = PersonaDoc.FileName;
@@ -237,6 +239,7 @@ internal static class PersonaAudit
                  .Detail(PersonaEvidence.LedgerField, LedgerJson(ledger));
         if (retired.Length > 0)
             ctx.Audit.Field("retired", EvidenceRefs(retired));
+        ctx.Audit.WriteOnSeal(writePersona);
     }
 
     // Every evidence reference of the lines the changeset introduces, as

@@ -101,7 +101,7 @@ public class PersonaAutoAcceptProcessTests
         Assert.True(envelope.GetProperty("data").GetProperty("autoAccepted").GetBoolean());
 
         var persona = Data(tv.Run("persona", "read", "--json"));
-        Assert.Equal(id, persona.GetProperty("auditEntry").GetString());
+        Assert.Equal(AuditField(AuditLines(tv)[^1], "hash"), persona.GetProperty("auditEntry").GetString()); // amendment AY
         Assert.Equal(new[] { "I value careful craft." },
             persona.GetProperty("values").EnumerateArray().Select(x => x.GetString()).ToArray());
         Assert.False(File.Exists(Path.Combine(tv.Path, "persona", "changeset.md")));

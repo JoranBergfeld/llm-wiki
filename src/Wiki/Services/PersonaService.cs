@@ -110,6 +110,17 @@ public sealed record PersonaProposeResult(
 }
 
 // `wiki review approve|reject` on a persona changeset.
+// What `PersonaService.Accept` decided, for the caller's audit line.
+// `WritePersona` writes the new PERSONA.md given the hash of the audit line
+// that records the accept: `audit_entry` names that line (amendment AY), and
+// its hash is only known once the line is built, so the write is deferred to
+// AuditStep (AuditDraft.WriteOnSeal) rather than done inside Accept.
+public sealed record PersonaAcceptance(
+    PersonaDecisionResult Result,
+    PersonaLedgerLine[] Ledger,
+    PersonaEvidenceData[] Retired,
+    Action<string> WritePersona);
+
 public sealed record PersonaDecisionResult(PersonaChangesetData Changeset, int Added, int Changed, int Removed) : IHumanRenderable
 {
     public string HumanSummary() => Changeset.Status == "approved"
@@ -295,13 +306,16 @@ public sealed class PersonaService
         return new PersonaProposeResult(created, superseded, cleared, created is null ? null : PendingRelPath);
     }
 
-    // Applies an open changeset to the CURRENT PERSONA.md and writes it.
-    // Returns the decision plus the full evidence ledger of the new file,
-    // which the caller records on the audit line.
+    // Applies an open changeset to the CURRENT PERSONA.md. Returns the
+    // decision plus the full evidence ledger of the new file, which the
+    // caller records on the audit line, and the deferred PERSONA.md write.
     // `Retired` is every evidence reference the previous ledger held that
     // the new one no longer does: the evidence of removed and reworded
     // lines, and the old hashes of re-confirmed ones (issue #52).
-    public (PersonaDecisionResult Result, PersonaLedgerLine[] Ledger, PersonaEvidenceData[] Retired) Accept(Vault v, string id)
+    // Stands in for audit_entry before the accept line exists.
+    private const string PendingAuditEntry = "pending";
+
+    public PersonaAcceptance Accept(Vault v, string id)
     {
         var store = new PersonaChangesets();
         store.Load(v);
@@ -343,12 +357,13 @@ public sealed class PersonaService
         // last_distilled is the date of the pass that produced the lines,
         // which is when the changeset was proposed, not when it was reviewed.
         var lastDistilled = changeset.CreatedAt[..10];
-        AtomicFile.Write(v.PersonaPath, PersonaDoc.Serialize(lastDistilled, changeset.Id, Freeze(entries)));
+        var frozen = Freeze(entries);
         changeset.Status = "approved";
         store.Save(v);
         DeletePending(v);
 
-        return (Decision(changeset), ledger.ToArray(), retired);
+        return new PersonaAcceptance(Decision(changeset), ledger.ToArray(), retired,
+            auditEntry => AtomicFile.Write(v.PersonaPath, PersonaDoc.Serialize(lastDistilled, auditEntry, frozen)));
     }
 
     private static string EvidenceKey(PersonaEvidenceData e) => $"{e.Kind}|{e.Page}|{e.Path}|{e.Anchor}|{e.Hash}";
@@ -400,7 +415,8 @@ public sealed class PersonaService
         }
         var exists = File.Exists(v.PersonaPath);
         var before = exists ? File.ReadAllText(v.PersonaPath).Replace("\r\n", "\n") : "";
-        var after = PersonaDoc.Serialize(open.CreatedAt[..10], open.Id, Freeze(entries));
+        // audit_entry is the accept line's hash, unknown until it is accepted.
+        var after = PersonaDoc.Serialize(open.CreatedAt[..10], PendingAuditEntry, Freeze(entries));
         return (open, exists, ReviewService.LineDiff(before, after));
     }
 
@@ -557,7 +573,7 @@ public sealed class PersonaService
     // the file the changeset would produce; any error refuses it.
     private void EnsureLintClean(Dictionary<PersonaSection, List<string>> entries)
     {
-        var text = PersonaDoc.Serialize(Iso(_nowUnixMs())[..10], "pending", Freeze(entries));
+        var text = PersonaDoc.Serialize(Iso(_nowUnixMs())[..10], PendingAuditEntry, Freeze(entries));
         var errors = PersonaDoc.Parse(text).Validate()
             .Where(f => IssueKindX.Severity(f.Kind) == "error")
             .Select(f => $"{IssueKindX.ToWire(f.Kind)}: {f.Detail}")

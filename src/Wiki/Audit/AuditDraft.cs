@@ -36,6 +36,7 @@ public sealed class AuditDraft
     private static readonly HashSet<string> Reserved = new(StringComparer.Ordinal) { "exit", "error", "via", "prev", "hash" };
 
     private readonly List<AuditField> _fields = new();
+    private Action<string>? _writeOnSeal;
 
     // Dotted action name. Defaults to the command path ("page upsert" ->
     // "page.upsert").
@@ -51,6 +52,22 @@ public sealed class AuditDraft
     public string? VaultRoot { get; set; }
 
     public IReadOnlyList<AuditField> Fields => _fields;
+
+    // A vault write that must name the audit line recording it: PERSONA.md's
+    // `audit_entry` is the hash of its accept line (amendment AY). The hash
+    // covers the line's timestamp and prev, so it exists only once AuditStep
+    // builds the line after the command returns. AuditStep then calls this
+    // with the hash, before sealing the line into the write journal, so the
+    // write is journaled and recovered with the rest of the command. At most
+    // one per command.
+    public Action<string>? SealedWrite => _writeOnSeal;
+
+    public void WriteOnSeal(Action<string> write)
+    {
+        if (_writeOnSeal is not null)
+            throw new InvalidOperationException("a command registers at most one write on seal");
+        _writeOnSeal = write;
+    }
 
     public AuditDraft Field(string key, string value) => Add(key, value, isDetail: false);
 

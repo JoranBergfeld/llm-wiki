@@ -138,9 +138,9 @@ public static class ReviewCommand
     // full evidence ledger of the new PERSONA.md, which lint reads back.
     private static int ApprovePersona(CommandContext ctx, Vault vault, string id)
     {
-        var (result, ledger, retired) = new PersonaService().Accept(vault, id);
-        PersonaAudit.Accept(ctx, result, ledger, retired, PersonaAudit.DecidedVia(ctx));
-        ctx.EmitOk(result);
+        var acceptance = new PersonaService().Accept(vault, id);
+        PersonaAudit.Accept(ctx, acceptance, PersonaAudit.DecidedVia(ctx));
+        ctx.EmitOk(acceptance.Result);
         return 0;
     }
 

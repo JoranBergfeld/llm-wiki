@@ -330,7 +330,6 @@ public class PersonaChangesetTests
         var persona = Data(tv.Run("persona", "read", "--json"));
         Assert.True(persona.GetProperty("exists").GetBoolean());
         Assert.Equal("1", persona.GetProperty("schemaVersion").GetString());
-        Assert.Equal(id, persona.GetProperty("auditEntry").GetString());
         Assert.Matches(@"^\d{4}-\d{2}-\d{2}$", persona.GetProperty("lastDistilled").GetString());
         Assert.Equal(new[] { "I value careful craft." },
             persona.GetProperty("values").EnumerateArray().Select(x => x.GetString()).ToArray());
@@ -343,6 +342,9 @@ public class PersonaChangesetTests
         Assert.Empty(issues);
 
         var line = AuditLines(tv).Last(l => Segments(l)[1] == "persona.accept");
+        // audit_entry names the audit-log entry that produced the file: the
+        // accept line's own hash (amendment AY), not the changeset id.
+        Assert.Equal(AuditField(line, "hash"), persona.GetProperty("auditEntry").GetString());
         Assert.Equal("PERSONA.md", Segments(line)[2]);
         Assert.Equal(id, AuditField(line, "changeset"));
         Assert.Equal("+1 ~0 -0", AuditField(line, "lines"));
@@ -353,6 +355,49 @@ public class PersonaChangesetTests
         Assert.Matches(Regex(a.Path), evidence);
         Assert.Matches(Regex(b.Path), evidence);
         Assert.Contains("I value careful craft.", AuditDetail(tv, AuditField(line, "changeset-detail")!));
+    }
+
+    // PERSONA.md is written once its accept line is built (amendment AY), but
+    // still inside the journaled command: an approve that dies before its
+    // line lands is completed by the next writer, and audit_entry still names
+    // the line that writer appends.
+    [Fact]
+    public void AnApproveInterruptedBeforeItsAuditLine_IsCompleted_AndAuditEntryNamesTheLine()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var (id, _, _) = Pending(tv);
+
+        using (Interrupt.At("committed"))
+            tv.Run("review", "approve", id, "--json");
+        Assert.DoesNotContain(AuditLines(tv), l => Segments(l)[1] == "persona.accept");
+
+        Assert.Equal(0, tv.Run("category", "add", "paper", "--description", "Papers", "--json").ExitCode);
+
+        var line = AuditLines(tv).Single(l => Segments(l)[1] == "persona.accept");
+        Assert.Equal(AuditField(line, "hash"),
+            Data(tv.Run("persona", "read", "--json")).GetProperty("auditEntry").GetString());
+    }
+
+    // PERSONA.md files written before amendment AY carry the changeset id as
+    // audit_entry; the evidence lookup still finds their accept by it.
+    [Fact]
+    public void APersonaMdWhoseAuditEntryIsTheChangesetId_StillFindsItsEvidence()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var (id, a, _) = Pending(tv);
+        Assert.Equal(0, tv.Run("review", "approve", id, "--json").ExitCode);
+        var path = Path.Combine(tv.Path, "PERSONA.md");
+        var hash = Data(tv.Run("persona", "read", "--json")).GetProperty("auditEntry").GetString()!;
+        File.WriteAllText(path, File.ReadAllText(path).Replace("audit_entry: " + hash, "audit_entry: " + id));
+        var body = Path.Combine(tv.Path, a.Path);
+        File.WriteAllText(body, File.ReadAllText(body).TrimEnd('\n') + "\nAn added paragraph.\n");
+
+        tv.Run("lint", "--json");
+
+        var kinds = Data(tv.Run("issues", "list", "--status", "open", "--json")).EnumerateArray()
+            .Select(i => i.GetProperty("kind").GetString()).ToArray();
+        Assert.Contains("persona-stale-evidence", kinds);
+        Assert.DoesNotContain("persona-evidence", kinds);
     }
 
     private static string Regex(string path) => System.Text.RegularExpressions.Regex.Escape(path) + "@[0-9a-f]{64}";
