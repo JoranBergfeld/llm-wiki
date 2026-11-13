@@ -65,7 +65,9 @@ public sealed record PersonaCandidateView(string Id, string Slug, string Path, s
 
 // `wiki persona distill`: the read side of a pass. `Pending` is the open
 // changeset (null when none), so a pass knows it is about to supersede one.
-// Candidate interview transcripts join this view with issue #53.
+// `Transcripts` (issue #53) are the interview transcripts still flagged
+// `persona: candidate`, every entry in full with its anchor and answer hash,
+// so the pass can cite an answer as owner-stated evidence.
 // `Recheck` (issue #52) lists the persona lines lint has filed an open
 // `persona-stale-evidence` issue for and that are still stale: the re-check
 // proposals this pass should settle by re-confirming the line with current
@@ -74,10 +76,11 @@ public sealed record PersonaDistillView(
     PersonaView Persona,
     PersonaCandidateView[] Candidates,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] PersonaChangesetData? Pending,
-    PersonaRecheckView[] Recheck) : IHumanRenderable
+    PersonaRecheckView[] Recheck,
+    PersonaTranscriptView[] Transcripts) : IHumanRenderable
 {
     public string HumanSummary()
-        => $"{Candidates.Length} candidate page(s); {Recheck.Length} line(s) to re-check; "
+        => $"{Candidates.Length} candidate page(s); {Transcripts.Length} candidate transcript(s); {Recheck.Length} line(s) to re-check; "
            + (Pending is null ? "no pending changeset" : "pending changeset " + Pending.Id);
 }
 
@@ -165,7 +168,7 @@ public sealed class PersonaService
             .ToArray();
         var store = new PersonaChangesets();
         store.Load(v);
-        return new PersonaDistillView(Read(v), candidates, store.Open(), Recheck(v));
+        return new PersonaDistillView(Read(v), candidates, store.Open(), Recheck(v), InterviewService.Candidates(v));
     }
 
     // Lint files the proposal (the open issue); the live check keeps a line

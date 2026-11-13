@@ -9,9 +9,8 @@ namespace Wiki.Cli.Commands;
 // `wiki persona ...` (spec §8, amendments AC, AH and AM): the owner's persona in
 // PERSONA.md. `read` serves it, `distill` is the read side of a distillation
 // pass, `propose` queues the pass's changeset for `wiki review`, or accepts it
-// at once when WIKI_PERSONA_AUTO_ACCEPT is on. The
-// onboarding interview (`persona interview guide|record`) joins as a nested
-// command in a later ticket.
+// at once when WIKI_PERSONA_AUTO_ACCEPT is on. `interview guide|record` is the
+// onboarding interview (issue #53, amendment AO).
 public static class PersonaCommand
 {
     public static Command Build(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
@@ -20,6 +19,7 @@ public static class PersonaCommand
         persona.Add(BuildRead(vaultOption, jsonOption, stdout, stdin));
         persona.Add(BuildDistill(vaultOption, jsonOption, stdout, stdin));
         persona.Add(BuildPropose(vaultOption, jsonOption, stdout, stdin));
+        persona.Add(BuildInterview(vaultOption, jsonOption, stdout, stdin));
         return persona;
     }
 
@@ -51,6 +51,86 @@ public static class PersonaCommand
         }));
 
         return distill;
+    }
+
+    private static Command BuildInterview(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var interview = new Command("interview",
+            "The onboarding interview: an agent asks the owner about values, principles, tone of voice and boundaries, and records each answer word for word");
+
+        var guide = new Command("guide", "Print the interview guide: the vault's persona/interview-guide.md when present, else the shipped one");
+        guide.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            ctx.EmitOk(InterviewService.Guide(ctx.ResolveVault()));
+            return 0;
+        }));
+        interview.Add(guide);
+
+        var sectionOption = new Option<string>("--section")
+        {
+            Description = "The persona section the answer speaks to: values, principles, tone-of-voice or boundaries",
+            Required = true,
+        };
+        var questionOption = new Option<string?>("--question")
+        {
+            Description = "The question as asked; omit for a line the owner dictated",
+        };
+        var answerOption = new Option<string?>("--answer")
+        {
+            Description = "The owner's answer, word for word; omit to read it from stdin or --body-file",
+        };
+        var transcriptOption = new Option<string?>("--transcript")
+        {
+            Description = "Append to this transcript (its id, e.g. 2026-11-13-v2); omit to start a new one",
+        };
+        var stdinOption = new Option<bool>("--stdin")
+        {
+            Description = "Read the answer from stdin (default when neither --answer nor --body-file is given)",
+        };
+        var bodyFileOption = new Option<string?>("--body-file")
+        {
+            Description = "Read the answer from this file",
+        };
+
+        var record = new Command("record",
+            "Append one question and answer, word for word, to an interview transcript; without --transcript a new transcript is started and its id returned")
+        {
+            sectionOption,
+            questionOption,
+            answerOption,
+            transcriptOption,
+            stdinOption,
+            bodyFileOption,
+        };
+        record.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var answer = parseResult.GetValue(answerOption);
+            var bodyFile = parseResult.GetValue(bodyFileOption);
+            var stdinFlag = parseResult.GetValue(stdinOption);
+            if (answer is not null && (stdinFlag || !string.IsNullOrEmpty(bodyFile)))
+                throw new ValidationException("body-source-conflict",
+                    "--answer, --stdin and --body-file are mutually exclusive; pass exactly one");
+            answer ??= BodyInput.Resolve(ctx, bodyFile, stdinFlag);
+
+            var vault = ctx.ResolveVault();
+            var result = new InterviewService().Record(vault, ctx.Origin, parseResult.GetValue(sectionOption)!,
+                parseResult.GetValue(questionOption), answer, parseResult.GetValue(transcriptOption));
+
+            ctx.Audit.Action = "persona.interview.record";
+            ctx.Audit.Subject = result.Path + "#" + result.Anchor;
+            ctx.Audit.Field("section", result.Section)
+                     .Field("guide", result.Guide)
+                     .Field("recordedVia", result.RecordedVia)
+                     .Field("answer-hash", result.AnswerHash);
+            if (result.Created)
+                ctx.Audit.Field("created", "true");
+
+            ctx.EmitOk(result);
+            return 0;
+        }));
+        interview.Add(record);
+
+        return interview;
     }
 
     private static Command BuildPropose(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
