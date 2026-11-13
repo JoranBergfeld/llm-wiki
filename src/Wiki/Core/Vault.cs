@@ -18,6 +18,12 @@ public sealed class Vault
     // Wiki.Cli.VaultLock). Empty; its content is never read or written.
     public string LockPath { get; }
 
+    // The write journal of the mutation in progress, or of one that was
+    // interrupted (issue #47, see Wiki.Core.WriteJournal). Absent between
+    // mutations. Unlike the rest of `.wiki/` it is NOT rebuildable: deleting
+    // it while it exists gives up recovering that interrupted write.
+    public string JournalPath { get; }
+
     // The human-owned golden-question file (issue #11 part A). Sits next to
     // wiki.yaml at the vault root, and is optional - `wiki eval` is the only
     // thing that reads it, and its absence is that command's problem, not
@@ -40,6 +46,7 @@ public sealed class Vault
         LogPath = System.IO.Path.Combine(WikiDir, "log.md");
         AgentsPath = System.IO.Path.Combine(root, "AGENTS.md");
         LockPath = System.IO.Path.Combine(StateDir, "lock");
+        JournalPath = System.IO.Path.Combine(StateDir, "journal");
         EvalPath = System.IO.Path.Combine(root, "eval.yaml");
         PersonaPath = System.IO.Path.Combine(root, PersonaDoc.FileName);
     }

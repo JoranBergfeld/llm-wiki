@@ -289,7 +289,10 @@ Spectre-rendered human output. Exit codes are identical either way:
 `0` success · `1` your input was rejected · `2` environment/IO · `3` state
 conflict (idempotent no-op) · `4` a measurement came in under a threshold you
 asked for (`wiki eval --fail-under` only) · `5` the vault is busy (`vault-busy`):
-another `wiki` command holds it, nothing was changed, retry.
+another `wiki` command holds it, nothing was changed, retry. An interrupted
+write is recovered by the next command; when it cannot be recovered without
+guessing, writes fail with `repair-needed` (exit 2) until the journal at
+`.wiki/journal` is dealt with by hand. Reads keep working.
 
 Commands take a vault-wide lock (readers share it, writers hold it alone), so
 an MCP server and a manual run can work on one vault at once. A command waits
