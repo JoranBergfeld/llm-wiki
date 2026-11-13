@@ -127,6 +127,8 @@ public sealed class ReviewService
                 Summary = doc.Front.Summary,
                 Sources = doc.Front.Sources,
                 Tags = doc.Front.Tags,
+                // Follows `sources`, which a reject keeps as-is.
+                PersonaCandidate = doc.Front.PersonaCandidate,
             };
             var serialized = new PageDoc(restoredFront, snapshot.Body).Serialize();
             // Frontmatter schema gate proper: must round-trip through the

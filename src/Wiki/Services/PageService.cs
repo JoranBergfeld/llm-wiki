@@ -241,6 +241,9 @@ public sealed class PageService
             Summary = existingFront.Summary,
             Sources = existingFront.Sources,
             Tags = existingFront.Tags,
+            // A status change adds no content, so it neither raises nor
+            // clears the candidate flag.
+            PersonaCandidate = existingFront.PersonaCandidate,
         };
 
         var serialized = new PageDoc(front, doc.Body).Serialize();
@@ -322,6 +325,8 @@ public sealed class PageService
                 throw new ValidationException("unknown-source", $"unknown source id '{sourceId}'");
         }
 
+        var personaCandidate = CitesPersonaSource(v, cfg, idmap, req.Sources);
+
         // Title is immutable on update (not in the replace list, and renames
         // are Task 20's job), so there is no new title to collide with an
         // existing one - duplicate-title from Create simply doesn't apply
@@ -358,6 +363,11 @@ public sealed class PageService
             Summary = req.Summary,
             Sources = req.Sources,
             Tags = req.Tags,
+            // Re-derived on every write, not carried over: a rewrite is new
+            // content a distillation pass has not seen (so it re-raises a
+            // flag the last pass cleared), and a page that no longer cites
+            // any endorsed source is no longer an endorsed note.
+            PersonaCandidate = personaCandidate,
         };
 
         var doc = new PageDoc(front, req.Body);
@@ -527,6 +537,8 @@ public sealed class PageService
                 throw new ValidationException("unknown-source", $"unknown source id '{sourceId}'");
         }
 
+        var personaCandidate = CitesPersonaSource(v, cfg, idmap, req.Sources);
+
         var existingSlugs = new HashSet<string>(existing.Select(p => p.Slug), StringComparer.Ordinal);
 
         // Overview is a singleton at a fixed path (`wiki/overview.md`), not a
@@ -565,6 +577,7 @@ public sealed class PageService
             Summary = req.Summary,
             Sources = req.Sources,
             Tags = req.Tags,
+            PersonaCandidate = personaCandidate,
         };
 
         var doc = new PageDoc(front, req.Body);
@@ -628,6 +641,38 @@ public sealed class PageService
         return danglingTargets;
     }
 
+
+    // Issue #49 / ADR 0001: a page is an endorsed note - and lands as
+    // `persona: candidate` - when at least one source it cites belongs to a
+    // category the owner marked `persona-source: true`. "At least one" rather
+    // than "all" because the glossary defines an endorsed note as a page built
+    // from such a source; a page that also cites other material is still built
+    // from it, and the distillation pass plus the owner's changeset review
+    // decide what of it is persona evidence. Pages citing only other
+    // categories, or nothing, never carry the flag.
+    //
+    // Reads each cited source's frontmatter for its category; the ids were
+    // already checked against the idmap by the caller, so this is a read
+    // during validation, not a precondition of its own.
+    private static bool CitesPersonaSource(Vault v, VaultConfig cfg, IdMap idmap, string[] sources)
+    {
+        if (!cfg.Categories.Any(c => c.PersonaSource))
+            return false;
+
+        foreach (var sourceId in sources)
+        {
+            // A stale idmap entry (raw file deleted outside the CLI) is not
+            // this check's to report - the upsert has always accepted it - and
+            // a source that is not there endorses nothing.
+            var fullPath = System.IO.Path.Combine(v.Root, idmap.PathFor(sourceId)!);
+            if (!File.Exists(fullPath))
+                continue;
+            var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(fullPath));
+            if (cfg.IsPersonaSource(SourceFrontmatter.FromRaw(scalars, lists).Category))
+                return true;
+        }
+        return false;
+    }
 
     private static byte[] DefaultRandomBytes()
     {

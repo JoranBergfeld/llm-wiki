@@ -107,6 +107,9 @@ categories:                      # source categories — fully user-defined
     description: "Web articles and blog posts"
   - id: paper
     description: "Research papers and reports"
+  - id: note
+    description: "My own notes"
+    persona-source: true         # optional (default false): the owner endorses what lands here (amendment AB)
 lint:
   staleness_days: 90             # advisory: summaries older than this with newer related sources
   max_page_lines: 400            # advisory: pages larger than this flagged for splitting
@@ -115,6 +118,7 @@ lint:
 
 Rules:
 - `categories[].id`: lowercase kebab-case, unique. Referenced by every source.
+- `categories[].persona-source`: optional, `true` or `false` (default `false`). Any other value, or any other key on a category, is a config error. Marks the category's sources as endorsed by the owner; see amendment AB.
 - Removing a category that sources still reference is a blocking config error, enforced on every config load (amendment N). `wiki category …` is exempt so the human can repair the config with the CLI rather than by hand.
 - Adding categories: `wiki category add <id> --description "…"` or direct file edit. **The CLI never adds categories on its own; there is no code path by which ingest creates one.** An unknown category on `wiki source add` is a blocking error instructing the human to add it first.
 
@@ -158,6 +162,7 @@ updated: 2026-07-13               # CLI-maintained on every write
 summary: "One-line routing description"  # REQUIRED; supplied via --summary; feeds index.md (§9)
 sources: [01J9ZKM1..., 01J9ZKM2...]  # source IDs this page cites — provenance backbone
 tags: []                          # optional, free-form, for Obsidian/Dataview
+persona: candidate                # CLI-set, present only when the page cites a persona-source category (amendment AB)
 ```
 
 Source files (`raw/`):
@@ -582,3 +587,24 @@ Same standing as Appendices B and C: these override the original text where they
   outside a vault with `WIKI_VAULT` absent or invalid, and with invalid vault
   configuration/state; output, exit status, directory layout, and existing
   vault/queue bytes are checked without requiring an envelope.
+
+## Appendix F — Persona amendments (2026-11-13)
+
+- **AB. Persona-source categories and the `persona: candidate` flag.** (issue
+  #49, ADR 0001) §5 said a category is an id and a description; §7 said the
+  page frontmatter set is closed. The persona (issue #41) needs the owner to
+  say which material he endorses, without the vault guessing authorship and
+  without knowledge pages linking to the persona. So a category may carry
+  `persona-source: true`: the owner endorses what lands in it, per category,
+  all or nothing (a mixed inbox gets split). The value must be `true` or
+  `false`, and any other key on a category is a config error, because a
+  mistyped endorsement that is silently ignored is worse than a failed load.
+  `wiki page upsert` sets `persona: candidate` on a page when at least one
+  source it cites belongs to a persona-source category, and omits the key
+  otherwise. The flag is re-derived on every full-body write (new content
+  re-raises a flag a distillation pass cleared; a page that stops citing
+  endorsed sources stops being a candidate) and is carried unchanged by
+  status changes, renames and review rejects. `candidate` is the only legal
+  value; lint and every page read accept it, and reject anything else as
+  `frontmatter-schema`. This is the only change persona makes to the page
+  schema.
