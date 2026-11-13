@@ -89,7 +89,7 @@ public static class PersonaCommand
                 ctx.Audit.Field("cleared", string.Join(",", result.Cleared));
             ctx.Audit.Field("reason", result.Changeset?.Reason ?? "considered pages only");
             if (result.Changeset is not null)
-                ctx.Audit.Detail("changeset", PersonaAudit.ChangesetJson(result.Changeset));
+                ctx.Audit.Detail("changeset-detail", PersonaAudit.ChangesetJson(result.Changeset));
 
             ctx.EmitOk(result);
             return 0;
