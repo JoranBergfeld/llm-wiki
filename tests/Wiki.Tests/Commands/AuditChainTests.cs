@@ -137,4 +137,198 @@ public class AuditChainTests
         Assert.Equal("audit-chain-intact", r.Envelope.Errors[0].Code);
         Assert.Equal(before, Snapshot(tv));
     }
+
+    private static void RotateAt(TempVault tv, int bytes)
+        => File.AppendAllText(Path.Combine(tv.Path, "wiki.yaml"), $"audit:\n  rotate_bytes: {bytes}\n");
+
+    private static string ManifestPath(TempVault tv) => Path.Combine(AuditDir(tv), "audit.manifest.json");
+
+    private static JsonElement ManifestSegments(TempVault tv)
+        => JsonDocument.Parse(File.ReadAllText(ManifestPath(tv))).RootElement.GetProperty("segments");
+
+    private static string Hash(string line) => Field(line, "hash");
+
+    // A threshold of 1 byte rolls the live log over before every mutation
+    // once it holds anything.
+    [Fact]
+    public void AtTheThreshold_TheLiveLogRollsIntoACompressedSegment_ThatStaysInTheChain()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        RotateAt(tv, 1);
+        var first = File.ReadAllText(LogPath(tv));
+
+        Assert.Equal(0, AddCategory(tv, "paper").ExitCode);
+
+        Assert.Equal(first, Decompress(Path.Combine(AuditDir(tv), "audit.000001.log.gz")));
+        var seg = Assert.Single(ManifestSegments(tv).EnumerateArray());
+        Assert.Equal("audit.000001.log.gz", seg.GetProperty("file").GetString());
+        Assert.Equal(Hash(first.TrimEnd('\n')), seg.GetProperty("lastHash").GetString());
+        var live = Assert.Single(Lines(tv));
+        Assert.Equal("category.add", Fields(live)[1]);
+        Assert.Equal(Hash(first.TrimEnd('\n')), Field(live, "prev"));
+        Assert.True(Data(tv.Run("audit", "--json")).GetProperty("chain").GetProperty("intact").GetBoolean());
+    }
+
+    [Fact]
+    public void BelowTheThreshold_NothingRolls()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        AddCategory(tv, "paper");
+
+        Assert.Equal(2, Lines(tv).Length);
+        Assert.False(File.Exists(ManifestPath(tv)));
+    }
+
+    [Fact]
+    public void RotationNeverDeletesASegment()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        RotateAt(tv, 1);
+        AddCategory(tv, "paper");
+        AddCategory(tv, "talk");
+        AddCategory(tv, "memo");
+
+        var files = Directory.GetFiles(AuditDir(tv), "audit.*.log.gz").Select(Path.GetFileName).OrderBy(f => f).ToArray();
+        Assert.Equal(new[] { "audit.000001.log.gz", "audit.000002.log.gz", "audit.000003.log.gz" }, files);
+        Assert.Equal(3, ManifestSegments(tv).GetArrayLength());
+    }
+
+    [Fact]
+    public void InvalidRotationThreshold_IsAConfigError()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        RotateAt(tv, 0);
+
+        var r = AddCategory(tv, "paper");
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Equal("config", r.Envelope.Errors[0].Code);
+    }
+
+    private static JsonElement Deep(TempVault tv)
+    {
+        var r = tv.Run("audit", "--deep", "--json");
+        Assert.Equal(0, r.ExitCode);
+        return Data(r).GetProperty("deep");
+    }
+
+    [Fact]
+    public void Audit_WithoutDeep_ChecksOnlyTheLiveSegment()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        RotateAt(tv, 1);
+        AddCategory(tv, "paper");
+        AddCategory(tv, "talk");
+        File.WriteAllBytes(Path.Combine(AuditDir(tv), "audit.000001.log.gz"), [1, 2, 3]);
+
+        var r = tv.Run("audit", "--json");
+
+        Assert.True(Data(r).GetProperty("chain").GetProperty("intact").GetBoolean());
+        Assert.False(Data(r).TryGetProperty("deep", out _));
+    }
+
+    [Fact]
+    public void AuditDeep_VerifiesEverySegmentAndTheLinksBetweenThem()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        RotateAt(tv, 1);
+        AddCategory(tv, "paper");
+        AddCategory(tv, "talk");
+
+        var deep = Deep(tv);
+
+        Assert.True(deep.GetProperty("intact").GetBoolean());
+        var segments = deep.GetProperty("segments").EnumerateArray().Select(s => s.GetProperty("segment").GetString()).ToArray();
+        Assert.Equal(new[] { "audit.000001.log.gz", "audit.000002.log.gz", "live" }, segments);
+    }
+
+    [Fact]
+    public void AuditDeep_DetectsAnEditedArchivedSegment()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        RotateAt(tv, 1);
+        AddCategory(tv, "paper");
+        AddCategory(tv, "talk");
+        var path = Path.Combine(AuditDir(tv), "audit.000002.log.gz");
+        var edited = Decompress(path).Replace("| paper |", "| article |");
+        using (var gz = new GZipStream(File.Create(path), CompressionLevel.Optimal))
+            gz.Write(System.Text.Encoding.UTF8.GetBytes(edited));
+
+        var deep = Deep(tv);
+
+        Assert.False(deep.GetProperty("intact").GetBoolean());
+        var seg = deep.GetProperty("segments")[1];
+        Assert.False(seg.GetProperty("intact").GetBoolean());
+        Assert.Contains(seg.GetProperty("problems").EnumerateArray(), p => p.GetProperty("code").GetString() == "hash-mismatch");
+    }
+
+    [Fact]
+    public void AuditDeep_DetectsABrokenLinkBetweenSegments()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        RotateAt(tv, 1);
+        AddCategory(tv, "paper");
+        AddCategory(tv, "talk");
+        // Drop the first archived segment's entry: the second no longer
+        // chains from anything the manifest knows.
+        var manifest = JsonDocument.Parse(File.ReadAllText(ManifestPath(tv))).RootElement;
+        var kept = manifest.GetProperty("segments").EnumerateArray().Skip(1).Select(s => s.GetRawText());
+        File.WriteAllText(ManifestPath(tv), "{\"segments\":[" + string.Join(",", kept) + "]}");
+
+        var deep = Deep(tv);
+
+        Assert.False(deep.GetProperty("intact").GetBoolean());
+        var first = deep.GetProperty("segments")[0];
+        Assert.Equal("audit.000002.log.gz", first.GetProperty("segment").GetString());
+        var p = Assert.Single(first.GetProperty("problems").EnumerateArray());
+        Assert.Equal("prev-mismatch", p.GetProperty("code").GetString());
+        Assert.Equal(1, p.GetProperty("line").GetInt32());
+    }
+
+    [Fact]
+    public void AuditDeep_AcceptsAReanchoredSegment_ButNotOneEditedAfterwards()
+    {
+        using var tv = new TempVault();
+        TamperedVault(tv);
+        tv.Run("audit", "reanchor", "--reason", "known edit", "--json");
+
+        var deep = Deep(tv);
+        Assert.True(deep.GetProperty("intact").GetBoolean());
+        var seg = deep.GetProperty("segments")[0];
+        Assert.True(seg.GetProperty("reanchored").GetBoolean());
+
+        var path = Path.Combine(AuditDir(tv), "audit.000001.log.gz");
+        var edited = Decompress(path).Replace("| talk |", "| video |");
+        using (var gz = new GZipStream(File.Create(path), CompressionLevel.Optimal))
+            gz.Write(System.Text.Encoding.UTF8.GetBytes(edited));
+
+        Assert.False(Deep(tv).GetProperty("intact").GetBoolean());
+    }
+
+    // A crash after the manifest named the new segment but before the live
+    // log was emptied leaves the live log holding that segment's bytes. The
+    // chain is not broken by it, and the next mutation finishes the job.
+    [Fact]
+    public void AnInterruptedRotation_IsFinishedByTheNextMutation()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        RotateAt(tv, 1);
+        AddCategory(tv, "paper");
+        File.WriteAllText(LogPath(tv), Decompress(Path.Combine(AuditDir(tv), "audit.000001.log.gz")));
+
+        Assert.True(Data(tv.Run("audit", "--json")).GetProperty("chain").GetProperty("intact").GetBoolean());
+        Assert.Equal(0, AddCategory(tv, "talk").ExitCode);
+
+        Assert.True(Deep(tv).GetProperty("intact").GetBoolean());
+        Assert.Equal("category.add", Fields(Assert.Single(Lines(tv)))[1]);
+    }
 }

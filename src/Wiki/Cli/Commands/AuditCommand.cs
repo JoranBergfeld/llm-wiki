@@ -38,12 +38,24 @@ public static class AuditCommand
         // for the other. Read-only: a broken chain is reported, not repaired
         // (blocking writes and re-anchoring are #45), so the exit code is 0
         // and the agent branches on chain.intact.
+        //
+        // `--deep` (issue #45) also verifies every archived segment and the
+        // links between them; without it only the live segment is read, so
+        // the check stays cheap however long the history grows.
+        var deepOption = new Option<bool>("--deep")
+        {
+            Description = "Also verify every archived audit-log segment and the links between segments",
+        };
+        audit.Add(deepOption);
+
         audit.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
         {
             var vault = ctx.ResolveVault();
-            var chain = Wiki.Audit.AuditLog.For(vault).VerifyLive();
+            var log = Wiki.Audit.AuditLog.For(vault);
+            var chain = log.VerifyLive();
+            var deep = parseResult.GetValue(deepOption) ? log.VerifyDeep() : null;
             var faithfulness = new AuditService().Summary(vault);
-            var report = new AuditReport(chain, faithfulness);
+            var report = new AuditReport(chain, faithfulness, deep);
 
             if (ctx.Json)
                 ctx.EmitOk(report);
@@ -69,6 +81,18 @@ public static class AuditCommand
             console.MarkupLine($"  [red]BROKEN[/]: {c.Problems.Length} problem(s) in {c.Entries} line(s)");
             foreach (var p in c.Problems)
                 console.MarkupLine($"  - line {p.Line}: {Markup.Escape(p.Code)} - {Markup.Escape(p.Message)}");
+        }
+
+        if (report.Deep is { } deep)
+        {
+            console.MarkupLine("[bold]Full chain[/] (--deep): " + (deep.Intact ? "[green]intact[/]" : "[red]BROKEN[/]"));
+            foreach (var s in deep.Segments)
+            {
+                var state = s.Intact ? "[green]intact[/]" : "[red]BROKEN[/]";
+                console.MarkupLine($"  {Markup.Escape(s.Segment)}: {state}, {s.Entries} line(s)" + (s.Reanchored ? " [grey](re-anchored)[/]" : ""));
+                foreach (var p in s.Problems)
+                    console.MarkupLine($"    - line {p.Line}: {Markup.Escape(p.Code)} - {Markup.Escape(p.Message)}");
+            }
         }
 
         var f = report.Faithfulness;
