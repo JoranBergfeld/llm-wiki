@@ -59,4 +59,53 @@ public class McpStdioProcessTests
         Assert.True(missing.IsError);
         Assert.Equal(1, missing.Structured().GetProperty("exitCode").GetInt32());
     }
+
+    private static StdioClientTransportOptions Server(TempVault tv, Dictionary<string, string?> env)
+    {
+        var binary = Environment.GetEnvironmentVariable("WIKI_SMOKE_BINARY");
+        var options = binary is { Length: > 0 }
+            ? new StdioClientTransportOptions { Command = binary, Arguments = ["mcp", "--vault", tv.Path] }
+            : new StdioClientTransportOptions
+            {
+                Command = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet",
+                Arguments = [typeof(App).Assembly.Location, "mcp", "--vault", tv.Path],
+            };
+        options.Name = "wiki";
+        options.WorkingDirectory = tv.Path;
+        options.EnvironmentVariables = new Dictionary<string, string?>(env) { ["WIKI_VAULT"] = null };
+        return options;
+    }
+
+    // Issue #60: WIKI_MCP_EXCLUDE_TOOLS narrows a real server process, the
+    // way an operator configures one instance (the env var cannot be set
+    // in-process without leaking into parallel tests).
+    [Fact]
+    public async Task ExcludeToolsEnv_NarrowsARealServer()
+    {
+        using var tv = new TempVault();
+        tv.Run("init", tv.Path, "--name", "t", "--json");
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await using var client = await McpClient.CreateAsync(new StdioClientTransport(
+            Server(tv, new() { ["WIKI_MCP_EXCLUDE_TOOLS"] = "read_page" })), cancellationToken: timeout.Token);
+
+        var tools = (await client.ListToolsAsync(cancellationToken: timeout.Token)).Select(t => t.Name).ToArray();
+        Assert.DoesNotContain("read_page", tools);
+        Assert.Contains("search_wiki", tools);
+    }
+
+    [Fact]
+    public async Task ExcludeToolsEnv_WithAnUnknownName_RefusesToStart()
+    {
+        using var tv = new TempVault();
+        tv.Run("init", tv.Path, "--name", "t", "--json");
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+        {
+            await using var client = await McpClient.CreateAsync(new StdioClientTransport(
+                Server(tv, new() { ["WIKI_MCP_EXCLUDE_TOOLS"] = "no_such_tool" })), cancellationToken: timeout.Token);
+        });
+        Assert.False(timeout.IsCancellationRequested, "the server should exit at startup, not hang");
+    }
 }
