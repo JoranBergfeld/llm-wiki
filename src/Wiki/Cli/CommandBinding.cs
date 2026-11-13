@@ -33,6 +33,10 @@ public static class CommandBinding
                 Json = parseResult.GetValue(jsonOption),
                 Out = stdout,
                 In = stdin,
+                // The origin rides on the per-invocation root command App.Main
+                // built for this call, so it reaches every command without
+                // threading it through each Build(...) signature.
+                Origin = (parseResult.RootCommandResult.Command as WikiRootCommand)?.Origin ?? CommandOrigin.Cli,
             };
 
             var name = CommandPath(parseResult.CommandResult);

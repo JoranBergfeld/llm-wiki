@@ -47,10 +47,19 @@ public static class VaultBoundary
     // Ordered outermost first.
     private static readonly BoundaryStep[] MutationSteps = [];
     private static readonly BoundaryStep[] ReadSteps = [];
+    // Host commands (`wiki mcp`) run inside no boundary: see CommandKind.Host.
+    private static readonly BoundaryStep[] HostSteps = [];
 
     public static int Run(CommandInvocation invocation, Func<int> command)
     {
-        var steps = invocation.Kind == CommandKind.Mutate ? MutationSteps : ReadSteps;
+        var steps = invocation.Kind switch
+        {
+            CommandKind.Mutate => MutationSteps,
+            CommandKind.Read => ReadSteps,
+            // `wiki mcp`: the steps it hosts each pass their own boundary.
+            CommandKind.Host => HostSteps,
+            _ => throw new InvalidOperationException($"no boundary for command kind {invocation.Kind}"),
+        };
         return RunFrom(steps, 0, invocation, command);
     }
 

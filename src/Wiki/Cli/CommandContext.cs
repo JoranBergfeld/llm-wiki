@@ -15,6 +15,10 @@ public sealed class CommandContext
     public required TextWriter Out { get; init; }
     public required TextReader In { get; init; }
 
+    // How this invocation arrived (CLI, or an MCP transport and whether it
+    // carried a token). Set by App.Main's caller; the audit log records it.
+    public CommandOrigin Origin { get; init; } = CommandOrigin.Cli;
+
     public Vault ResolveVault()
         => Vault.Resolve(VaultFlag, System.Environment.GetEnvironmentVariable, System.IO.Directory.GetCurrentDirectory());
 
