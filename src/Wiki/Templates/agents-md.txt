@@ -64,6 +64,7 @@ Never scan bodies to discover relevance.
 | Write or replace a page body | `wiki page upsert --type <t> --title "…" [--id <id>] --summary "…" --sources <ids> --body-file <path>` |
 | Record ingest progress | `wiki ingest advance <source-id> --to <state> [--touched <ids>]` |
 | Check vault health | `wiki lint` |
+| Read who the owner is | `wiki persona read` |
 | Score retrieval quality | `wiki eval [--k N]` (needs a human-owned eval.yaml) |
 | List/check external URLs | `wiki links check [--external]` |
 | Pick a page to audit | `wiki audit next` |

@@ -162,6 +162,19 @@ public enum IssueKind
     // detail/occurrences - corrupting the one measurement the amendment
     // workflow reads, with a finding that a flaky network can produce.
     BrokenExternalLink,
+
+    // PERSONA.md structural lint (issue #48, spec amendment AC). One kind
+    // per rule rather than one `persona` kind: issues merge on
+    // (kind, subject) and every persona finding has the same subject
+    // (`PERSONA.md`), so a shared kind would make the rules overwrite each
+    // other's detail and occurrences. All are errors (see IssueKindX.Severity)
+    // except PersonaToneLength, which is a warning.
+    PersonaFrontmatter,
+    PersonaSections,
+    PersonaLink,
+    PersonaEntryLength,
+    PersonaSectionCap,
+    PersonaToneLength,
 }
 
 public static class IssueKindX
@@ -183,7 +196,25 @@ public static class IssueKindX
         IssueKind.ContentLoss => "content-loss",
         IssueKind.UnsupportedClaim => "unsupported-claim",
         IssueKind.BrokenExternalLink => "broken-external-link",
+        IssueKind.PersonaFrontmatter => "persona-frontmatter",
+        IssueKind.PersonaSections => "persona-sections",
+        IssueKind.PersonaLink => "persona-link",
+        IssueKind.PersonaEntryLength => "persona-entry-length",
+        IssueKind.PersonaSectionCap => "persona-section-cap",
+        IssueKind.PersonaToneLength => "persona-tone-length",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
+    };
+
+    // Lint severity of a kind. Every pre-persona kind is advisory (spec §11)
+    // and reports as "warning"; the PERSONA.md structural rules are "error"
+    // because they are the rules a persona changeset must pass before it can
+    // be queued (spec §11 table, amendment AC). Lint itself still exits 0 on
+    // errors - it reports and files, it never gates.
+    public static string Severity(IssueKind value) => value switch
+    {
+        IssueKind.PersonaFrontmatter or IssueKind.PersonaSections or IssueKind.PersonaLink
+            or IssueKind.PersonaEntryLength or IssueKind.PersonaSectionCap => "error",
+        _ => "warning",
     };
 
     public static IssueKind Parse(string wire) => wire switch
@@ -203,6 +234,12 @@ public static class IssueKindX
         "content-loss" => IssueKind.ContentLoss,
         "unsupported-claim" => IssueKind.UnsupportedClaim,
         "broken-external-link" => IssueKind.BrokenExternalLink,
+        "persona-frontmatter" => IssueKind.PersonaFrontmatter,
+        "persona-sections" => IssueKind.PersonaSections,
+        "persona-link" => IssueKind.PersonaLink,
+        "persona-entry-length" => IssueKind.PersonaEntryLength,
+        "persona-section-cap" => IssueKind.PersonaSectionCap,
+        "persona-tone-length" => IssueKind.PersonaToneLength,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }
