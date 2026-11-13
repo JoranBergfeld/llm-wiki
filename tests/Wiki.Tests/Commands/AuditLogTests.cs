@@ -242,4 +242,96 @@ public class AuditLogTests
 
         Assert.Equal(rationale, File.ReadAllText(DetailFile(tv, Field(Lines(tv)[^1], "rationale"))));
     }
+
+    // The MCP adapter passes how a call arrived into App.Main as a typed
+    // value; nothing in argv or the environment can set it.
+    [Theory]
+    [InlineData(Wiki.Cli.Transport.Stdio, false, "via=stdio")]
+    [InlineData(Wiki.Cli.Transport.Http, false, "via=http")]
+    [InlineData(Wiki.Cli.Transport.Http, true, "via=http+token")]
+    public void Origin_PassedToMain_IsRecorded(Wiki.Cli.Transport transport, bool token, string expected)
+    {
+        using var tv = new TempVault();
+        Init(tv);
+
+        var exit = Wiki.App.Main(
+            ["category", "add", "paper", "--description", "Papers", "--vault", tv.Path, "--json"],
+            new StringWriter(), new StringReader(""), new Wiki.Cli.InvocationOrigin(transport, token));
+
+        Assert.Equal(0, exit);
+        Assert.Contains(expected, Fields(Lines(tv)[^1]));
+        Assert.Contains("via=cli", Fields(Lines(tv)[0]));
+    }
+
+    private static JsonElement Data(CliResult r) => (JsonElement)r.Envelope.Data!;
+
+    [Fact]
+    public void Audit_ReportsAnIntactLiveSegment_SeparatelyFromFaithfulness()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        tv.RunStdin("Body.", "schema", "propose", "--section", "Conventions", "--json");
+        var before = File.ReadAllText(LogPath(tv));
+
+        var r = tv.Run("audit", "--json");
+
+        Assert.Equal(0, r.ExitCode);
+        var chain = Data(r).GetProperty("chain");
+        Assert.Equal("live", chain.GetProperty("segment").GetString());
+        Assert.True(chain.GetProperty("intact").GetBoolean());
+        Assert.Equal(2, chain.GetProperty("entries").GetInt32());
+        Assert.Equal(0, chain.GetProperty("problems").GetArrayLength());
+        var faithfulness = Data(r).GetProperty("faithfulness");
+        Assert.Equal(0, faithfulness.GetProperty("audited").GetInt32());
+        // `wiki audit` is a read: it appends nothing.
+        Assert.Equal(before, File.ReadAllText(LogPath(tv)));
+    }
+
+    [Fact]
+    public void Audit_DetectsAnEditedLine()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        tv.Run("category", "add", "paper", "--description", "Papers", "--json");
+        tv.Run("reindex", "--json");
+        File.WriteAllText(LogPath(tv), File.ReadAllText(LogPath(tv)).Replace("| paper |", "| article |"));
+
+        var r = tv.Run("audit", "--json");
+
+        Assert.Equal(0, r.ExitCode);
+        var chain = Data(r).GetProperty("chain");
+        Assert.False(chain.GetProperty("intact").GetBoolean());
+        var problem = Assert.Single(chain.GetProperty("problems").EnumerateArray());
+        Assert.Equal(2, problem.GetProperty("line").GetInt32());
+        Assert.Equal("hash-mismatch", problem.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void Audit_DetectsAnEditedDetailFile()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        tv.RunStdin("Original text.", "schema", "propose", "--section", "Conventions", "--json");
+        File.WriteAllText(DetailFile(tv, Field(Lines(tv)[^1], "text")), "Rewritten text.");
+
+        var chain = Data(tv.Run("audit", "--json")).GetProperty("chain");
+
+        Assert.False(chain.GetProperty("intact").GetBoolean());
+        Assert.Equal("detail-mismatch", chain.GetProperty("problems")[0].GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void AnUnsealedLastLine_FailsTheNextMutation_WithNoVaultChange()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        File.AppendAllText(LogPath(tv), "2026-11-13T00:00:00Z | forged | - | exit=0\n");
+        var before = Snapshot(tv);
+
+        var r = tv.RunStdin("Body.", "page", "upsert", "--type", "entity", "--title", "Contoso", "--summary", "s", "--json");
+
+        Assert.Equal(3, r.ExitCode);
+        Assert.Equal("audit-chain-broken", r.Envelope.Errors[0].Code);
+        Assert.Equal(before, Snapshot(tv));
+    }
 }

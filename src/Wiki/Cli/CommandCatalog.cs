@@ -81,6 +81,7 @@ public static class CommandCatalog
 
         ["eval"] = CommandKind.Read,
 
+        ["audit"] = CommandKind.Read,
         ["audit next"] = CommandKind.Read,
         ["audit record"] = CommandKind.Mutate,
         ["audit list"] = CommandKind.Read,
