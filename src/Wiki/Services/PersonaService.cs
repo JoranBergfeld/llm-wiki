@@ -66,26 +66,42 @@ public sealed record PersonaCandidateView(string Id, string Slug, string Path, s
 // `wiki persona distill`: the read side of a pass. `Pending` is the open
 // changeset (null when none), so a pass knows it is about to supersede one.
 // Candidate interview transcripts join this view with issue #53.
+// `Recheck` (issue #52) lists the persona lines lint has filed an open
+// `persona-stale-evidence` issue for and that are still stale: the re-check
+// proposals this pass should settle by re-confirming the line with current
+// evidence (a `change` whose text equals `from`), rewording it or removing it.
 public sealed record PersonaDistillView(
     PersonaView Persona,
     PersonaCandidateView[] Candidates,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] PersonaChangesetData? Pending) : IHumanRenderable
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] PersonaChangesetData? Pending,
+    PersonaRecheckView[] Recheck) : IHumanRenderable
 {
     public string HumanSummary()
-        => $"{Candidates.Length} candidate page(s); {(Pending is null ? "no pending changeset" : "pending changeset " + Pending.Id)}";
+        => $"{Candidates.Length} candidate page(s); {Recheck.Length} line(s) to re-check; "
+           + (Pending is null ? "no pending changeset" : "pending changeset " + Pending.Id);
 }
+
+// One re-check proposal: the open issue that raised it, the line, and each
+// piece of its evidence that no longer holds.
+public sealed record PersonaRecheckView(string Issue, string Section, string Text, PersonaStaleEvidence[] Evidence);
 
 // `wiki persona propose`: the queued changeset (null when the pass proposed
 // no line changes and only recorded what it considered), the id of the
 // changeset it superseded, and the pages whose candidate flag it cleared.
+// AutoAccepted: persona auto-accept (WIKI_PERSONA_AUTO_ACCEPT, issue #51)
+// accepted the changeset at once; it is then `approved`, PERSONA.md holds it
+// and nothing is pending.
 public sealed record PersonaProposeResult(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] PersonaChangesetData? Changeset,
     string? Superseded,
     string[] Cleared,
-    string? PendingPath) : IHumanRenderable
+    string? PendingPath,
+    bool AutoAccepted = false) : IHumanRenderable
 {
     public string HumanSummary()
-        => (Changeset is null ? "nothing queued" : $"queued persona changeset {Changeset.Id}")
+        => (Changeset is null ? "nothing queued"
+               : AutoAccepted ? $"auto-accepted persona changeset {Changeset.Id} -> PERSONA.md"
+               : $"queued persona changeset {Changeset.Id}")
            + (Superseded is null ? "" : $", superseding {Superseded}")
            + $"; cleared {Cleared.Length} candidate flag(s)";
 }
@@ -149,7 +165,25 @@ public sealed class PersonaService
             .ToArray();
         var store = new PersonaChangesets();
         store.Load(v);
-        return new PersonaDistillView(Read(v), candidates, store.Open());
+        return new PersonaDistillView(Read(v), candidates, store.Open(), Recheck(v));
+    }
+
+    // Lint files the proposal (the open issue); the live check keeps a line
+    // that stopped being stale since that lint run out of the pass.
+    private static PersonaRecheckView[] Recheck(Vault v)
+    {
+        var issues = new Issues();
+        issues.Load(v);
+        var open = issues.List(IssueKind.PersonaStaleEvidence, "open")
+            .GroupBy(i => i.Subject, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.Ordinal);
+        if (open.Count == 0)
+            return Array.Empty<PersonaRecheckView>();
+
+        return PersonaEvidence.StaleLines(v, VaultConfig.Load(v.ConfigPath), Load(v))
+            .Where(l => open.ContainsKey(l.Subject))
+            .Select(l => new PersonaRecheckView(open[l.Subject], l.Section, l.Text, l.Evidence))
+            .ToArray();
     }
 
     public PersonaProposeResult Propose(Vault v, string input)
@@ -245,7 +279,10 @@ public sealed class PersonaService
     // Applies an open changeset to the CURRENT PERSONA.md and writes it.
     // Returns the decision plus the full evidence ledger of the new file,
     // which the caller records on the audit line.
-    public (PersonaDecisionResult Result, PersonaLedgerLine[] Ledger) Accept(Vault v, string id)
+    // `Retired` is every evidence reference the previous ledger held that
+    // the new one no longer does: the evidence of removed and reworded
+    // lines, and the old hashes of re-confirmed ones (issue #52).
+    public (PersonaDecisionResult Result, PersonaLedgerLine[] Ledger, PersonaEvidenceData[] Retired) Accept(Vault v, string id)
     {
         var store = new PersonaChangesets();
         store.Load(v);
@@ -275,6 +312,13 @@ public sealed class PersonaService
             }
         }
 
+        var kept = new HashSet<string>(ledger.SelectMany(l => l.Evidence).Select(EvidenceKey), StringComparer.Ordinal);
+        var retired = previous.SelectMany(l => l.Evidence)
+            .Where(e => !kept.Contains(EvidenceKey(e)))
+            .GroupBy(EvidenceKey, StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToArray();
+
         // --- Validation complete ---
 
         // last_distilled is the date of the pass that produced the lines,
@@ -285,8 +329,10 @@ public sealed class PersonaService
         store.Save(v);
         DeletePending(v);
 
-        return (Decision(changeset), ledger.ToArray());
+        return (Decision(changeset), ledger.ToArray(), retired);
     }
+
+    private static string EvidenceKey(PersonaEvidenceData e) => $"{e.Kind}|{e.Page}|{e.Path}|{e.Anchor}|{e.Hash}";
 
     public PersonaDecisionResult Reject(Vault v, string id, string? reason)
     {
@@ -376,13 +422,16 @@ public sealed class PersonaService
         var from = change.From?.Trim();
         var text = change.Text?.Trim();
 
-        string RequireText()
+        // `keep` is the index of the line a `change` replaces: re-confirming a
+        // line with fresh evidence (text equal to from) is not a duplicate.
+        string RequireText(int keep = -1)
         {
             if (string.IsNullOrEmpty(text))
                 throw new ValidationException("invalid-changeset", $"{where}: '{change.Op}' needs a non-empty 'text'");
             if (text.Contains('\n') || text.Contains('\r'))
                 throw new ValidationException("invalid-changeset", $"{where}: a persona line is one line; 'text' holds a line break");
-            if (lines.Contains(text))
+            var existing = lines.IndexOf(text);
+            if (existing >= 0 && existing != keep)
                 throw new ValidationException(stale ? "changeset-stale" : "duplicate-persona-line",
                     $"{where}: {heading} already holds '{text}'");
             return text;
@@ -408,7 +457,7 @@ public sealed class PersonaService
             case "change":
             {
                 var at = RequireFrom();
-                lines[at] = RequireText();
+                lines[at] = RequireText(keep: at);
                 return new PersonaChangeData { Op = "change", Section = change.Section, From = from, Text = text, Evidence = change.Evidence };
             }
             case "remove":
