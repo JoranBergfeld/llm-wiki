@@ -130,7 +130,7 @@ public sealed class AuditLog
     // broken or not, as an archived segment that ends on the SHA-256 of its
     // content, and returns a writer on the now-empty live log whose next line
     // (the re-anchor line, carrying the reason) chains from that hash.
-    public (AuditWriter Writer, string Segment) Reanchor()
+    public AuditWriter Reanchor()
     {
         var (stream, createdFile, createdDir) = OpenStream();
         try
@@ -142,8 +142,8 @@ public sealed class AuditLog
             var text = Utf8NoBom.GetString(bytes);
             var anchor = AuditLine.Sha256Hex(bytes);
             var entries = Verify(text, BasePrev(manifest), "live", LogPath).Entries;
-            var segment = Archive(stream, manifest, bytes, entries, anchor, reanchored: true);
-            return (new AuditWriter(this, stream, anchor, createdFile ? LogPath : null, createdDir ? _dir : null), segment);
+            Archive(stream, manifest, bytes, entries, anchor, reanchored: true);
+            return new AuditWriter(this, stream, anchor, createdFile ? LogPath : null, createdDir ? _dir : null);
         }
         catch
         {

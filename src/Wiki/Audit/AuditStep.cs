@@ -50,6 +50,13 @@ public static class AuditStep
             // yet. Such a command fails on its own unless it creates the
             // vault, in which case it says so through ctx.Audit.VaultRoot.
             var vault = TryResolve(ctx);
+
+            // `audit reanchor` (issue #45) is the one mutation that runs on a
+            // broken chain: the command validates, then the live log is set
+            // aside as an archived segment and its line starts the new one.
+            if (vault is not null && invocation.Name == AuditLog.ReanchorCommand)
+                return Reanchor(AuditLog.For(vault), invocation, next);
+
             if (vault is not null)
             {
                 writer = AuditLog.For(vault).OpenForAppend();
@@ -96,6 +103,21 @@ public static class AuditStep
         {
             writer?.Dispose();
         }
+    }
+
+    // Nothing is opened before the command runs (OpenForAppend would refuse
+    // the broken chain); the command refuses an intact chain and a missing
+    // reason itself, and only once it has returned 0 is the live log archived
+    // and the re-anchor line appended, still under the vault lock.
+    private static int Reanchor(AuditLog log, CommandInvocation invocation, Func<int> next)
+    {
+        var exit = next();
+        if (exit != 0)
+            return exit;
+        var writer = log.Reanchor();
+        using (writer)
+            Append(writer, invocation, "exit=0");
+        return exit;
     }
 
     private static Vault? TryResolve(CommandContext ctx)

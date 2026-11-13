@@ -75,4 +75,66 @@ public class AuditChainTests
         Assert.Equal(0, audit.ExitCode);
         Assert.False(Data(audit).GetProperty("chain").GetProperty("intact").GetBoolean());
     }
+
+    private static string Decompress(string path)
+    {
+        using var gz = new GZipStream(File.OpenRead(path), CompressionMode.Decompress);
+        using var r = new StreamReader(gz);
+        return r.ReadToEnd();
+    }
+
+    [Fact]
+    public void Reanchor_RestoresWrites_AndRecordsItsReasonInTheChain()
+    {
+        using var tv = new TempVault();
+        TamperedVault(tv);
+        var broken = File.ReadAllText(LogPath(tv));
+
+        var r = tv.Run("audit", "reanchor", "--reason", "restored from backup after disk fault", "--json");
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal("audit.000001.log.gz", Data(r).GetProperty("segment").GetString());
+        // The broken bytes are kept exactly as found, in an archived segment.
+        Assert.Equal(broken, Decompress(Path.Combine(AuditDir(tv), "audit.000001.log.gz")));
+        var line = Assert.Single(Lines(tv));
+        Assert.Equal("audit.reanchor", Fields(line)[1]);
+        Assert.Equal("restored from backup after disk fault", Field(line, "reason"));
+        // It chains from the SHA-256 of the broken content it sets aside
+        // (known-good: hashed here independently of the CLI).
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        Assert.Equal(System.Convert.ToHexString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(broken))).ToLowerInvariant(),
+            Field(line, "prev"));
+
+        Assert.True(Data(tv.Run("audit", "--json")).GetProperty("chain").GetProperty("intact").GetBoolean());
+        Assert.Equal(0, AddCategory(tv, "memo").ExitCode);
+        Assert.Equal(2, Lines(tv).Length);
+    }
+
+    [Fact]
+    public void Reanchor_WithoutAReason_IsRejected_AndChangesNothing()
+    {
+        using var tv = new TempVault();
+        TamperedVault(tv);
+        var before = Snapshot(tv);
+
+        var r = tv.Run("audit", "reanchor", "--reason", "  ", "--json");
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Equal("missing-reason", r.Envelope.Errors[0].Code);
+        Assert.Equal(before, Snapshot(tv));
+    }
+
+    [Fact]
+    public void Reanchor_OnAnIntactChain_IsRefused_AndChangesNothing()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        var before = Snapshot(tv);
+
+        var r = tv.Run("audit", "reanchor", "--reason", "just because", "--json");
+
+        Assert.Equal(3, r.ExitCode);
+        Assert.Equal("audit-chain-intact", r.Envelope.Errors[0].Code);
+        Assert.Equal(before, Snapshot(tv));
+    }
 }

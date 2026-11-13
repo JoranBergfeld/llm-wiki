@@ -29,6 +29,7 @@ public static class AuditCommand
         audit.Add(BuildNext(vaultOption, jsonOption, stdout, stdin));
         audit.Add(BuildRecord(vaultOption, jsonOption, stdout, stdin));
         audit.Add(BuildList(vaultOption, jsonOption, stdout, stdin));
+        audit.Add(BuildReanchor(vaultOption, jsonOption, stdout, stdin));
 
         // Bare `wiki audit` (issue #44): the two integrity reports side by
         // side and clearly apart - the audit log's hash chain (is the history
@@ -192,6 +193,50 @@ public static class AuditCommand
         }));
 
         return list;
+    }
+
+    // `wiki audit reanchor --reason <text>` (issue #45): the explicit step that
+    // restores writes after the live audit chain broke. This command only
+    // validates and reports; the archiving itself is done by the audit step
+    // on the mutation boundary (AuditStep), under the vault lock, because that
+    // step holds the live log open for the whole command.
+    private static Command BuildReanchor(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var reasonOption = new Option<string?>("--reason")
+        {
+            Description = "Why the break is understood and writes may resume. Recorded in the re-anchor line",
+        };
+
+        var reanchor = new Command("reanchor",
+            "Set a broken live audit log aside as an archived segment and restart the chain from it, recording why")
+        {
+            reasonOption,
+        };
+
+        reanchor.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var reason = parseResult.GetValue(reasonOption)?.Trim();
+            if (string.IsNullOrEmpty(reason))
+                throw new ValidationException("missing-reason",
+                    "--reason is required: say why the break is understood and writes may resume");
+
+            var vault = ctx.ResolveVault();
+            var log = Wiki.Audit.AuditLog.For(vault);
+            var live = log.VerifyLive();
+            if (live.Intact)
+                throw new StateConflictException("audit-chain-intact",
+                    "the live audit chain is intact; there is nothing to re-anchor", log.LogPath);
+
+            // --- Validation complete ---
+            var segment = log.NextSegmentFile();
+            ctx.Audit.Action = "audit.reanchor";
+            ctx.Audit.Subject = segment;
+            ctx.Audit.Field("reason", reason).Field("problems", live.Problems.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            ctx.EmitOk(new Wiki.Audit.ReanchorResult(segment, live.Problems.Length, reason));
+            return 0;
+        }));
+
+        return reanchor;
     }
 
     private static void RenderTarget(TextWriter output, AuditTarget target)
