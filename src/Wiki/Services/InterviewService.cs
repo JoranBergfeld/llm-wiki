@@ -86,8 +86,12 @@ public sealed class InterviewService
             var existing = Load(v, id)
                 ?? throw new ValidationException("not-found",
                     $"no interview transcript '{id}' ({InterviewTranscript.RelPath(id)}); omit --transcript to start a new one");
+            // A ValidationException (exit 1), not a StateConflictException
+            // (exit 3): exit 3 means "already done" and the MCP adapter reports
+            // it as success, while here the answer was NOT recorded and would
+            // be lost (amendment AT).
             if (!existing.Candidate)
-                throw new StateConflictException("transcript-finished",
+                throw new ValidationException("transcript-finished",
                     $"interview transcript '{id}' is finished (a distillation pass considered it) and is never appended to; omit --transcript to start a new one");
             created = false;
             next = existing.Entries.Select(e => int.Parse(e.Anchor[1..], CultureInfo.InvariantCulture)).DefaultIfEmpty(0).Max() + 1;
