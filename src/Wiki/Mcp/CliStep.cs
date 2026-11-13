@@ -31,10 +31,20 @@ public sealed class CliStep
     // instead of being the key's value. See Collect().
     public bool Collected { get; private set; }
 
-    // Omitted when null, so the CLI's own default applies.
+    // Omitted when null, so the CLI's own default applies. An empty string is
+    // preserved as an empty value (what `--opt ""` passes from a shell). It
+    // cannot go in as `--opt=`: System.CommandLine reads that as `--opt`
+    // with no value and takes the NEXT token as the value - another option
+    // of this step (`--tags= --stdin` filed "--stdin" as a tag and lost the
+    // body) or the `--` separator (a parse error, `unknown-command`). The
+    // separate empty token is safe because "" can never name an option.
     public CliStep Option(string name, string? value)
     {
-        if (value is not null)
+        if (value is null)
+            return this;
+        if (value.Length == 0)
+            _options.AddRange([name, ""]);
+        else
             _options.Add(name + "=" + value);
         return this;
     }

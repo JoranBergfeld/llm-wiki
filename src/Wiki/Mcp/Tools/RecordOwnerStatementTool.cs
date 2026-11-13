@@ -41,8 +41,11 @@ public sealed class RecordOwnerStatementTool(CliAdapter cli)
         var run = cli.Begin(cancellationToken);
         run.Step(new CliStep("record", "persona", "interview", "record")
             .Option("--section", section)
-            // `--opt=` (empty) does not parse (#57); a blank question or
-            // transcript means the same as omitting it.
+            // Deliberate tool semantics, not a parse workaround (CliStep
+            // passes empty values through): a blank question means a line the
+            // owner dictated and a blank transcript means "start a new one",
+            // the same as omitting them. The CLI itself rejects a blank
+            // --question, which an assistant filling every field should not hit.
             .Option("--question", string.IsNullOrWhiteSpace(question) ? null : question)
             .Option("--transcript", string.IsNullOrWhiteSpace(transcript) ? null : transcript)
             .Flag("--stdin", true)

@@ -51,9 +51,9 @@ public sealed class ContinueIngestTool(CliAdapter cli)
             case "advance":
                 if (run.Step(new CliStep("advance", "ingest", "advance")
                         .Option("--to", target)
-                        // `--touched=` (empty) does not parse; the CLI reads an
-                        // absent option as the empty list.
-                        .Option("--touched", string.IsNullOrWhiteSpace(touched) ? null : touched)
+                        // Empty `touched` goes through as an empty value: the
+                        // CLI reads it, like an absent option, as the empty list.
+                        .Option("--touched", touched)
                         .Positional(id!)))
                     run.Step(new CliStep("plan", "ingest", "resume").Positional(id!));
                 break;
