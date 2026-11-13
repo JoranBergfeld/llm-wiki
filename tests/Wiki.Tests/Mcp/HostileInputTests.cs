@@ -43,6 +43,10 @@ public class HostileInputTests
         ["id"] = pageId,
         ["newSlug"] = "contoso-renamed",
         ["add_category.id"] = "podcast",
+        ["sourceId"] = sourceId,
+        ["ingest_source.category"] = "article",
+        ["filename"] = "note.md",
+        ["content"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("Benign upload.")),
     };
 
     [Theory]
@@ -68,66 +72,79 @@ public class HostileInputTests
         File.WriteAllText(responseFile, $"--vault\n{other.Path}\n");
         string[] hostile = [$"--vault={other.Path}", "@" + responseFile, "--json=false", $"--vault {other.Path}"];
 
-        await using var mcp = await McpHarness.StartAsync(bound, transport);
-        var tools = await mcp.Client.ListToolsAsync();
-        var calls = 0;
-
-        foreach (var tool in tools)
+        // ingest_source needs an inbox (#57); it lives outside both vaults.
+        var inbox = Path.Combine(Path.GetTempPath(), "wiki-inbox-" + Guid.NewGuid().ToString("N"));
+        try
         {
-            var schema = tool.ProtocolTool.InputSchema;
-            var strings = schema.GetProperty("properties").EnumerateObject()
-                .Where(p => IsString(p.Value))
-                .ToArray();
-            // Selectors (an `enum`, e.g. browse_wiki's view) pick the CLI
-            // command, so every free-text argument is attacked under every
-            // selector value. A hostile selector value never reaches the CLI:
-            // it is a schema failure.
-            var selectors = strings.Where(p => p.Value.TryGetProperty("enum", out _)).ToArray();
-            var properties = strings.Except(selectors).Select(p => p.Name).ToArray();
-            var required = schema.TryGetProperty("required", out var r)
-                ? r.EnumerateArray().Select(e => e.GetString()!).ToArray()
-                : [];
+            await using var mcp = await McpHarness.StartAsync(bound, transport, null, "--inbox-root", inbox);
+            var tools = await mcp.Client.ListToolsAsync();
+            var calls = 0;
 
-            foreach (var selector in selectors)
-            foreach (var value in hostile)
+            foreach (var tool in tools)
             {
-                var ex = await Assert.ThrowsAsync<McpProtocolException>(() => mcp.CallAsync(tool.Name,
-                    new Dictionary<string, object?>(required.Select(n => KeyValuePair.Create(n, (object?)"contoso"))) { [selector.Name] = value }));
-                Assert.Equal(McpErrorCode.InvalidParams, ex.ErrorCode);
-                calls++;
+                var schema = tool.ProtocolTool.InputSchema;
+                var strings = schema.GetProperty("properties").EnumerateObject()
+                    .Where(p => IsString(p.Value))
+                    .ToArray();
+                // Selectors (an `enum`, e.g. browse_wiki's view) pick the CLI
+                // command, so every free-text argument is attacked under every
+                // selector value. A hostile selector value never reaches the CLI:
+                // it is a schema failure.
+                var selectors = strings.Where(p => p.Value.TryGetProperty("enum", out _)).ToArray();
+                var properties = strings.Except(selectors).Select(p => p.Name).ToArray();
+                var required = schema.TryGetProperty("required", out var r)
+                    ? r.EnumerateArray().Select(e => e.GetString()!).ToArray()
+                    : [];
+
+                foreach (var selector in selectors)
+                foreach (var value in hostile)
+                {
+                    var ex = await Assert.ThrowsAsync<McpProtocolException>(() => mcp.CallAsync(tool.Name,
+                        new Dictionary<string, object?>(required.Select(n => KeyValuePair.Create(n, (object?)"contoso"))) { [selector.Name] = value }));
+                    Assert.Equal(McpErrorCode.InvalidParams, ex.ErrorCode);
+                    calls++;
+                }
+
+                foreach (var mode in Modes(selectors))
+                foreach (var property in properties)
+                foreach (var value in hostile)
+                {
+                    // Every other free-text argument gets a plausible value, so
+                    // the chosen command has what it needs (#55, #56).
+                    var args = properties.ToDictionary(n => n, n => (object?)BenignFor(benign, tool.Name, n));
+                    foreach (var (name, selected) in mode)
+                        args[name] = selected;
+                    args[property] = value;
+
+                    var result = await mcp.CallAsync(tool.Name, args);
+                    calls++;
+
+                    // Still the JSON envelope (--json=false never reached the CLI as an option).
+                    var s = result.Structured();
+                    Assert.Equal(1, s.GetProperty("v").GetInt32());
+                    Assert.True(s.TryGetProperty("exitCode", out _), $"{tool.Name}.{property}={value}");
+                    // The value reached the command as a plain value: a parse
+                    // error (`unknown-command`) would mean it was read as an option.
+                    var codes = s.GetProperty("errors").EnumerateArray().Select(e => e.GetProperty("code").GetString());
+                    Assert.DoesNotContain("unknown-command", codes);
+                    // And never the other vault's content.
+                    Assert.DoesNotContain(OtherMarker, JsonSerializer.Serialize(result.StructuredContent), StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain(OtherMarker, result.Text(), StringComparison.OrdinalIgnoreCase);
+                }
             }
 
-            foreach (var mode in Modes(selectors))
-            foreach (var property in properties)
-            foreach (var value in hostile)
-            {
-                // Every other free-text argument gets a plausible value, so
-                // the chosen command has what it needs (#55, #56).
-                var args = properties.ToDictionary(n => n, n => (object?)BenignFor(benign, tool.Name, n));
-                foreach (var (name, selected) in mode)
-                    args[name] = selected;
-                args[property] = value;
-
-                var result = await mcp.CallAsync(tool.Name, args);
-                calls++;
-
-                // Still the JSON envelope (--json=false never reached the CLI as an option).
-                var s = result.Structured();
-                Assert.Equal(1, s.GetProperty("v").GetInt32());
-                Assert.True(s.TryGetProperty("exitCode", out _), $"{tool.Name}.{property}={value}");
-                // The value reached the command as a plain value: a parse
-                // error (`unknown-command`) would mean it was read as an option.
-                var codes = s.GetProperty("errors").EnumerateArray().Select(e => e.GetProperty("code").GetString());
-                Assert.DoesNotContain("unknown-command", codes);
-                // And never the other vault's content.
-                Assert.DoesNotContain(OtherMarker, JsonSerializer.Serialize(result.StructuredContent), StringComparison.OrdinalIgnoreCase);
-                Assert.DoesNotContain(OtherMarker, result.Text(), StringComparison.OrdinalIgnoreCase);
-            }
+            Assert.True(calls > 0);
+            // No tool, write tools included, ever wrote to the other vault.
+            Assert.Equal(otherBefore, Snapshot(other.Path));
+            // Uploads only ever landed directly in <inbox>/<category>.
+            if (Directory.Exists(inbox))
+                Assert.All(Directory.EnumerateFiles(inbox, "*", SearchOption.AllDirectories),
+                    f => Assert.Equal(Path.GetFullPath(inbox), Path.GetDirectoryName(Path.GetDirectoryName(f))));
         }
-
-        Assert.True(calls > 0);
-        // No tool, write tools included, ever wrote to the other vault.
-        Assert.Equal(otherBefore, Snapshot(other.Path));
+        finally
+        {
+            try { Directory.Delete(inbox, true); } catch { }
+        }
     }
 
     // Every combination of selector values; one empty mode when there are none.
