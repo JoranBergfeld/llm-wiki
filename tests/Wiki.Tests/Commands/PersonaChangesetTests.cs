@@ -218,6 +218,25 @@ public class PersonaChangesetTests
         Assert.Equal("evidence-not-endorsed", r.Envelope.Errors[0].Code);
     }
 
+    // Amendment AV: a page that also cites a source outside every
+    // persona-source category is not an endorsed note.
+    [Fact]
+    public void Propose_EvidenceFromAMixedSourcePage_IsRejected()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var a = Page(tv, "Craft one");
+        var endorsed = AddSource(tv, "article", "mixed-endorsed-src");
+        var other = AddSource(tv, "meeting-transcript", "mixed-other-src");
+        var mixed = tv.RunStdin("Body of Mixed", "page", "upsert", "--type", "summary", "--title", "Mixed",
+            "--summary", "Mixed summary", "--sources", endorsed + "," + other, "--stdin", "--json");
+        Assert.Equal(0, mixed.ExitCode);
+
+        var r = Propose(tv, Changeset("r", new[] { Add("values", "I value craft.", a.Id, Data(mixed).GetProperty("id").GetString()!) }));
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Equal("evidence-not-endorsed", r.Envelope.Errors[0].Code);
+    }
+
     [Fact]
     public void Propose_WithoutAReason_IsRejected()
     {

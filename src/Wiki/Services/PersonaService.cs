@@ -509,9 +509,9 @@ public sealed class PersonaService
                         throw new ValidationException("invalid-changeset",
                             $"change {index + 1}: page evidence needs 'page' (an id or slug)");
                     var page = ResolvePage(pages, e.Page.Trim());
-                    if (!PageService.CitesPersonaSource(v, cfg, idmap, page.Front.Sources))
+                    if (!PageService.IsEndorsedNote(v, cfg, idmap, page.Front.Sources))
                         throw new ValidationException("evidence-not-endorsed",
-                            $"change {index + 1}: [[{page.Slug}]] cites no source in a persona-source category, so it is not an endorsed note");
+                            $"change {index + 1}: [[{page.Slug}]] cites a source outside the persona-source categories (or none), so it is not an endorsed note");
                     if (result.Any(r => r.Page == page.Front.Id))
                         continue;
                     result.Add(new PersonaEvidenceData

@@ -156,25 +156,55 @@ public class PersonaSourceTests
         Assert.DoesNotContain("persona:", PageText(tv, r));
     }
 
+    // Amendment AV: only a page whose cited sources are ALL in persona-source
+    // categories is an endorsed note; one other source and it is not.
     [Fact]
-    public void UpdateThatDropsThePersonaSource_ClearsFlag_AndUpdateThatAddsIt_SetsIt()
+    public void PageCitingAPersonaSourceAndAnotherSource_NeverCarriesFlag()
     {
         using var tv = new TempVault();
         InitWithPersonaSourceLine(tv, "persona-source: true");
         var note = AddSource(tv, "article", "my-note");
         var transcript = AddSource(tv, "meeting-transcript", "call");
 
-        var created = Upsert(tv, "Mixed", transcript);
+        var r = Upsert(tv, "Mixed", note + "," + transcript);
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.DoesNotContain("persona:", PageText(tv, r));
+    }
+
+    [Fact]
+    public void PageCitingOnlyPersonaSources_CarriesFlag()
+    {
+        using var tv = new TempVault();
+        InitWithPersonaSourceLine(tv, "persona-source: true");
+        var one = AddSource(tv, "article", "note-one");
+        var two = AddSource(tv, "article", "note-two");
+
+        var r = Upsert(tv, "Two notes", one + "," + two);
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.Contains("\npersona: candidate\n", PageText(tv, r));
+    }
+
+    [Fact]
+    public void UpdateThatAddsANonPersonaSource_ClearsFlag_AndUpdateThatDropsIt_SetsIt()
+    {
+        using var tv = new TempVault();
+        InitWithPersonaSourceLine(tv, "persona-source: true");
+        var note = AddSource(tv, "article", "my-note");
+        var transcript = AddSource(tv, "meeting-transcript", "call");
+
+        var created = Upsert(tv, "Mixed", note);
         var id = Data(created).GetProperty("id").GetString()!;
-        Assert.DoesNotContain("persona:", PageText(tv, created));
+        Assert.Contains("\npersona: candidate\n", PageText(tv, created));
 
-        var withNote = Upsert(tv, "Mixed", transcript + "," + note, id);
-        Assert.Equal(0, withNote.ExitCode);
-        Assert.Contains("\npersona: candidate\n", PageText(tv, withNote));
+        var withTranscript = Upsert(tv, "Mixed", transcript + "," + note, id);
+        Assert.Equal(0, withTranscript.ExitCode);
+        Assert.DoesNotContain("persona:", PageText(tv, withTranscript));
 
-        var withoutNote = Upsert(tv, "Mixed", transcript, id);
-        Assert.Equal(0, withoutNote.ExitCode);
-        Assert.DoesNotContain("persona:", PageText(tv, withoutNote));
+        var noteOnly = Upsert(tv, "Mixed", note, id);
+        Assert.Equal(0, noteOnly.ExitCode);
+        Assert.Contains("\npersona: candidate\n", PageText(tv, noteOnly));
     }
 
     [Fact]

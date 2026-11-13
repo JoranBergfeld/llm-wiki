@@ -324,7 +324,7 @@ public sealed class PageService
                 throw new ValidationException("unknown-source", $"unknown source id '{sourceId}'");
         }
 
-        var personaCandidate = CitesPersonaSource(v, cfg, idmap, req.Sources);
+        var personaCandidate = IsEndorsedNote(v, cfg, idmap, req.Sources);
 
         // Title is immutable on update (not in the replace list, and renames
         // are Task 20's job), so there is no new title to collide with an
@@ -536,7 +536,7 @@ public sealed class PageService
                 throw new ValidationException("unknown-source", $"unknown source id '{sourceId}'");
         }
 
-        var personaCandidate = CitesPersonaSource(v, cfg, idmap, req.Sources);
+        var personaCandidate = IsEndorsedNote(v, cfg, idmap, req.Sources);
 
         var existingSlugs = new HashSet<string>(existing.Select(p => p.Slug), StringComparer.Ordinal);
 
@@ -641,39 +641,39 @@ public sealed class PageService
     }
 
 
-    // Issue #49 / ADR 0001: a page is an endorsed note - and lands as
-    // `persona: candidate` - when at least one source it cites belongs to a
-    // category the owner marked `persona-source: true`. "At least one" rather
-    // than "all" because the glossary defines an endorsed note as a page built
-    // from such a source; a page that also cites other material is still built
-    // from it, and the distillation pass plus the owner's changeset review
-    // decide what of it is persona evidence. Pages citing only other
-    // categories, or nothing, never carry the flag.
+    // Issue #49 / ADR 0001, amendment AV: a page is an endorsed note - and
+    // lands as `persona: candidate`, and counts as persona evidence - only
+    // when EVERY source it cites belongs to a category the owner marked
+    // `persona-source: true`. #49 first said "at least one", but a page that
+    // mixes in other material can carry words the owner never endorsed, and
+    // the persona must never be inferred from those (glossary "Persona").
+    // Pages citing nothing are never endorsed notes.
     //
     // Reads each cited source's frontmatter for its category; the ids were
     // already checked against the idmap by the caller, so this is a read
     // during validation, not a precondition of its own.
-    internal static bool CitesPersonaSource(Vault v, VaultConfig cfg, IdMap idmap, string[] sources)
+    internal static bool IsEndorsedNote(Vault v, VaultConfig cfg, IdMap idmap, string[] sources)
     {
-        if (!cfg.Categories.Any(c => c.PersonaSource))
+        if (sources.Length == 0 || !cfg.Categories.Any(c => c.PersonaSource))
             return false;
 
         foreach (var sourceId in sources)
         {
             // A stale idmap entry (raw file deleted outside the CLI) is not
-            // this check's to report - the upsert has always accepted it - and
-            // a source that is not there endorses nothing.
+            // this check's to report - the upsert has always accepted it - but
+            // a source that is not there endorses nothing, so the page is not
+            // wholly endorsed.
             var relPath = idmap.PathFor(sourceId);
             if (relPath is null)
-                continue;
+                return false;
             var fullPath = System.IO.Path.Combine(v.Root, relPath);
             if (!File.Exists(fullPath))
-                continue;
+                return false;
             var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(fullPath));
-            if (cfg.IsPersonaSource(SourceFrontmatter.FromRaw(scalars, lists).Category))
-                return true;
+            if (!cfg.IsPersonaSource(SourceFrontmatter.FromRaw(scalars, lists).Category))
+                return false;
         }
-        return false;
+        return true;
     }
 
     private static byte[] DefaultRandomBytes()

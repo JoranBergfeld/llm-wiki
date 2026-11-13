@@ -175,7 +175,7 @@ updated: 2026-07-13               # CLI-maintained on every write
 summary: "One-line routing description"  # REQUIRED; supplied via --summary; feeds index.md (§9)
 sources: [01J9ZKM1..., 01J9ZKM2...]  # source IDs this page cites — provenance backbone
 tags: []                          # optional, free-form, for Obsidian/Dataview
-persona: candidate                # CLI-set, present only when the page cites a persona-source category (amendment AB)
+persona: candidate                # CLI-set, present only when every source the page cites is in a persona-source category (amendments AB, AV)
 ```
 
 Source files (`raw/`):
@@ -411,7 +411,7 @@ The canonical agent flow (encoded in AGENTS.md, enforced by ledger preconditions
 | `persona-section-cap` | **Error.** Values over 10 lines, Principles over 15, Boundaries over 10 |
 | `persona-tone-length` | Warning. Tone of voice past 600 words |
 | `persona-evidence` | **Error.** A persona line whose recorded evidence (the audit log's `ledger` for the accept named by `audit_entry`) is fewer than two endorsed pages and no owner-stated text, or a tone-of-voice line not resting on owner-stated text (amendment AH) |
-| `persona-stale-evidence` | Warning. One per persona line (subject `PERSONA.md#<section>: <line>`) whose recorded evidence no longer holds: an evidence page whose body hash differs from the recorded one, a page that is gone, or a page that no longer cites a persona-source category; an owner-stated answer that was edited, removed or retracted with its transcript (amendment AQ). The open issue is the line's re-check proposal; lint resolves it itself once the line is no longer stale (amendment AN) |
+| `persona-stale-evidence` | Warning. One per persona line (subject `PERSONA.md#<section>: <line>`) whose recorded evidence no longer holds: an evidence page whose body hash differs from the recorded one, a page that is gone, or a page that is no longer an endorsed note (a cited source outside the persona-source categories, amendment AV); an owner-stated answer that was edited, removed or retracted with its transcript (amendment AQ). The open issue is the line's re-check proposal; lint resolves it itself once the line is no longer stale (amendment AN) |
 
 Every kind above except the `persona-*` errors reports as severity `warning` in the lint report's per-kind counts; lint exits 0 regardless (amendment AC).
 
@@ -671,7 +671,7 @@ Same standing as Appendices B and C: these override the original text where they
   all or nothing (a mixed inbox gets split). The value must be `true` or
   `false`, and any other key on a category is a config error, because a
   mistyped endorsement that is silently ignored is worse than a failed load.
-  `wiki page upsert` sets `persona: candidate` on a page when at least one
+  `wiki page upsert` sets `persona: candidate` on a page when at least one (every one since amendment AV)
   source it cites belongs to a persona-source category, and omits the key
   otherwise. The flag is re-derived on every full-body write (new content
   re-raises a flag a distillation pass cleared; a page that stops citing
