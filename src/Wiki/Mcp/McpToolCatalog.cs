@@ -33,5 +33,6 @@ public static class McpToolCatalog
         .WithTools(new IngestSourceTool(cli, inbox))
         .WithTools(new ContinueIngestTool(cli))
         .WithTools(new ReadPersonaTool(cli))
+        .WithTools(new DistillPersonaTool(cli))
         .WithTools(new RecordOwnerStatementTool(cli));
 }

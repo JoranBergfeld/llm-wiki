@@ -66,6 +66,74 @@ public class PersonaToolTests
         Assert.Contains("word for word", guide.GetProperty("text").GetString());
     }
 
+    // ---- distill_persona --------------------------------------------------
+
+    // Init with the scaffolded `article` category endorsed (persona-source),
+    // so summary pages citing article sources are persona candidates.
+    private static void InitPersona(TempVault tv)
+    {
+        Init(tv);
+        var path = Path.Combine(tv.Path, "wiki.yaml");
+        var text = File.ReadAllText(path);
+        var anchor = "description: \"Web articles and blog posts\"";
+        Assert.Contains(anchor, text);
+        File.WriteAllText(path, text.Replace(anchor, anchor + "\n    persona-source: true"));
+    }
+
+    private static string SummaryPage(TempVault tv, string title)
+    {
+        var src = Path.Combine(tv.Path, title.ToLowerInvariant().Replace(' ', '-') + "-src.md");
+        File.WriteAllText(src, "Content of " + title);
+        var source = CliData(tv.Run("source", "add", src, "--category", "article", "--title", title, "--json"))
+            .GetProperty("id").GetString()!;
+        var r = tv.RunStdin("Body of " + title, "page", "upsert", "--type", "summary", "--title", title,
+            "--summary", title + " summary", "--sources", source, "--stdin", "--json");
+        Assert.Equal(0, r.ExitCode);
+        return CliData(r).GetProperty("id").GetString()!;
+    }
+
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task DistillPersona_ReturnsCandidatePagesAndTranscripts_WithThePersona(string transport)
+    {
+        using var tv = new TempVault(); InitPersona(tv);
+        var page = SummaryPage(tv, "Craft one");
+        var transcript = CliData(tv.Run("persona", "interview", "record", "--section", "values",
+            "--question", "What matters?", "--answer", "Careful craft.", "--json")).GetProperty("transcript").GetString()!;
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+
+        var result = await mcp.CallAsync("distill_persona");
+
+        Assert.False(result.IsError, result.Text());
+        var s = result.Structured();
+        Assert.Equal(["persona distill"], CompletedSteps(s));
+        var distill = s.GetProperty("data").GetProperty("distill");
+        Assert.True(distill.TryGetProperty("persona", out var persona));
+        Assert.False(persona.GetProperty("exists").GetBoolean());
+        Assert.Equal([page], distill.GetProperty("candidates").EnumerateArray().Select(c => c.GetProperty("id").GetString()!));
+        var t = Assert.Single(distill.GetProperty("transcripts").EnumerateArray());
+        Assert.Equal(transcript, t.GetProperty("id").GetString());
+        var entry = Assert.Single(t.GetProperty("entries").EnumerateArray());
+        Assert.Equal("a1", entry.GetProperty("anchor").GetString());
+        Assert.Equal("Careful craft.", entry.GetProperty("answer").GetString());
+    }
+
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task DistillPersona_IsReadOnly_AndClearsNothing(string transport)
+    {
+        using var tv = new TempVault(); InitPersona(tv);
+        SummaryPage(tv, "Craft one");
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+
+        var tool = (await mcp.Client.ListToolsAsync()).Single(t => t.Name == "distill_persona");
+        Assert.True(tool.ProtocolTool.Annotations?.ReadOnlyHint);
+
+        await mcp.CallAsync("distill_persona");
+        var again = await mcp.CallAsync("distill_persona");
+        Assert.Equal(1, again.Structured().GetProperty("data").GetProperty("distill").GetProperty("candidates").GetArrayLength());
+    }
+
     // ---- record_owner_statement -------------------------------------------
 
     private static string Today => DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
