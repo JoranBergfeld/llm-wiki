@@ -86,6 +86,7 @@ public static class CommandCatalog
         ["audit list"] = CommandKind.Read,
 
         ["links check"] = CommandKind.Mutate,
+        ["persona read"] = CommandKind.Read,
     };
 
     // null means unclassified: a bug, which the tests catch before it ships

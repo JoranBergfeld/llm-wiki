@@ -21,7 +21,12 @@ public sealed record LintFinding(IssueKind Kind, string Subject, string Detail);
 // pairs rather than Dictionary<string,int> (not registered in
 // WikiJsonContext, and every other list-shaped result in this codebase is
 // already an array of a small record, e.g. PageSummary[]/Hit[]).
-public sealed record LintKindCount(string Kind, int Count);
+//
+// `Severity` ("error" | "warning", from IssueKindX.Severity) was added with
+// the PERSONA.md rules (amendment AC): those are errors - the rules a persona
+// changeset must pass - while every earlier kind is advisory. It is a
+// property of the kind, so it lives here rather than on each stored issue.
+public sealed record LintKindCount(string Kind, int Count, string Severity);
 
 // `wiki lint` result. Filed/Refreshed split is Issues.Upsert's merge
 // semantics surfaced to the caller: a finding whose (kind,subject) already
@@ -106,6 +111,7 @@ public sealed class LintService
         findings.AddRange(CheckMissingTags(pages));
         findings.AddRange(CheckBacklog(pages, PageStatus.NeedsReview, IssueKind.NeedsReviewBacklog, today));
         findings.AddRange(CheckBacklog(pages, PageStatus.PendingReview, IssueKind.PendingBacklog, today));
+        findings.AddRange(CheckPersona(v));
 
         var renameDrifts = CheckRenameDrift(v, pages, idmap);
         foreach (var d in renameDrifts)
@@ -147,6 +153,7 @@ public sealed class LintService
         var filed = 0;
         var refreshed = 0;
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var severities = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var f in findings)
         {
             issues.Upsert(f.Kind, f.Subject, f.Detail, utcIso);
@@ -154,6 +161,7 @@ public sealed class LintService
 
             var wireKind = IssueKindX.ToWire(f.Kind);
             counts[wireKind] = counts.TryGetValue(wireKind, out var c) ? c + 1 : 1;
+            severities[wireKind] = IssueKindX.Severity(f.Kind);
         }
         issues.Save(v);
 
@@ -165,7 +173,7 @@ public sealed class LintService
 
         var countArray = counts
             .OrderBy(kv => kv.Key, StringComparer.Ordinal)
-            .Select(kv => new LintKindCount(kv.Key, kv.Value))
+            .Select(kv => new LintKindCount(kv.Key, kv.Value, severities[kv.Key]))
             .ToArray();
 
         return new LintReport(filed, refreshed, countArray, indexRegenerated, idmapRepaired, bodiesRewritten);
@@ -373,6 +381,20 @@ public sealed class LintService
             yield return new LintFinding(kind, slug,
                 $"page has been '{PageStatusX.ToWire(status)}' for {ageDays}d (based on 'updated'; threshold 14d)");
         }
+    }
+
+    // PERSONA.md structural rules (amendment AC). The rules themselves live
+    // on PersonaDoc.Validate so lint and the persona changeset validation
+    // share one definition. A vault without PERSONA.md has an empty persona
+    // and nothing to check. Subject is always the file name: there is one
+    // persona per vault and its lines have no ids (issue #31).
+    private static IEnumerable<LintFinding> CheckPersona(Vault v)
+    {
+        if (!File.Exists(v.PersonaPath))
+            yield break;
+
+        foreach (var (kind, detail) in PersonaService.Load(v).Validate())
+            yield return new LintFinding(kind, PersonaDoc.FileName, detail);
     }
 
     // `rename-drift` (spec §11): a page file that actually exists at path P

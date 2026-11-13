@@ -20,6 +20,11 @@ public sealed class Vault
     // every command's.
     public string EvalPath { get; }
 
+    // The owner's persona (issue #48). At the vault root, beside AGENTS.md,
+    // and optional: a vault without it has an empty persona. Only the
+    // `wiki persona` commands write it; ingest never does.
+    public string PersonaPath { get; }
+
     private Vault(string root)
     {
         Root = root;
@@ -31,6 +36,7 @@ public sealed class Vault
         LogPath = System.IO.Path.Combine(WikiDir, "log.md");
         AgentsPath = System.IO.Path.Combine(root, "AGENTS.md");
         EvalPath = System.IO.Path.Combine(root, "eval.yaml");
+        PersonaPath = System.IO.Path.Combine(root, PersonaDoc.FileName);
     }
 
     // The one way to turn an absolute path inside this vault into the
