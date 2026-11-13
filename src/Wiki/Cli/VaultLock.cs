@@ -121,19 +121,23 @@ public static class VaultLock
     }
 
     // Only "someone else holds it" is worth waiting out; any other IO failure
-    // (permissions, a missing drive) propagates at once as an IO error.
+    // (permissions, a missing drive, EIO, a full disk creating the lock file)
+    // propagates at once as an IO error rather than turning into vault-busy.
     // Windows reports ERROR_SHARING_VIOLATION (32) or ERROR_LOCK_VIOLATION
-    // (33). On Unix .NET throws a plain IOException for a refused flock, and
-    // the other failures an open can hit are IOException subclasses
-    // (FileNotFound, DirectoryNotFound, PathTooLong) or
-    // UnauthorizedAccessException.
-    private static bool IsContention(IOException ex)
+    // (33) in the low word of HResult. On Unix .NET throws a refused flock as
+    // a plain IOException whose HResult is the raw errno, EWOULDBLOCK: 11 on
+    // Linux, 35 on macOS and the BSDs. Matching the type alone would also
+    // match every other errno .NET maps to a plain IOException.
+    internal static bool IsContention(IOException ex)
     {
         if (OperatingSystem.IsWindows())
         {
             var code = ex.HResult & 0xFFFF;
             return code is 32 or 33;
         }
-        return ex.GetType() == typeof(IOException);
+        if (ex.GetType() != typeof(IOException))
+            return false;
+        var wouldBlock = OperatingSystem.IsLinux() || OperatingSystem.IsAndroid() ? 11 : 35;
+        return ex.HResult == wouldBlock;
     }
 }

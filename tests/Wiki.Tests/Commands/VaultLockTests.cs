@@ -61,6 +61,29 @@ public class VaultLockTests
         return (run, stdout);
     }
 
+    // Only the OS refusing the lock is waited out. Any other IO error (EIO, a
+    // full disk creating the lock file) must surface at once as an IO error,
+    // not after the full timeout as a misleading, retryable vault-busy.
+    [Fact]
+    public void OnlyALockRefusal_IsWaitedOut_NotOtherIoErrors()
+    {
+        int refusal, other;
+        if (OperatingSystem.IsWindows())
+        {
+            refusal = unchecked((int)0x80070020);   // ERROR_SHARING_VIOLATION
+            other = unchecked((int)0x80070017);     // ERROR_CRC
+        }
+        else
+        {
+            refusal = OperatingSystem.IsLinux() ? 11 : 35;   // EWOULDBLOCK
+            other = 5;                                       // EIO
+        }
+
+        Assert.True(Wiki.Cli.VaultLock.IsContention(new IOException("held", refusal)));
+        Assert.False(Wiki.Cli.VaultLock.IsContention(new IOException("io", other)));
+        Assert.False(Wiki.Cli.VaultLock.IsContention(new FileNotFoundException("gone")));
+    }
+
     [Fact]
     public async Task TwoReaders_BothProceed()
     {
