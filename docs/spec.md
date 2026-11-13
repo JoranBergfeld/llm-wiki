@@ -324,6 +324,11 @@ wiki mcp [--exclude-tools <tool,...>]           Serve this vault to MCP clients 
     [--inbox-root <dir>] [--max-upload-bytes <n>] --inbox-root (else WIKI_MCP_INBOX_ROOT): where ingest_source lands
                                                 uploads, outside the vault; --max-upload-bytes (else
                                                 WIKI_MCP_MAX_UPLOAD_BYTES, default 10485760) caps one upload (AP)
+    [--http [--listen <url>] [--token <t>]      --http: streamable HTTP (stateless, endpoint /mcp) instead of stdio, until
+     [--allowed-hosts <host,...>]]              stopped. --listen (else WIKI_MCP_LISTEN, default http://127.0.0.1:8765);
+                                                --token (else WIKI_MCP_TOKEN): optional bearer token; --allowed-hosts
+                                                (else WIKI_MCP_ALLOWED_HOSTS, default loopback). Rejections are
+                                                problem+json, see docs/mcp-http-errors.md (AQ)
 ```
 
 ---
@@ -855,3 +860,44 @@ Same standing as Appendices B and C: these override the original text where they
   **`continue_ingest`** (`action` = `status` | `resume` | `advance`) wraps
   `ingest status`, `ingest resume` and `ingest advance`; `advance` is
   followed by `ingest resume`, so the result always holds the next step.
+
+## Appendix S — MCP HTTP transport amendment (2026-11-13)
+
+- **AQ. `wiki mcp --http`: streamable HTTP.** (issue #61; decisions #29, #34,
+  #30 "Errors") The same server, tools, argument guard, narrowing (AG) and
+  inbox (AP) as stdio, served over streamable HTTP from the same binary:
+  ASP.NET Core's slim builder (AOT-clean, no TLS, no HTTP/3), the SDK's
+  transport in **stateless** mode, endpoint `/mcp`, running until the process
+  is stopped. **Listen:** `--listen <url>` / `WIKI_MCP_LISTEN`, default
+  `http://127.0.0.1:8765`; plain `http://host:port` only (`invalid-listen-url`,
+  exit 1), TLS belongs on a reverse proxy; port 0 picks a free port, and the
+  one line the server prints (not with `--json`) names the endpoint.
+  **Token:** one optional bearer token, `--token` / `WIKI_MCP_TOKEN` (the env
+  var is preferred; argv is visible to other users). Not stored in the vault,
+  no scopes, no client identity (#34). Compared in constant time (both sides
+  SHA-256 hashed, then a fixed-time compare). **Hosts:** `--allowed-hosts
+  <name,...>` / `WIKI_MCP_ALLOWED_HOSTS` (comma-separated or repeated; the
+  flag replaces the env var), default loopback only (`localhost`,
+  `127.0.0.1`, `[::1]`), matched on the Host header without its port; `*`
+  allows any host and gives up DNS-rebinding protection, an explicit opt-in.
+  No CORS headers are sent. **Body limit:** twice `--max-upload-bytes` plus
+  64 KiB. A body without a `Content-Length` is read up to that limit before
+  MCP sees it. **Rejections** come before MCP, in this order: Host, then token,
+  then size. Each is RFC 9457 `application/problem+json` with a `code`
+  extension: `host-not-allowed` (400, `host`), `unauthorized` (401,
+  `WWW-Authenticate: Bearer`), `upload-too-large` (413, `maxBodyBytes`).
+  `type` is the code's anchor in the error catalogue, `docs/mcp-http-errors.md`.
+  These are the only problem+json bodies. Everything past them follows AF.
+  `--listen`, `--token` and `--allowed-hosts` without `--http` refuse to start
+  (`http-only-option`, exit 1). **Audit:** every step is `via=http`, or
+  `via=http+token` when the server has a token, since every request reaching
+  a tool then presented it. **Narrowing:** the stateless transport builds fresh
+  server options for each request, so AG's narrowing is a PostConfigure on
+  every options instance, not a one-off edit of the singleton.
+  **Cancellation:** stateless requests share no session, so a later
+  `notifications/cancelled` has nothing to match against. A client cancels by
+  abandoning the HTTP request. The server sees it aborted, and the intent
+  stops before its next step (AF). **Threads:** tool bodies block their
+  thread for each CLI step, vault-busy waits included. Each tool call
+  therefore runs on a dedicated thread, so concurrent calls waiting on the
+  lock cannot starve the thread pool that Kestrel needs to answer requests.

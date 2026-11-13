@@ -113,13 +113,14 @@ jobs:
       # The MCP server against the binary we are about to ship (issue #54).
       # A trimmed tool method or a reflection-based JSON path publishes
       # without a warning and fails only at runtime in the AOT binary, so the
-      # stdio smoke test drives the published `wiki mcp` with a real MCP
+      # smoke tests drive the published `wiki mcp` (stdio, and --http on real
+      # Kestrel, issue #61) with a real MCP
       # client. Only the net10.0 test build is needed here.
-      - name: MCP stdio smoke test (native AOT)
+      - name: MCP stdio and HTTP smoke tests (native AOT)
         shell: bash
         env:
           WIKI_SMOKE_BINARY: ${{ github.workspace }}/publish/${{ matrix.rid }}/${{ runner.os == 'Windows' && 'wiki.exe' || 'wiki' }}
-        run: dotnet test tests/Wiki.Tests/Wiki.Tests.csproj -c Release -f net10.0 --filter "FullyQualifiedName~Wiki.Tests.E2E.McpStdioProcessTests"
+        run: dotnet test tests/Wiki.Tests/Wiki.Tests.csproj -c Release -f net10.0 --filter "FullyQualifiedName~Wiki.Tests.E2E.McpStdioProcessTests|FullyQualifiedName~Wiki.Tests.E2E.McpHttpProcessTests"
 
       - name: Package (unix)
         if: runner.os != 'Windows'

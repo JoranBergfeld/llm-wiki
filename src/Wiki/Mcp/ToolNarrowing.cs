@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Server;
 using Wiki.Core;
 
@@ -35,6 +36,16 @@ public static class ToolNarrowing
             .SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .ToHashSet(StringComparer.Ordinal);
     }
+
+    // Narrows EVERY McpServerOptions instance the container creates, not just
+    // the IOptions singleton: the stateless HTTP transport builds fresh
+    // options (IOptionsFactory) for each request's server, so narrowing one
+    // instance at startup left HTTP serving every tool (issue #61).
+    // PostConfigure runs after the SDK's own setup has filled the collection.
+    // Resolving IOptions<McpServerOptions>.Value at startup still validates
+    // the names before anything is served.
+    public static IServiceCollection AddToolNarrowing(this IServiceCollection services, IReadOnlySet<string> excluded)
+        => services.PostConfigure<McpServerOptions>(options => Apply(options, excluded));
 
     // Fails fast on a name that matches no registered tool: a typo would
     // otherwise silently leave the tool the operator meant to remove exposed.
