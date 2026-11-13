@@ -110,7 +110,7 @@ flowchart TD
 
 | Namespace | Owns |
 |---|---|
-| `Wiki.Cli` | The `System.CommandLine` tree, one `Commands/*.cs` per command group, and the two output paths (`CommandContext.EmitOk`, `OutputMode.EmitFailure`) |
+| `Wiki.Cli` | The `System.CommandLine` tree, one `Commands/*.cs` per command group, and the two output paths (`CommandContext.EmitOk`, `OutputMode.EmitFailure`), and the read/mutation boundary: `CommandCatalog` classifies every command as `Read` or `Mutate`, and `CommandBinding.Bind` runs each handler inside `VaultBoundary` accordingly |
 | `Wiki.Services` | One class per command group: preconditions, orchestration, and the order of validation-then-write. This is where the spec's rules live |
 | `Wiki.Core` | The vault's vocabulary — path model, config, frontmatter parse/serialize, slugs, ULIDs, wikilinks, atomic writes |
 | `Wiki.State` | The `.wiki/` JSON caches. Each store is a `Load` / mutate / `Save` object with deterministic, sorted serialization |
