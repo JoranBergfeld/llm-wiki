@@ -14,6 +14,10 @@ public sealed class Vault
     public string LogPath { get; }
     public string AgentsPath { get; }
 
+    // The file the vault lock holds an OS handle on (issue #46, see
+    // Wiki.Cli.VaultLock). Empty; its content is never read or written.
+    public string LockPath { get; }
+
     // The human-owned golden-question file (issue #11 part A). Sits next to
     // wiki.yaml at the vault root, and is optional - `wiki eval` is the only
     // thing that reads it, and its absence is that command's problem, not
@@ -30,6 +34,7 @@ public sealed class Vault
         IndexPath = System.IO.Path.Combine(WikiDir, "index.md");
         LogPath = System.IO.Path.Combine(WikiDir, "log.md");
         AgentsPath = System.IO.Path.Combine(root, "AGENTS.md");
+        LockPath = System.IO.Path.Combine(StateDir, "lock");
         EvalPath = System.IO.Path.Combine(root, "eval.yaml");
     }
 

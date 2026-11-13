@@ -109,6 +109,12 @@ public static class InitCommand
 
         Directory.CreateDirectory(vault.StateDir);
         created.Add(vault.StateDir);
+        // The vault lock's file (issue #46). Created here, empty, so a vault
+        // has it from birth: otherwise the first command after init would
+        // create it, and a rejected command must leave the vault as it found
+        // it. VaultLock still creates it for vaults made before it existed.
+        using (new FileStream(vault.LockPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None)) { }
+        created.Add(vault.LockPath);
 
         AtomicFile.Write(vault.IndexPath, "");
         created.Add(vault.IndexPath);
