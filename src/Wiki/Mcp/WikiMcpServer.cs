@@ -15,16 +15,18 @@ namespace Wiki.Mcp;
 // which in stdio mode carries the JSON-RPC stream.
 public static class WikiMcpServer
 {
-    public static int RunStdio(string vaultRoot, IReadOnlySet<string> excludedTools, StdioStreams streams)
+    // `lockTimeout`: seconds (invariant culture) passed as --lock-timeout to
+    // every CLI step; null leaves each step to WIKI_LOCK_TIMEOUT / the default.
+    public static int RunStdio(string vaultRoot, IReadOnlySet<string> excludedTools, IngestInbox inbox, string? lockTimeout, StdioStreams streams)
     {
-        var cli = new CliAdapter(vaultRoot, new InvocationOrigin(Transport.Stdio, TokenUsed: false));
+        var cli = new CliAdapter(vaultRoot, new InvocationOrigin(Transport.Stdio, TokenUsed: false), lockTimeout);
 
         var services = new ServiceCollection();
         var builder = services
             .AddMcpServer(options => options.ServerInfo = new Implementation { Name = "wiki", Version = Version() })
             .WithStreamServerTransport(streams.Input, streams.Output)
             .WithToolArgumentGuard()
-            .AddWikiTools(cli);
+            .AddWikiTools(cli, inbox);
         streams.ConfigureForTests?.Invoke(builder, cli);
 
         return Serve(services, excludedTools).GetAwaiter().GetResult();

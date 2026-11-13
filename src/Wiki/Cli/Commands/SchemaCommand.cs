@@ -145,6 +145,7 @@ public static class SchemaCommand
             var vault = ctx.ResolveVault();
             var service = new SchemaService();
             service.Approve(vault, id);
+            DecisionAudit.Record(ctx);
 
             var updated = Reload(vault, id);
             if (ctx.Json)
@@ -187,6 +188,7 @@ public static class SchemaCommand
             var vault = ctx.ResolveVault();
             var service = new SchemaService();
             service.Reject(vault, id, note);
+            DecisionAudit.Record(ctx);
 
             var updated = Reload(vault, id);
             if (ctx.Json)

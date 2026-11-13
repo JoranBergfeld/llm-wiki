@@ -1,5 +1,6 @@
 using System;
 using System.CommandLine;
+using System.Globalization;
 using System.IO;
 using Wiki.Core;
 using Wiki.Mcp;
@@ -27,6 +28,19 @@ public static class McpCommand
         };
         mcp.Add(excludeOption);
 
+        // Issue #57: where ingest_source lands uploads, and how large one may
+        // be. Server config fixed at startup; no tool argument reaches either.
+        var inboxRootOption = new Option<string?>(IngestInbox.RootOption)
+        {
+            Description = $"Inbox directory ingest_source lands uploads in, as <dir>/<category>/<filename>; must be outside the vault (overrides {IngestInbox.RootEnv}; default: none, ingest_source refuses)",
+        };
+        var maxUploadOption = new Option<string?>(IngestInbox.MaxUploadOption)
+        {
+            Description = $"Largest upload ingest_source accepts, in bytes (overrides {IngestInbox.MaxUploadEnv}; default: {IngestInbox.DefaultMaxUploadBytes})",
+        };
+        mcp.Add(inboxRootOption);
+        mcp.Add(maxUploadOption);
+
         mcp.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
         {
             var vault = ctx.ResolveVault();
@@ -42,7 +56,19 @@ public static class McpCommand
                 parseResult.GetResult(excludeOption) is null ? null : parseResult.GetValue(excludeOption),
                 Environment.GetEnvironmentVariable(ToolNarrowing.Env));
 
-            return WikiMcpServer.RunStdio(vault.Root, excluded, stdio);
+            var inbox = IngestInbox.Resolve(parseResult.GetValue(inboxRootOption), parseResult.GetValue(maxUploadOption), vault.Root);
+
+            // The global --lock-timeout, given to `wiki mcp`, is the lock
+            // timeout of every CLI step this server runs (a step's argv
+            // cannot carry one: tools never build raw argv). Validated now,
+            // so a bad value refuses to start instead of failing every later
+            // tool call. Absent, each step falls back to WIKI_LOCK_TIMEOUT,
+            // then the 10 s default, exactly as on the command line.
+            var lockTimeout = parseResult.GetValue<string?>(VaultLock.TimeoutOption) is { Length: > 0 } flag
+                ? VaultLock.ResolveTimeout(flag, env: null).TotalSeconds.ToString(CultureInfo.InvariantCulture)
+                : null;
+
+            return WikiMcpServer.RunStdio(vault.Root, excluded, inbox, lockTimeout, stdio);
         }));
 
         return mcp;

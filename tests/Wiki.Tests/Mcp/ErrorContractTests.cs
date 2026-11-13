@@ -148,13 +148,14 @@ public class ErrorContractTests
     // Issue #46: a busy vault (exit 5, vault-busy) means "not done, retry",
     // so unlike exit 3 it is an error result. A real CLI writer is parked
     // mid-step holding the exclusive lock; the tool's read step waits out the
-    // default lock timeout (the adapter passes none) and fails.
+    // server's lock timeout (`wiki mcp --lock-timeout`, applied to every step
+    // it runs) and fails.
     [Theory]
     [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
     public async Task Exit5_VaultBusy_IsAnErrorResult(string transport)
     {
         using var tv = new TempVault(); Init(tv);
-        await using var mcp = await McpHarness.StartAsync(tv, transport);
+        await using var mcp = await McpHarness.StartAsync(tv, transport, null, "--lock-timeout", "0.5");
         var held = new HeldStdin("Body.");
         var writer = Task.Run(() => tv.RunWith(held, new StringWriter(),
             "page", "upsert", "--type", "entity", "--title", "Contoso", "--summary", "s", "--stdin", "--json"));
@@ -167,12 +168,28 @@ public class ErrorContractTests
             Assert.True(result.IsError);
             Assert.Equal(5, result.Structured().GetProperty("exitCode").GetInt32());
             Assert.StartsWith("vault-busy: ", result.Text());
+            Assert.Contains("the 0.5 s lock timeout", result.Text());
         }
         finally
         {
             held.Release();
             await writer;
         }
+    }
+
+    // A malformed server lock timeout is a startup error (exit 1), not a
+    // failure on every later tool call.
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task InvalidLockTimeout_RefusesToStart(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            McpHarness.StartAsync(tv, transport, null, "--lock-timeout", "soon", "--json"));
+
+        Assert.Contains("server exited 1", ex.Message);
+        Assert.Contains("\"invalid-lock-timeout\"", ex.Message);
     }
 
     // Issue #44 seam: every CLI step a stdio tool runs is recorded as
