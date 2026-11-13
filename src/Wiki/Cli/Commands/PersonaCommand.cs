@@ -87,9 +87,9 @@ public static class PersonaCommand
                 // again against PERSONA.md, exactly as `review approve` does.
                 // The step gets one audit line, the accept, carrying what the
                 // propose line would have said about supersession and flags.
-                var (decision, ledger, _) = service.Accept(vault, result.Changeset.Id);
+                var (decision, ledger, retired) = service.Accept(vault, result.Changeset.Id);
                 result = result with { Changeset = decision.Changeset, PendingPath = null, AutoAccepted = true };
-                PersonaAudit.Accept(ctx, decision, ledger, PersonaAutoAccept.DecidedVia);
+                PersonaAudit.Accept(ctx, decision, ledger, retired, PersonaAutoAccept.DecidedVia);
                 if (result.Superseded is not null)
                     ctx.Audit.Field("supersedes", result.Superseded);
                 if (result.Cleared.Length > 0)
@@ -139,8 +139,12 @@ internal static class PersonaAudit
     // The `persona.accept` audit line, for `review approve` and for
     // auto-accept alike: who decided, every evidence reference with its hash,
     // and the full evidence ledger of the new PERSONA.md, which lint reads
-    // back by `changeset=<audit_entry>`.
-    public static void Accept(CommandContext ctx, PersonaDecisionResult result, PersonaLedgerLine[] ledger, string decidedVia)
+    // back by `changeset=<audit_entry>`. `retired` is the evidence the
+    // previous ledger held and the new one does not (issue #52): removing or
+    // rewording a line retires what supported it, on the record; the field
+    // is omitted when nothing is retired.
+    public static void Accept(CommandContext ctx, PersonaDecisionResult result, PersonaLedgerLine[] ledger,
+        PersonaEvidenceData[] retired, string decidedVia)
     {
         var c = result.Changeset;
         ctx.Audit.Action = PersonaEvidence.AcceptAction;
@@ -152,6 +156,8 @@ internal static class PersonaAudit
                  .Field("reason", c.Reason)
                  .Detail("changeset-detail", ChangesetJson(c))
                  .Detail(PersonaEvidence.LedgerField, LedgerJson(ledger));
+        if (retired.Length > 0)
+            ctx.Audit.Field("retired", EvidenceRefs(retired));
     }
 
     // Every evidence reference of the lines the changeset introduces, as

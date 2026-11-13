@@ -116,6 +116,7 @@ public class PersonaAutoAcceptProcessTests
         Assert.Equal("+1 ~0 -0", AuditField(line, "lines"));
         Assert.Equal("auto-accept", AuditField(line, "decidedVia"));
         Assert.Equal("two notes say it", AuditField(line, "reason"));
+        Assert.Null(AuditField(line, "retired")); // nothing to retire on a first accept
 
         // The file is lint-clean: lint finds the evidence ledger on that line.
         tv.Run("lint", "--json");
@@ -182,6 +183,37 @@ public class PersonaAutoAcceptProcessTests
         Assert.Equal(pending, AuditField(line, "supersedes"));
         Assert.DoesNotContain(Data(tv.Run("review", "list", "--json")).EnumerateArray(),
             row => row.GetProperty("kind").GetString() == "persona");
+    }
+
+    // Issue #52: an accept records the evidence it retires, and auto-accept
+    // writes the same `retired=` field as `review approve`.
+    [Fact]
+    public async Task WithTheVariableSet_RewordingALine_RecordsTheRetiredEvidenceOnTheAcceptLine()
+    {
+        using var tv = new TempVault(); Init(tv);
+        var a = Page(tv, "Craft one");
+        var b = Page(tv, "Craft two");
+        var c = Page(tv, "Patience one");
+        var d = Page(tv, "Patience two");
+        var (firstExit, _) = await ProposeInProcess(tv, AddValue("I value careful craft.", a, b), "1");
+        Assert.Equal(0, firstExit);
+        var firstEvidence = AuditField(AuditLines(tv)[^1], "evidence")!.Split(',');
+        Assert.Equal(2, firstEvidence.Length);
+
+        var reword = "{\"reason\":\"newer notes say it better\",\"changes\":[{\"op\":\"change\",\"section\":\"values\","
+                     + "\"from\":\"I value careful craft.\",\"text\":\"I value patient craft.\",\"evidence\":["
+                     + "{\"page\":\"" + c + "\"},{\"page\":\"" + d + "\"}]}]}";
+        var (exit, envelope) = await ProposeInProcess(tv, reword, "1");
+
+        Assert.Equal(0, exit);
+        Assert.True(envelope.GetProperty("data").GetProperty("autoAccepted").GetBoolean());
+        var line = AuditLines(tv)[^1];
+        Assert.Equal("persona.accept", Segments(line)[1]);
+        Assert.Equal("auto-accept", AuditField(line, "decidedVia"));
+        var retired = AuditField(line, "retired");
+        Assert.NotNull(retired);
+        Assert.Equal(firstEvidence.OrderBy(x => x, StringComparer.Ordinal),
+            retired!.Split(',').OrderBy(x => x, StringComparer.Ordinal));
     }
 
     [Fact]
