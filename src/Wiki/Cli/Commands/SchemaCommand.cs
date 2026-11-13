@@ -70,6 +70,13 @@ public static class SchemaCommand
             var service = new SchemaService();
             var created = service.Propose(vault, section, newText, rationale);
 
+            // schema propose writes nothing to log.md, so the audit line is
+            // its only record; the proposed text is the large detail.
+            ctx.Audit.Subject = created.Id;
+            ctx.Audit.Field("section", created.Section)
+                     .Field("rationale", rationale)
+                     .Detail("text", newText);
+
             if (ctx.Json)
             {
                 ctx.EmitOk(ToData(created));

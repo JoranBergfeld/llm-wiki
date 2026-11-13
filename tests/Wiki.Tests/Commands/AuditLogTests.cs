@@ -201,4 +201,45 @@ public class AuditLogTests
         Assert.StartsWith(before, after);
         Assert.Equal(3, Lines(tv).Length);
     }
+
+    private static string Field(string line, string key)
+        => Fields(line).Single(f => f.StartsWith(key + "=", System.StringComparison.Ordinal))[(key.Length + 1)..];
+
+    private static string DetailFile(TempVault tv, string reference)
+    {
+        Assert.Matches("^@[0-9a-f]{64}$", reference);
+        return Path.Combine(tv.Path, "audit", "details", reference[1..] + ".txt");
+    }
+
+    [Fact]
+    public void SchemaProposal_StoresTheProposedText_InADetailFileNamedByItsHash()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        const string body = "1. Always cite sources.\n2. Never | guess.";
+
+        Assert.Equal(0, tv.RunStdin(body, "schema", "propose", "--section", "Conventions", "--rationale", "short", "--json").ExitCode);
+
+        var line = Lines(tv)[^1];
+        Assert.Equal("Conventions", Field(line, "section"));
+        Assert.Equal("short", Field(line, "rationale"));
+        var file = DetailFile(tv, Field(line, "text"));
+        Assert.Equal(body, File.ReadAllText(file));
+        // Named after the SHA-256 of its own content (known-good value).
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        Assert.Equal(Path.GetFileNameWithoutExtension(file),
+            System.Convert.ToHexString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(body))).ToLowerInvariant());
+    }
+
+    [Fact]
+    public void LongFieldValues_MoveToADetailFile()
+    {
+        using var tv = new TempVault();
+        Init(tv);
+        var rationale = new string('r', 300);
+
+        Assert.Equal(0, tv.RunStdin("x", "schema", "propose", "--section", "Conventions", "--rationale", rationale, "--json").ExitCode);
+
+        Assert.Equal(rationale, File.ReadAllText(DetailFile(tv, Field(Lines(tv)[^1], "rationale"))));
+    }
 }
