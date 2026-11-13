@@ -1,3 +1,9 @@
+// The process entry point is the ONE file allowed to touch the real console
+// (issue #43). Everywhere else System.Console and AnsiConsole.Console are banned
+// (BannedSymbols.txt, RS0030 as error): under `wiki mcp` stdio the process
+// stdout carries JSON-RPC, so every command writes only to the TextWriter that
+// App.Main is handed.
+#pragma warning disable RS0030
 using System;
 using System.CommandLine;
 using System.IO;
