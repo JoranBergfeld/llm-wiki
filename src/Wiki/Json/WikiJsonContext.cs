@@ -74,6 +74,8 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(PersonaView))]
 [JsonSerializable(typeof(PersonaDistillView))]
 [JsonSerializable(typeof(PersonaProposeResult))]
+[JsonSerializable(typeof(InterviewGuideView))]
+[JsonSerializable(typeof(InterviewRecordResult))]
 [JsonSerializable(typeof(PersonaDecisionResult))]
 [JsonSerializable(typeof(Wiki.Core.PersonaChangesetData))]
 [JsonSerializable(typeof(Wiki.Core.PersonaChangesetData[]))]

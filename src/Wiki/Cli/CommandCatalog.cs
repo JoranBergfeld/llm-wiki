@@ -100,6 +100,8 @@ public static class CommandCatalog
         ["persona read"] = CommandKind.Read,
         ["persona distill"] = CommandKind.Read,
         ["persona propose"] = CommandKind.Mutate,
+        ["persona interview guide"] = CommandKind.Read,
+        ["persona interview record"] = CommandKind.Mutate,
 
         ["mcp"] = CommandKind.Host,
     };

@@ -78,6 +78,22 @@ public static class AtomicFile
         WriteJournal.AfterChange();
     }
 
+    // Appends to a vault file, creating it (and its directory) when absent.
+    // For append-only files whose existing bytes must never be rewritten
+    // (interview transcripts, issue #53). Journaled as an append: undoing it
+    // is a truncate back to the old length, or a delete for a new file.
+    public static void Append(string path, string content)
+    {
+        var dir = System.IO.Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            System.IO.Directory.CreateDirectory(dir);
+        }
+        WriteJournal.BeforeChange(path, append: true);
+        System.IO.File.AppendAllText(path, content);
+        WriteJournal.AfterChange();
+    }
+
     // Deletes a vault file (a renamed page's old path, a cleared review
     // shadow). Journaled like Write, so an interrupted delete can be undone.
     public static void Delete(string path)

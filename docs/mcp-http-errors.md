@@ -1,6 +1,6 @@
 # MCP HTTP transport: error catalogue
 
-`wiki mcp --http` (spec Appendix S, amendment AQ) rejects some requests itself,
+`wiki mcp --http` (spec Appendix U, amendment AS) rejects some requests itself,
 before they reach MCP. Each rejection is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)
 `application/problem+json` body, never a JSON-RPC error:
 

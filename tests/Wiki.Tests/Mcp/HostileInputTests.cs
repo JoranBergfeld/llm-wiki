@@ -47,6 +47,8 @@ public class HostileInputTests
         ["ingest_source.category"] = "article",
         ["filename"] = "note.md",
         ["content"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("Benign upload.")),
+        // Blank = start a new transcript, so the answer is really recorded (#59).
+        ["record_owner_statement.transcript"] = "",
     };
 
     [Theory]
