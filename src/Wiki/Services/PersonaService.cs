@@ -217,7 +217,18 @@ public sealed class PersonaService
         idmap.Load(v);
         var pages = Pages(v);
 
-        var considered = consideredInput.Select(r => ResolvePage(pages, r).Front.Id).ToList();
+        // `considered` names pages (id or slug) and interview transcripts
+        // (id or path, issue #53); transcripts are kept apart because their
+        // flag lives in a different file.
+        var considered = new List<string>();
+        var consideredTranscripts = new List<string>();
+        foreach (var r in consideredInput)
+        {
+            if (InterviewService.LooksLikeTranscript(r))
+                consideredTranscripts.Add(RequireTranscript(v, r).Id);
+            else
+                considered.Add(ResolvePage(pages, r).Front.Id);
+        }
 
         var entries = Mutable(Load(v));
         var resolved = new List<PersonaChangeData>();
@@ -235,6 +246,8 @@ public sealed class PersonaService
                 change.Evidence = evidence;
                 foreach (var e in evidence.Where(e => e.Kind == PersonaEvidenceKind.Page))
                     considered.Add(e.Page!);
+                foreach (var e in evidence.Where(e => e.Kind == PersonaEvidenceKind.OwnerStated))
+                    consideredTranscripts.Add(InterviewService.NormaliseId(e.Path!));
             }
             resolved.Add(change);
         }
@@ -275,7 +288,10 @@ public sealed class PersonaService
             WritePending(v, created, pages);
         }
 
-        var cleared = ClearCandidates(v, pages, consideredIds);
+        var cleared = ClearCandidates(v, pages, consideredIds)
+            .Concat(consideredTranscripts.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal)
+                .Where(id => InterviewService.ClearCandidate(v, id)))
+            .ToArray();
         return new PersonaProposeResult(created, superseded, cleared, created is null ? null : PendingRelPath);
     }
 
@@ -474,9 +490,10 @@ public sealed class PersonaService
 
     // Resolves the agent's evidence references to stored ones: the CLI, not
     // the agent, fixes which file and which content each reference means.
-    // EXTENSION POINT (issue #53): the owner-stated branch resolves a
-    // transcript file + answer anchor and hashes that one answer, producing
-    // { kind: owner-stated, path, anchor, hash }.
+    // Owner-stated evidence (issue #53) names one answer: `path` is the
+    // interview transcript (its id or vault path) and `anchor` the entry
+    // (`a1`, `a2`, ...); the CLI hashes that answer alone, so editing
+    // another answer in the same transcript leaves this evidence current.
     private static PersonaEvidenceData[] ResolveEvidence(Vault v, VaultConfig cfg, IdMap idmap,
         Dictionary<string, PageEntry> pages, PersonaEvidenceData[]? input, int index)
     {
@@ -507,8 +524,27 @@ public sealed class PersonaService
                     break;
                 }
                 case PersonaEvidenceKind.OwnerStated:
-                    throw new ValidationException("unsupported-evidence-kind",
-                        $"change {index + 1}: owner-stated evidence is recorded through the onboarding interview, which this build does not have yet");
+                {
+                    if (string.IsNullOrWhiteSpace(e.Path) || string.IsNullOrWhiteSpace(e.Anchor))
+                        throw new ValidationException("invalid-changeset",
+                            $"change {index + 1}: owner-stated evidence needs 'path' (an interview transcript id or path) and 'anchor' (the answer, e.g. a1)");
+                    var transcript = RequireTranscript(v, e.Path);
+                    var anchor = e.Anchor.Trim();
+                    var entry = transcript.Entries.FirstOrDefault(x => x.Anchor == anchor)
+                        ?? throw new ValidationException("not-found",
+                            $"change {index + 1}: interview transcript '{transcript.Id}' has no answer '{anchor}'");
+                    var path = InterviewTranscript.RelPath(transcript.Id);
+                    if (result.Any(r => r.Path == path && r.Anchor == anchor))
+                        continue;
+                    result.Add(new PersonaEvidenceData
+                    {
+                        Kind = PersonaEvidenceKind.OwnerStated,
+                        Path = path,
+                        Anchor = anchor,
+                        Hash = InterviewTranscript.AnswerHash(entry.Answer),
+                    });
+                    break;
+                }
                 default:
                     throw new ValidationException("invalid-evidence-kind",
                         $"change {index + 1}: unknown evidence kind '{kind}'; expected page or owner-stated");
@@ -594,7 +630,7 @@ public sealed class PersonaService
                 {
                     var label = e.Kind == PersonaEvidenceKind.Page && e.Page is not null && pages.TryGetValue(e.Page, out var p)
                         ? $"[[{p.Slug}]]"
-                        : e.Path;
+                        : e.Anchor is null ? e.Path : $"{e.Path}#{e.Anchor}";
                     sb.Append($"  - evidence: {label} (sha256 {e.Hash?[..12]})\n");
                 }
             }
@@ -618,6 +654,13 @@ public sealed class PersonaService
         foreach (var (slug, front, body) in PageStore.EnumerateWithBody(v))
             result[front.Id] = new PageEntry(slug, front, body, PagePaths.Relative(v, slug, front));
         return result;
+    }
+
+    private static InterviewTranscript RequireTranscript(Vault v, string idOrPath)
+    {
+        var id = InterviewService.NormaliseId(idOrPath);
+        return InterviewService.Load(v, id)
+            ?? throw new ValidationException("not-found", $"no interview transcript '{id}' ({InterviewTranscript.RelPath(id)})");
     }
 
     private static PageEntry ResolvePage(Dictionary<string, PageEntry> pages, string idOrSlug)

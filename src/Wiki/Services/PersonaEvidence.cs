@@ -100,6 +100,11 @@ public static class PersonaEvidence
     public const string StaleGone = "gone";
     public const string StaleNotEndorsed = "not-endorsed";
 
+    // Owner-stated evidence (issue #53): `changed` and `gone` apply to the
+    // one answer it names; a deleted transcript is `retracted`, the owner
+    // taking back everything said in it.
+    public const string StaleRetracted = "retracted";
+
     // The issue subject of one persona line: lines have no ids (issue #31),
     // so section plus text is the line's identity. A reworded line is a new
     // line, which is exactly when its old stale warning should retire.
@@ -110,7 +115,10 @@ public static class PersonaEvidence
     // file. Page evidence is stale when the page (looked up by id, so a
     // rename is not staleness) is gone, its body no longer hashes to the
     // recorded value, or it no longer cites a source in a persona-source
-    // category. Owner-stated evidence (issue #53) is not judged here yet.
+    // category. Owner-stated evidence (issue #53) is stale when its answer
+    // no longer hashes to the recorded value (changed), its anchor is no
+    // longer in the transcript (gone) or the transcript was deleted
+    // (retracted); only the lines resting on that one answer are affected.
     // A line the ledger does not know is the persona-evidence error's
     // business, not this check's.
     public static IReadOnlyList<PersonaStaleLine> StaleLines(Vault v, VaultConfig cfg, PersonaDoc doc)
@@ -124,6 +132,8 @@ public static class PersonaEvidence
         var pages = new Dictionary<string, (string Slug, PageFrontmatter Front, string Body)>(StringComparer.Ordinal);
         foreach (var p in PageStore.EnumerateWithBody(v))
             pages[p.Front.Id] = p;
+
+        var transcripts = new Dictionary<string, InterviewTranscript?>(StringComparer.Ordinal);
 
         var result = new List<PersonaStaleLine>();
         foreach (var s in PersonaSectionX.InOrder)
@@ -139,15 +149,21 @@ public static class PersonaEvidence
                 {
                     if (!pages.TryGetValue(e.Page!, out var page))
                     {
-                        stale.Add(new PersonaStaleEvidence(e.Page!, e.Path, null, StaleGone, e.Hash, null));
+                        stale.Add(PageStale(e.Page!, e.Path, null, StaleGone, e.Hash, null));
                         continue;
                     }
                     var path = PagePaths.Relative(v, page.Slug, page.Front);
                     var hash = PageHash(page.Body);
                     if (hash != e.Hash)
-                        stale.Add(new PersonaStaleEvidence(e.Page!, path, page.Slug, StaleChanged, e.Hash, hash));
+                        stale.Add(PageStale(e.Page!, path, page.Slug, StaleChanged, e.Hash, hash));
                     else if (!PageService.CitesPersonaSource(v, cfg, idmap, page.Front.Sources))
-                        stale.Add(new PersonaStaleEvidence(e.Page!, path, page.Slug, StaleNotEndorsed, e.Hash, hash));
+                        stale.Add(PageStale(e.Page!, path, page.Slug, StaleNotEndorsed, e.Hash, hash));
+                }
+                foreach (var e in recorded.Evidence.Where(e => e.Kind == PersonaEvidenceKind.OwnerStated && e.Path is not null))
+                {
+                    var problem = OwnerStatedStale(v, transcripts, e);
+                    if (problem is not null)
+                        stale.Add(problem);
                 }
                 if (stale.Count > 0)
                     result.Add(new PersonaStaleLine(wire, line, LineSubject(wire, line), stale.ToArray()));
@@ -156,11 +172,41 @@ public static class PersonaEvidence
         return result;
     }
 
+    private static PersonaStaleEvidence PageStale(string page, string? path, string? slug, string reason, string? recorded, string? current)
+        => new(PersonaEvidenceKind.Page, page, path, slug, null, reason, recorded, current);
+
+    private static PersonaStaleEvidence? OwnerStatedStale(Vault v, Dictionary<string, InterviewTranscript?> cache, PersonaEvidenceData e)
+    {
+        PersonaStaleEvidence Stale(string reason, string? current)
+            => new(PersonaEvidenceKind.OwnerStated, null, e.Path, null, e.Anchor, reason, e.Hash, current);
+
+        var file = System.IO.Path.GetFileNameWithoutExtension(e.Path!);
+        if (!cache.TryGetValue(file, out var transcript))
+            cache[file] = transcript = InterviewTranscript.IsId(file) ? InterviewService.Load(v, file) : null;
+        if (transcript is null)
+            return Stale(StaleRetracted, null);
+        var entry = transcript.Entries.FirstOrDefault(x => x.Anchor == e.Anchor);
+        if (entry is null)
+            return Stale(StaleGone, null);
+        var hash = InterviewTranscript.AnswerHash(entry.Answer);
+        return hash == e.Hash ? null : Stale(StaleChanged, hash);
+    }
+
     // The lint detail for one stale line: every stale piece, then what to do.
     public static string StaleDetail(PersonaStaleLine line)
     {
         var parts = line.Evidence.Select(e =>
         {
+            if (e.Kind == PersonaEvidenceKind.OwnerStated)
+            {
+                var answer = $"owner-stated answer {e.Path}#{e.Anchor}";
+                return e.Reason switch
+                {
+                    StaleChanged => $"{answer} changed since the line was accepted (edited by hand) (recorded sha256 {Short(e.RecordedHash)}, now {Short(e.CurrentHash)})",
+                    StaleGone => $"{answer} is no longer in the transcript",
+                    _ => $"{answer} was retracted: the interview transcript was deleted",
+                };
+            }
             var label = e.Slug is null ? $"page {e.Page} ({e.Path})" : $"[[{e.Slug}]] ({e.Path})";
             return e.Reason switch
             {
@@ -201,10 +247,14 @@ public static class PersonaEvidence
     }
 }
 
-// One stale piece of evidence behind a persona line (issue #52). `Reason` is
-// changed | gone | not-endorsed. `Slug` is null when the page is gone; `Path`
-// is then the recorded path, else the page's current one.
-public sealed record PersonaStaleEvidence(string Page, string? Path, string? Slug, string Reason, string? RecordedHash, string? CurrentHash);
+// One stale piece of evidence behind a persona line (issue #52). `Kind` is
+// page or owner-stated. For a page, `Reason` is changed | gone |
+// not-endorsed; `Slug` is null when the page is gone, `Path` is then the
+// recorded path, else the page's current one. For owner-stated evidence
+// (issue #53) `Page` and `Slug` are null, `Path` + `Anchor` name the answer
+// and `Reason` is changed | gone | retracted.
+public sealed record PersonaStaleEvidence(string Kind, string? Page, string? Path, string? Slug, string? Anchor, string Reason,
+    string? RecordedHash, string? CurrentHash);
 
 // A persona line resting on stale evidence: the re-check a distillation pass
 // picks up. `Subject` is the line's `persona-stale-evidence` issue subject.

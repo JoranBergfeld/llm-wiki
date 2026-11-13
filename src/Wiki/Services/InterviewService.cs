@@ -157,14 +157,16 @@ public sealed class InterviewService
         var dir = Path.Combine(v.Root, InterviewTranscript.Dir);
         if (!Directory.Exists(dir))
             yield break;
-        var files = Directory.EnumerateFiles(dir, "*.md").ToList();
-        files.Sort(StringComparer.Ordinal);
-        foreach (var file in files)
-        {
-            var id = Path.GetFileNameWithoutExtension(file);
-            if (InterviewTranscript.IsId(id))
-                yield return InterviewTranscript.Parse(id, File.ReadAllText(file));
-        }
+        // In recording order: by date, then session number (an ordinal sort
+        // would put `-v2` before the bare date).
+        var ids = Directory.EnumerateFiles(dir, "*.md")
+            .Select(f => Path.GetFileNameWithoutExtension(f))
+            .Where(InterviewTranscript.IsId)
+            .OrderBy(id => id[..10], StringComparer.Ordinal)
+            .ThenBy(id => id.Length == 10 ? 1 : int.Parse(id[12..], CultureInfo.InvariantCulture))
+            .ToList();
+        foreach (var id in ids)
+            yield return InterviewTranscript.Parse(id, File.ReadAllText(FullPath(v, id)));
     }
 
     public static PersonaTranscriptView[] Candidates(Vault v)
