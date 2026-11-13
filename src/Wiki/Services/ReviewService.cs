@@ -15,13 +15,20 @@ namespace Wiki.Services;
 // new page against. For an update (a shadow exists), `Diff` is a line-based
 // diff between the shadow's previous body and the page's current body, so
 // the human reviewing doesn't have to `page show` twice and eyeball it.
+//
+// `Kind` says what is pending: "page", or "persona" for the open persona
+// changeset (issue #50), which carries the changeset itself and reads as an
+// update to PERSONA.md (`Slug`), its reason as `Title`, and a diff of the
+// file as it is against the file as the changeset would leave it.
 public sealed record PendingView(
     string Id,
     string Slug,
     string Title,
     string Type,
     bool IsUpdate,
-    string? Diff) : IHumanRenderable
+    string? Diff,
+    string Kind = "page",
+    Wiki.Core.PersonaChangesetData? Changeset = null) : IHumanRenderable
 {
     public string HumanSummary() => $"[[{Slug}]] ({Type}, {(IsUpdate ? "update" : "create")})";
 }
@@ -55,10 +62,16 @@ public sealed class ReviewService
 
             var snapshot = ReviewShadow.Load(v, front.Id);
             var isUpdate = snapshot is not null;
-            var diff = isUpdate ? UnifiedDiff(snapshot!.Body, body) : null;
+            var diff = isUpdate ? LineDiff(snapshot!.Body, body) : null;
 
             result.Add(new PendingView(front.Id, slug, front.Title, PageTypeX.ToWire(front.Type), isUpdate, diff));
         }
+
+        // At most one persona changeset is open (issue #32); it reviews here
+        // with the pages, all-or-nothing.
+        if (PersonaService.Pending(v) is { } persona)
+            result.Add(new PendingView(persona.Changeset.Id, PersonaDoc.FileName, persona.Changeset.Reason, "persona",
+                persona.PersonaExists, persona.Diff, "persona", persona.Changeset));
         return result.ToArray();
     }
 
@@ -203,7 +216,7 @@ public sealed class ReviewService
     // max_page_lines in practice), so the DP cost is negligible. Output is a
     // simple `- removed` / `+ added` / `  unchanged` prefix per line, good
     // enough for a human review pass; not a patch-applicable unified diff.
-    private static string UnifiedDiff(string oldText, string newText)
+    internal static string LineDiff(string oldText, string newText)
     {
         var oldLines = oldText.Replace("\r\n", "\n").Split('\n');
         var newLines = newText.Replace("\r\n", "\n").Split('\n');

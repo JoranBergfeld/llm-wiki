@@ -17,9 +17,14 @@ namespace Wiki.Mcp;
 // smuggle in a value (a `vault`, say) the tool does not declare.
 //
 // It checks the subset of JSON Schema the SDK generates for primitive
-// parameters - `properties`, `required` and `type` (a name or an array of
-// names, e.g. ["string","null"]) - which is why tool parameters stay
+// parameters - `properties`, `required`, `type` (a name or an array of
+// names, e.g. ["string","null"]) and `enum` (from [AllowedValues] on a
+// selector such as browse_wiki's `view`) - which is why tool parameters stay
 // primitive (string, bool, int?).
+//
+// An argument only some selector values need (browse_wiki view=source needs
+// `source`) cannot be said in that subset; the tool checks it with
+// RequireFor, and the failure is the same protocol error.
 public static class ToolArgumentGuard
 {
     public static IMcpServerBuilder WithToolArgumentGuard(this IMcpServerBuilder builder)
@@ -44,6 +49,9 @@ public static class ToolArgumentGuard
                 throw Invalid(tool, $"unknown argument '{name}'");
             if (property.TryGetProperty("type", out var type) && !Matches(type, value))
                 throw Invalid(tool, $"argument '{name}' must be {Describe(type)}, got {value.ValueKind.ToString().ToLowerInvariant()}");
+            if (property.TryGetProperty("enum", out var allowed) && allowed.ValueKind == JsonValueKind.Array
+                && !allowed.EnumerateArray().Any(a => a.ValueKind == value.ValueKind && a.GetRawText() == value.GetRawText()))
+                throw Invalid(tool, $"argument '{name}' must be one of {string.Join(" | ", allowed.EnumerateArray().Select(a => a.GetRawText()))}, got {value.GetRawText()}");
         }
 
         if (schema.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.Array)
@@ -55,6 +63,12 @@ public static class ToolArgumentGuard
             }
         }
     }
+
+    // For a tool body: the value of an argument the chosen selector needs.
+    // Missing is the same InvalidParams protocol error as a schema failure.
+    public static string RequireFor(string tool, string? value, string name, string selector)
+        => value ?? throw new McpProtocolException(
+            $"{tool}: {selector} needs argument '{name}'", McpErrorCode.InvalidParams);
 
     private static bool Matches(JsonElement type, JsonElement value) => type.ValueKind switch
     {

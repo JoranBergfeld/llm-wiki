@@ -37,3 +37,18 @@ _Avoid_: statement, answers file
 
 **Persona candidate**
 A page built from a persona-source category that a distillation pass has not yet considered.
+
+**Persona changeset**
+One distillation pass's proposed edits to the persona: any number of lines added, changed or removed across sections, each new line with its evidence. Reviewed all-or-nothing; at most one is pending, and a newer one supersedes it.
+_Avoid_: persona proposal, persona diff
+
+**Persona auto-accept**
+The opt-in mode (`WIKI_PERSONA_AUTO_ACCEPT`, off by default) in which a valid persona changeset is accepted as soon as it is proposed, skipping human review but not lint or the evidence rules. Its accepts are audited as `decidedVia=auto-accept`.
+_Avoid_: auto-approve, skip review
+
+**Stale evidence**
+Evidence that no longer holds for the persona line it supports: the page changed since the line was accepted, is gone, or no longer comes from a persona-source category.
+
+**Re-check proposal**
+The open lint warning for a persona line on stale evidence, which the next distillation pass settles by re-confirming, rewording or removing the line. It is not a changeset.
+_Avoid_: re-check changeset

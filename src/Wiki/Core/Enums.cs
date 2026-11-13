@@ -175,6 +175,24 @@ public enum IssueKind
     PersonaEntryLength,
     PersonaSectionCap,
     PersonaToneLength,
+
+    // A persona line without the support it needs (issue #50, ADR 0001):
+    // fewer than two endorsed-note pages and no owner-stated evidence, or a
+    // tone-of-voice line not resting on owner-stated text. Read from the
+    // evidence the audit log recorded for the accept PERSONA.md's
+    // `audit_entry` names. Error, like the structural rules.
+    PersonaEvidence,
+
+    // A persona line whose recorded evidence no longer holds (issue #52):
+    // an evidence page whose body hash differs from the one the accept
+    // recorded, a page that is gone, or a page that no longer cites a
+    // persona-source category. One issue per stale line (subject
+    // `PERSONA.md#<section>: <line>`), so each is its own re-check proposal
+    // for the next distillation pass. Warning: the line was valid when
+    // accepted; it needs a second look, not a block. Lint resolves the issue
+    // itself once the line is no longer stale (re-confirmed, reworded or
+    // removed), so retired evidence leaves no dangling warning.
+    PersonaStaleEvidence,
 }
 
 public static class IssueKindX
@@ -202,6 +220,8 @@ public static class IssueKindX
         IssueKind.PersonaEntryLength => "persona-entry-length",
         IssueKind.PersonaSectionCap => "persona-section-cap",
         IssueKind.PersonaToneLength => "persona-tone-length",
+        IssueKind.PersonaEvidence => "persona-evidence",
+        IssueKind.PersonaStaleEvidence => "persona-stale-evidence",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
     };
 
@@ -213,7 +233,7 @@ public static class IssueKindX
     public static string Severity(IssueKind value) => value switch
     {
         IssueKind.PersonaFrontmatter or IssueKind.PersonaSections or IssueKind.PersonaLink
-            or IssueKind.PersonaEntryLength or IssueKind.PersonaSectionCap => "error",
+            or IssueKind.PersonaEntryLength or IssueKind.PersonaSectionCap or IssueKind.PersonaEvidence => "error",
         _ => "warning",
     };
 
@@ -240,6 +260,8 @@ public static class IssueKindX
         "persona-entry-length" => IssueKind.PersonaEntryLength,
         "persona-section-cap" => IssueKind.PersonaSectionCap,
         "persona-tone-length" => IssueKind.PersonaToneLength,
+        "persona-evidence" => IssueKind.PersonaEvidence,
+        "persona-stale-evidence" => IssueKind.PersonaStaleEvidence,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }

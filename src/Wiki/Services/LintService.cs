@@ -111,7 +111,7 @@ public sealed class LintService
         findings.AddRange(CheckMissingTags(pages));
         findings.AddRange(CheckBacklog(pages, PageStatus.NeedsReview, IssueKind.NeedsReviewBacklog, today));
         findings.AddRange(CheckBacklog(pages, PageStatus.PendingReview, IssueKind.PendingBacklog, today));
-        findings.AddRange(CheckPersona(v));
+        findings.AddRange(CheckPersona(v, cfg));
 
         var renameDrifts = CheckRenameDrift(v, pages, idmap);
         foreach (var d in renameDrifts)
@@ -162,6 +162,18 @@ public sealed class LintService
             var wireKind = IssueKindX.ToWire(f.Kind);
             counts[wireKind] = counts.TryGetValue(wireKind, out var c) ? c + 1 : 1;
             severities[wireKind] = IssueKindX.Severity(f.Kind);
+        }
+
+        // A stale-evidence warning is about one persona line. Once that line
+        // is no longer stale - re-confirmed with current evidence, reworded,
+        // removed, or its page restored - lint resolves the warning itself,
+        // so retired evidence leaves nothing dangling (issue #52). Other
+        // kinds keep the "someone resolves it" lifecycle.
+        var staleNow = new HashSet<string>(findings.Where(f => f.Kind == IssueKind.PersonaStaleEvidence).Select(f => f.Subject), StringComparer.Ordinal);
+        foreach (var issue in issues.List(IssueKind.PersonaStaleEvidence, "open"))
+        {
+            if (!staleNow.Contains(issue.Subject))
+                issues.Resolve(issue.Id, "resolved by lint: the line's evidence is no longer stale (re-confirmed, reworded or removed)");
         }
         issues.Save(v);
 
@@ -388,13 +400,26 @@ public sealed class LintService
     // share one definition. A vault without PERSONA.md has an empty persona
     // and nothing to check. Subject is always the file name: there is one
     // persona per vault and its lines have no ids (issue #31).
-    private static IEnumerable<LintFinding> CheckPersona(Vault v)
+    private static IEnumerable<LintFinding> CheckPersona(Vault v, VaultConfig cfg)
     {
         if (!File.Exists(v.PersonaPath))
             yield break;
 
-        foreach (var (kind, detail) in PersonaService.Load(v).Validate())
+        var doc = PersonaService.Load(v);
+        foreach (var (kind, detail) in doc.Validate())
             yield return new LintFinding(kind, PersonaDoc.FileName, detail);
+
+        // Evidence (issue #50): checked against what the audit log recorded
+        // for the accept that wrote the file. One finding listing every
+        // under-supported line, for the same (kind, subject) merge reason.
+        var evidence = PersonaEvidence.LintProblems(v, doc).ToArray();
+        if (evidence.Length > 0)
+            yield return new LintFinding(IssueKind.PersonaEvidence, PersonaDoc.FileName, string.Join("; ", evidence));
+
+        // Stale evidence (issue #52): one warning per line, each the
+        // re-check proposal a distillation pass picks up.
+        foreach (var line in PersonaEvidence.StaleLines(v, cfg, doc))
+            yield return new LintFinding(IssueKind.PersonaStaleEvidence, line.Subject, PersonaEvidence.StaleDetail(line));
     }
 
     // `rename-drift` (spec §11): a page file that actually exists at path P

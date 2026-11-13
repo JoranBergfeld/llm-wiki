@@ -93,10 +93,13 @@ public static class CommandCatalog
         ["audit"] = CommandKind.Read,
         ["audit next"] = CommandKind.Read,
         ["audit record"] = CommandKind.Mutate,
+        ["audit reanchor"] = CommandKind.Mutate,
         ["audit list"] = CommandKind.Read,
 
         ["links check"] = CommandKind.Mutate,
         ["persona read"] = CommandKind.Read,
+        ["persona distill"] = CommandKind.Read,
+        ["persona propose"] = CommandKind.Mutate,
 
         ["mcp"] = CommandKind.Host,
     };

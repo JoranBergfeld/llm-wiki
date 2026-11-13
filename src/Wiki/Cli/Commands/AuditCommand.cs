@@ -29,20 +29,33 @@ public static class AuditCommand
         audit.Add(BuildNext(vaultOption, jsonOption, stdout, stdin));
         audit.Add(BuildRecord(vaultOption, jsonOption, stdout, stdin));
         audit.Add(BuildList(vaultOption, jsonOption, stdout, stdin));
+        audit.Add(BuildReanchor(vaultOption, jsonOption, stdout, stdin));
 
         // Bare `wiki audit` (issue #44): the two integrity reports side by
         // side and clearly apart - the audit log's hash chain (is the history
         // of changes intact?) and page faithfulness (are pages true to their
         // sources?). They answer different questions and neither stands in
         // for the other. Read-only: a broken chain is reported, not repaired
-        // (blocking writes and re-anchoring are #45), so the exit code is 0
+        // (mutations refuse a broken chain; `audit reanchor` restores them), so the exit code is 0
         // and the agent branches on chain.intact.
+        //
+        // `--deep` (issue #45) also verifies every archived segment and the
+        // links between them; without it only the live segment is read, so
+        // the check stays cheap however long the history grows.
+        var deepOption = new Option<bool>("--deep")
+        {
+            Description = "Also verify every archived audit-log segment and the links between segments",
+        };
+        audit.Add(deepOption);
+
         audit.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
         {
             var vault = ctx.ResolveVault();
-            var chain = Wiki.Audit.AuditLog.For(vault).VerifyLive();
+            var log = Wiki.Audit.AuditLog.For(vault);
+            var chain = log.VerifyLive();
+            var deep = parseResult.GetValue(deepOption) ? log.VerifyDeep() : null;
             var faithfulness = new AuditService().Summary(vault);
-            var report = new AuditReport(chain, faithfulness);
+            var report = new AuditReport(chain, faithfulness, deep);
 
             if (ctx.Json)
                 ctx.EmitOk(report);
@@ -68,6 +81,18 @@ public static class AuditCommand
             console.MarkupLine($"  [red]BROKEN[/]: {c.Problems.Length} problem(s) in {c.Entries} line(s)");
             foreach (var p in c.Problems)
                 console.MarkupLine($"  - line {p.Line}: {Markup.Escape(p.Code)} - {Markup.Escape(p.Message)}");
+        }
+
+        if (report.Deep is { } deep)
+        {
+            console.MarkupLine("[bold]Full chain[/] (--deep): " + (deep.Intact ? "[green]intact[/]" : "[red]BROKEN[/]"));
+            foreach (var s in deep.Segments)
+            {
+                var state = s.Intact ? "[green]intact[/]" : "[red]BROKEN[/]";
+                console.MarkupLine($"  {Markup.Escape(s.Segment)}: {state}, {s.Entries} line(s)" + (s.Reanchored ? " [grey](re-anchored)[/]" : ""));
+                foreach (var p in s.Problems)
+                    console.MarkupLine($"    - line {p.Line}: {Markup.Escape(p.Code)} - {Markup.Escape(p.Message)}");
+            }
         }
 
         var f = report.Faithfulness;
@@ -192,6 +217,50 @@ public static class AuditCommand
         }));
 
         return list;
+    }
+
+    // `wiki audit reanchor --reason <text>` (issue #45): the explicit step that
+    // restores writes after the live audit chain broke. This command only
+    // validates and reports; the archiving itself is done by the audit step
+    // on the mutation boundary (AuditStep), under the vault lock, because that
+    // step holds the live log open for the whole command.
+    private static Command BuildReanchor(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var reasonOption = new Option<string?>("--reason")
+        {
+            Description = "Why the break is understood and writes may resume. Recorded in the re-anchor line",
+        };
+
+        var reanchor = new Command("reanchor",
+            "Set a broken live audit log aside as an archived segment and restart the chain from it, recording why")
+        {
+            reasonOption,
+        };
+
+        reanchor.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var reason = parseResult.GetValue(reasonOption)?.Trim();
+            if (string.IsNullOrEmpty(reason))
+                throw new ValidationException("missing-reason",
+                    "--reason is required: say why the break is understood and writes may resume");
+
+            var vault = ctx.ResolveVault();
+            var log = Wiki.Audit.AuditLog.For(vault);
+            var live = log.VerifyLive();
+            if (live.Intact)
+                throw new StateConflictException("audit-chain-intact",
+                    "the live audit chain is intact; there is nothing to re-anchor", log.LogPath);
+
+            // --- Validation complete ---
+            var segment = log.NextSegmentFile();
+            ctx.Audit.Action = "audit.reanchor";
+            ctx.Audit.Subject = segment;
+            ctx.Audit.Field("reason", reason).Field("problems", live.Problems.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            ctx.EmitOk(new Wiki.Audit.ReanchorResult(segment, live.Problems.Length, reason));
+            return 0;
+        }));
+
+        return reanchor;
     }
 
     private static void RenderTarget(TextWriter output, AuditTarget target)

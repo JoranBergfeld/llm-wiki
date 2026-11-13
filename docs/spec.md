@@ -71,6 +71,8 @@ my-vault/                        # also the Obsidian vault root
 ├── wiki.yaml                    # vault config (human-owned)
 ├── AGENTS.md                    # agent instructions: conventions + playbooks (§13)
 ├── PERSONA.md                   # optional: the owner's persona, written only by the CLI (amendment AC)
+├── persona/
+│   └── changeset.md             # the pending persona changeset, rendered for reading; review is `wiki review` (amendment AH)
 ├── raw/                         # immutable sources
 │   ├── 01J9ZKM3....md           # source files, named by source ID
 │   └── assets/                  # attachments (Obsidian attachment folder)
@@ -83,6 +85,8 @@ my-vault/                        # also the Obsidian vault root
 │   └── concepts/                # topics, themes, cross-source synthesis
 ├── audit/                       # hash-chained audit log (amendment AE); path set by audit.path
 │   ├── audit.log                # one sealed line per mutation, never rebuilt
+│   ├── audit.000001.log.gz      # archived segments, rolled over at ~10 MB or re-anchored; never deleted (amendment AJ)
+│   ├── audit.manifest.json      # archived segments in order, with the hash each one ends on
 │   └── details/                 # large details, one file per SHA-256
 └── .wiki/                       # derived state — NEVER synced-critical, always rebuildable
     ├── idmap.json               # id → relative path
@@ -120,6 +124,7 @@ lint:
   content_loss_percent: 25       # optional (default 25): a full-body update dropping this share of a page's references files a content-loss issue
 audit:                           # optional block (amendment AE)
   path: "audit/audit.log"        # audit log location, vault-relative or absolute; never inside .wiki/
+  rotate_bytes: 10485760         # optional (default ~10 MB): live log size at which it rolls into a compressed segment (amendment AJ)
 ```
 
 Rules:
@@ -201,8 +206,9 @@ Blocking validation (§11) rejects any write whose frontmatter deviates from the
 
 - Binary name: `wiki`. Vault resolution: `--vault <path>` flag, else `WIKI_VAULT` env var, else walk up from CWD looking for `wiki.yaml`. **All three branches require a `wiki.yaml` at the resolved root** (amendment M) — an explicit path that isn't a vault is an error, never an empty vault.
 - **`--json` on vault operations** emits a stable, versioned JSON envelope: `{"ok": bool, "data": …, "errors": [{"code": "…", "message": "…", "path": "…"}]}`. This is the primary agent interface; human-facing output uses Spectre.Console rendering — **on the failure path as well as the success path** (amendment P). Exit codes are identical in both modes. Standalone `wiki --version` takes no other flags and returns plain-text executable metadata (amendment AA).
-- Exit codes: `0` success · `1` blocking validation failure (input rejected, nothing written) · `2` environment/IO error · `3` state conflict (e.g., resuming a ledger step already done — safe, idempotent no-op reported) · `4` a measurement came in under an explicitly requested threshold (`wiki eval --fail-under` only, amendment W — never produced by any other command) · `5` the vault is busy (`vault-busy`): the vault lock could not be taken within the lock timeout, nothing was read or written, retry (amendment AD).
+- Exit codes: `0` success · `1` blocking validation failure (input rejected, nothing written) · `2` environment/IO error · `3` state conflict (e.g., resuming a ledger step already done — safe, idempotent no-op reported) · `4` a measurement came in under an explicitly requested threshold (`wiki eval --fail-under` only, amendment W — never produced by any other command) · `5` the vault is busy (`vault-busy`): the vault lock could not be taken within the lock timeout, nothing was read or written, retry (amendment AD) · `6` the audit log's chain is broken (`audit-chain-broken`): the write was refused and nothing was changed; retrying cannot help until `wiki audit reanchor` (amendment AJ).
 - **Vault lock** (amendment AD): every command runs inside one vault-wide lock held through an OS file handle on `.wiki/lock`. Readers share it; a mutating command holds it exclusively for its whole step. A command waits for a busy vault up to the lock timeout — `--lock-timeout <seconds>`, else `WIKI_LOCK_TIMEOUT`, else 10 s — then fails with `vault-busy`, exit 5. The timeout bounds the wait only; it never cancels a step already running.
+- **Write recovery** (amendment AI): a mutating command journals each file's before-image in `.wiki/journal` before changing it and reports success only once its changes and its audit line are durable. The next command recovers an interrupted write first — finishing one that had completed its writes (its audit line included), rolling back one that had not (audited as `recover`) — or, when it cannot tell, refuses every write with `repair-needed` (exit 2) while reads keep working.
 - Page bodies always arrive via **stdin** (`--stdin`) or `--body-file <path>`; never as shell arguments (quoting/size hazards).
 - Every mutating command appends one line to `wiki/log.md` in the format `## [2026-07-13T14:02:11Z] <op> | <subject> | <one-line detail>` (grep-parseable, per the gist).
 
@@ -268,8 +274,11 @@ wiki audit next                                 Faithfulness auditing (amendment
 wiki audit record <page-id> --verdict …          selects a page + its cited source ids; the AGENT judges,
                 --note "…"                       cold and adversarially; the CLI records. `unsupported`
 wiki audit list [--verdict …]                    files an issue. No model in the binary. Never in lint.
-wiki audit                                      Integrity report (amendment AE): the audit log's live-segment
+wiki audit [--deep]                             Integrity report (amendment AE): the audit log's live-segment
                                                 hash chain and page faithfulness, as two separate sections.
+                                                --deep also verifies every archived segment (amendment AJ).
+wiki audit reanchor --reason "…"                Restores writes after audit-chain-broken (amendment AJ):
+                                                archives the broken live log, records the reason.
 wiki eval [--k N] [--fail-under N]              Golden-question retrieval scoring (recall@k) against the
                                                 human-owned eval.yaml (amendment W). NEVER part of lint.
                                                 Exits 0 when reporting; exits 4 only under --fail-under.
@@ -281,6 +290,8 @@ wiki issues resolve <issue-id> [--note "…"]
 wiki review list
 wiki review approve <page-id>                   pending-review → active
 wiki review reject <page-id> [--note "…"]       pending-review → archived; files an issue for the agent
+                                                Both also take the pending persona changeset's id: approve writes
+                                                PERSONA.md, reject requires --note (amendment AH)
 
 # Reflect loop (§13)
 wiki schema propose --section "<heading>" --stdin Full-section replacement (amendment C): LLM submits the new full
@@ -294,6 +305,14 @@ wiki schema reject <proposal-id> [--note "…"]
 wiki persona read                               PERSONA.md as four line arrays (values, principles, toneOfVoice,
                                                 boundaries) plus its frontmatter. No PERSONA.md is an empty
                                                 persona (exists: false), not an error. Never writes.
+wiki persona distill                            Read side of a distillation pass (amendment AH): candidate pages
+                                                (persona: candidate), the current persona, the pending changeset,
+                                                and the stale lines to re-check (`recheck`, amendment AN).
+wiki persona propose --stdin|--body-file <p>    One changeset as JSON (amendment AH): validated against persona
+                                                lint and the evidence rules, queued for `wiki review`, superseding
+                                                any pending one; clears the candidate flags the pass considered.
+                                                With WIKI_PERSONA_AUTO_ACCEPT on, a valid changeset is accepted
+                                                at once instead of queued (amendment AM).
 
 # MCP server (Appendix I)
 wiki mcp [--exclude-tools <tool,...>]           Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout).
@@ -375,6 +394,8 @@ The canonical agent flow (encoded in AGENTS.md, enforced by ledger preconditions
 | `persona-entry-length` | **Error.** A persona entry over 200 characters |
 | `persona-section-cap` | **Error.** Values over 10 lines, Principles over 15, Boundaries over 10 |
 | `persona-tone-length` | Warning. Tone of voice past 600 words |
+| `persona-evidence` | **Error.** A persona line whose recorded evidence (the audit log's `ledger` for the accept named by `audit_entry`) is fewer than two endorsed pages and no owner-stated text, or a tone-of-voice line not resting on owner-stated text (amendment AH) |
+| `persona-stale-evidence` | Warning. One per persona line (subject `PERSONA.md#<section>: <line>`) whose recorded evidence no longer holds: an evidence page whose body hash differs from the recorded one, a page that is gone, or a page that no longer cites a persona-source category. The open issue is the line's re-check proposal; lint resolves it itself once the line is no longer stale (amendment AN) |
 
 Every kind above except the `persona-*` errors reports as severity `warning` in the lint report's per-kind counts; lint exits 0 regardless (amendment AC).
 
@@ -523,9 +544,13 @@ Never scan bodies to discover relevance.
 
 For vault operations, pass `--vault <path>` and `--json`. Exit codes: 0 success · 1 your input was rejected — read
 `errors[].code`, correct it, retry once, never retry blind · 2 environment/IO
-problem, do not retry · 3 state conflict, the world is already how you asked,
+problem, do not retry (`repair-needed`: an interrupted write needs a human; stop
+writing and report it) · 3 state conflict, the world is already how you asked,
 treat as a no-op and move on · 5 `vault-busy`, another wiki command holds the
-vault and nothing was changed: retry the same command shortly.
+vault and nothing was changed: retry the same command shortly · 6
+`audit-chain-broken`, the audit log was altered and every write is refused:
+run `wiki audit`, then `wiki audit reanchor --reason "…"` once the cause is
+understood.
 
 ### Ingest
 1. The human registers the source:
@@ -668,7 +693,7 @@ Same standing as Appendices B and C: these override the original text where they
 
 ## Appendix H — Audit log amendment (2026-11-13)
 
-- **AE. Every mutation appends one line to a hash-chained audit log.** (issue #44; design in #35, transport field in #34) `.wiki/ledger.json` is a rebuildable snapshot and `wiki/log.md` has no integrity and skips five mutations (`schema propose`, `category add`, `reindex`, `init`, lint's drift rewrites), so neither can say verifiably what changed. Every command classified `Mutate` (issue #42) now appends exactly one line, through one step on the mutation boundary rather than per command; reads append none. A line is `<utc> | <action> | <subject> | key=value… | exit=<n> | via=<cli|stdio|http|http+token> | prev=<sha256> | hash=<sha256>`, where `hash` is the SHA-256 of everything before ` | hash=` and `prev` is the previous line's hash (64 zeros on the first). `|`, `%`, line breaks and a leading `@` in values are percent-escaped. A value of the form `@<sha256>` references `details/<sha256>.txt`; values over 200 characters move there automatically, so the chain covers details without bloating lines. **Fail closed:** the log is opened and its last line checked before the command runs; if that fails the command does not run (exit 2, or 3 `audit-chain-broken` for an unsealed or altered last line) and the vault is byte-identical. A command that throws `ValidationException`/`StateConflictException` wrote nothing and gets no line; any other exception gets a line with `error=` instead of `exit=`, because it may have written part of a change. **Location:** `audit.path` in `wiki.yaml`, default `audit/audit.log`, rejected inside `.wiki/`, which `reindex` regenerates. **Origin:** `via` records the transport and whether a token was used, never a client identity (#34). It is passed into `App.Main` as a typed value by the MCP adapter, never through argv or the environment, so a remote caller cannot claim to be the CLI. **`wiki audit`** (bare) reports the live segment's chain (each line sealed, chained, and its detail files matching) separately from the faithfulness counts; a broken chain is reported with exit 0 and `chain.intact: false`. Blocking writes after a break, re-anchoring, rotation and `--deep` are issue #45. `wiki/log.md` and the ledger are unchanged.
+- **AE. Every mutation appends one line to a hash-chained audit log.** (issue #44; design in #35, transport field in #34) `.wiki/ledger.json` is a rebuildable snapshot and `wiki/log.md` has no integrity and skips five mutations (`schema propose`, `category add`, `reindex`, `init`, lint's drift rewrites), so neither can say verifiably what changed. Every command classified `Mutate` (issue #42) now appends exactly one line, through one step on the mutation boundary rather than per command; reads append none. A line is `<utc> | <action> | <subject> | key=value… | exit=<n> | via=<cli|stdio|http|http+token> | prev=<sha256> | hash=<sha256>`, where `hash` is the SHA-256 of everything before ` | hash=` and `prev` is the previous line's hash (64 zeros on the first). `|`, `%`, line breaks and a leading `@` in values are percent-escaped. A value of the form `@<sha256>` references `details/<sha256>.txt`; values over 200 characters move there automatically, so the chain covers details without bloating lines. **Fail closed:** the log is opened and its last line checked before the command runs; if that fails the command does not run (exit 2, or `audit-chain-broken` for an unsealed or altered last line: exit 3 as first written, exit 6 since amendment AJ) and the vault is byte-identical. A command that throws `ValidationException`/`StateConflictException` wrote nothing and gets no line; any other exception gets a line with `error=` instead of `exit=`, because it may have written part of a change. **Location:** `audit.path` in `wiki.yaml`, default `audit/audit.log`, rejected inside `.wiki/`, which `reindex` regenerates. **Origin:** `via` records the transport and whether a token was used, never a client identity (#34). It is passed into `App.Main` as a typed value by the MCP adapter, never through argv or the environment, so a remote caller cannot claim to be the CLI. **`wiki audit`** (bare) reports the live segment's chain (each line sealed, chained, and its detail files matching) separately from the faithfulness counts; a broken chain is reported with exit 0 and `chain.intact: false`. Blocking writes after a break, re-anchoring, rotation and `--deep` are amendment AJ (issue #45). `wiki/log.md` and the ledger are unchanged.
 
 ## Appendix I — MCP amendments (2026-11-13)
 
@@ -707,3 +732,59 @@ Same standing as Appendices B and C: these override the original text where they
   (`unknown-tool`, exit 1, the message lists the valid names), because a
   typo would otherwise silently leave the tool the operator meant to remove
   exposed.
+
+## Appendix J — Persona changeset amendment (2026-11-13)
+
+- **AH. Persona changesets: `persona distill`, `persona propose`, reviewed in `wiki review`.** (issue #50; design in #32 as narrowed by #33, ADR 0001) **Distill** is read-only: candidate pages (endorsed notes still flagged `persona: candidate`), the persona as `persona read` returns it, and the pending changeset or `null`. Scheduling is external. **Propose** takes one JSON changeset on stdin or `--body-file`: `{"reason": "…", "considered": [<page id or slug>…], "changes": [{"op": "add"|"change"|"remove", "section": "values"|"principles"|"tone-of-voice"|"boundaries", "from": "<current line, for change/remove>", "text": "<new line, for add/change>", "evidence": [{"kind": "page", "page": "<id or slug>"}]}]}`. `reason` is required. The CLI resolves each evidence reference itself to `{kind, page, path, hash}`, where `hash` is the SHA-256 of the page **body** (frontmatter is CLI-managed metadata, so clearing a flag or renaming does not make evidence stale). It then rejects (exit 1, nothing written) a changeset whose operations do not apply (`unknown-persona-line`, `duplicate-persona-line`), whose evidence page cites no persona-source category (`evidence-not-endorsed`), whose added or changed line lacks support (`persona-evidence`: at least two distinct endorsed pages, or any owner-stated evidence; tone of voice only from owner-stated text), or whose resulting `PERSONA.md` has any error under the amendment AC rules (`persona-lint`). Accepted, it is stored in `.wiki/persona-changesets.json` (the `proposals.json` pattern), rendered read-only to `persona/changeset.md` for Obsidian, and supersedes any open changeset; the propose audit line carries `supersedes=<id>`. The candidate flag is cleared on every `considered` page and every evidence page. A changeset with no `changes` but some `considered` pages queues nothing and only clears flags, so a pass that finds nothing persona-worthy still converges. **Review** goes through `wiki review`: `list` adds a row with `kind: "persona"`, a diff of `PERSONA.md` and the changeset; `approve <id>` re-applies the changeset to the current file (`changeset-stale` if it moved on), re-runs lint, and writes `PERSONA.md` canonically with `schema_version: 1`, `last_distilled` = the date the changeset was proposed, and `audit_entry` = the changeset id; `reject <id> --note "…"` requires the reason (`reason-required`). Superseded or decided changesets are exit 3. **Audit.** `persona.accept | PERSONA.md | changeset=<id> | lines=+a ~c -r | evidence=<path>@<sha256>,… | decidedVia=cli|mcp | reason=… | changeset-detail=@… | ledger=@…`; `ledger` is every line of the new file with its evidence (carried forward for lines the changeset did not touch), and is what lint reads: a line the ledger does not support is the `persona-evidence` error. A `PERSONA.md` whose `audit_entry` names no recorded accept is not evidence-checked. `persona.reject | <id> | decidedVia=… | reason=…`. **Not in this amendment:** auto-accept (#51, amendment AM), stale evidence (#52, amendment AN), owner-stated evidence from the onboarding interview (#53: evidence `{kind: "owner-stated", path: <transcript>, anchor: <answer>, hash: <answer sha256>}`).
+
+## Appendix K — Write recovery amendment (2026-11-13)
+
+- **AI. Interrupted writes are journaled and recovered by the next command; `repair-needed` when that would mean guessing.** (issue #47, design in #36 "Recoverable mutations" and "After an interruption") Atomic renames make each file crash-safe but not a command: `page upsert` changes a page, the idmap, the ledger, `index.md` and `log.md`, and a crash between them left a half change that nothing detected, plus (amendment AE) a window where the change was made but its audit line was not. **Journal.** Every change a command makes to a vault file goes through `AtomicFile.Write`/`AtomicFile.Delete` or `LogFile.Append`, and each first records the file's before-image (its bytes, its length for an append, or "absent") in `.wiki/journal`, flushed to disk before the file is touched. The journal is created at the first change, so a command that writes nothing leaves no trace. When the command returns, every touched file is flushed, its after-hash recorded, and the command's audit line sealed into the journal; only then is the line appended, and only once it is durable is the journal removed and success reported. A command that fails part way with an ordinary error is rolled back at once. **Recovery** runs in the next mutating command, under the exclusive lock, before it does anything else (a mutation-boundary step between the lock and the audit step). A journal whose command had finished (sealed) is *completed*: the touched files must still match their after-hashes, and the owed audit line is appended with its original timestamp unless the log already ends with it. A journal whose command had not finished has no end state to complete, so it is *rolled back* to the before-images and the rollback is audited as its own line, `recover | <interrupted action> | outcome=rolled-back | started=… | files=<n>` — the interrupted change is never discarded silently. Anything recovery cannot decide — a touched file changed since, an audit log that gained other lines meanwhile (one shared by two vaults), a damaged journal — fails every write with **`repair-needed`, exit 2** (not 3, which reads as success over MCP; not 5, retrying will not help), naming the journal; the vault and log are put right by hand and the journal deleted. **Reads** never see a half change: a reader that finds an unfinished journal takes the lock exclusively for a moment and restores the before-images first (the next writer audits that rollback), and a completed-but-unaudited or ambiguous journal leaves the files consistent, so reads go on. **Guarantee:** local storage, a separate audit log per vault, and no outside editor touching the vault while a journal is pending (#36). The journal is the one file in `.wiki/` that is not rebuildable: deleting it gives up recovering that write. Directory entries are not flushed separately (.NET cannot), so a power loss can still lose a rename the OS had not persisted; process crashes and kills are covered.
+
+## Appendix L — Audit chain amendment (2026-11-13)
+
+- **AJ. A broken chain blocks writes until an explicit re-anchor; the log rotates into segments that stay in the chain.** (issue #45; design in #35) AE checked only the last line before a write, so an edit in the middle of the log was visible to `wiki audit` but did not stop the next mutation from extending a chain known to be broken. **Writes:** every mutation now verifies the whole live segment (each line sealed and chained, its detail files matching, its first line chaining from the manifest) under the vault lock before the command runs; any problem refuses it with `audit-chain-broken`, the vault byte-identical. **Exit code 6**, its own: AE first raised it as exit 3, but exit 3 means "already done, a no-op" and the MCP adapter (AF) reports exit 3 as a success, while here nothing was done and nothing will be until a re-anchor, so a client must see an error. It is not retryable like `vault-busy` (exit 5). `audit-chain-intact` stays exit 3: re-anchoring an intact chain genuinely is a no-op. Reads never verify the chain and keep working. **Re-anchor:** `wiki audit reanchor --reason "<why>"` (Mutate) is the one mutation allowed on a broken chain. It needs a non-blank reason (`missing-reason`, exit 1) and a broken live segment (`audit-chain-intact`, exit 3); then the live log is set aside byte-for-byte as an archived segment and the re-anchor line, carrying `reason=` and the number of `problems=`, starts the new live log. That line's `prev` is the SHA-256 of the archived bytes, which freezes the break exactly as found: the acknowledged problems stay visible to `--deep`, any later edit to that segment does not pass. **Rotation:** before a mutation, under the lock, a live log of at least `audit.rotate_bytes` (default 10 485 760) is gzip-compressed to `<stem>.<nnnnnn><ext>.gz` beside it (`audit.000001.log.gz`, …) and emptied; the command's line then starts the new live log, chaining from the archived segment's last hash. **Manifest:** `<stem>.manifest.json` lists the archived segments in order with `file`, `entries`, `lastHash` (the hash the next segment chains from: the last line's hash, or for a re-anchored segment the SHA-256 of its content), `sha256` of the uncompressed bytes, `reanchored` and `archivedAt`. The order of a rotation (segment file, then manifest, then empty the live log) is crash-safe: a live log still holding exactly the newest segment's bytes is recognised as already archived and emptied by the next mutation. Nothing is ever deleted, segments included; an unreadable manifest is set aside as `.unreadable` by a re-anchor, never overwritten. **`wiki audit`** still reads only the live segment, so it stays cheap; **`wiki audit --deep`** adds `deep: {intact, segments[]}`, one report per archived segment in order and the live one last, each checked on its own lines and against the hash the segment before it ends on (problem codes beyond AE's: `segment-missing`, `segment-unreadable`, `segment-mismatch`, `link-mismatch`, `manifest-unreadable`; line 0 means the segment as a whole). Writes refuse only on a live-segment break: a tampered archived segment is reported by `--deep` but does not block writes, because checking every segment on every write would grow without bound.
+
+## Appendix M — MCP browse and maintenance tools amendment (2026-11-13)
+
+- **AK. Browse and maintenance tools.** (issue #55) Four more intent tools.
+  A tool covering several commands takes a selector argument, advertised as
+  a JSON Schema `enum`; a value outside it, or a missing argument the chosen
+  value needs, is an `InvalidParams` error like any other schema failure.
+  Arguments the chosen value does not use are ignored.
+  `browse_wiki` (`view`: `pages` → `page list`; `sources` → `source list`;
+  `source` → `source show` then `source impact`; `categories` → `category
+  list`). `check_health` runs `lint` (`fixLinks` → `--fix-links`), then
+  `links check` (on by default, `links: false` skips it), then `eval` only
+  with `eval: true`, because `eval.yaml` is optional and a missing one would
+  stop the sequence. `--fail-under` is not an argument, so exit 4 cannot
+  happen over MCP; the agent reads `data.eval.score`. `work_issues`
+  (`action`: `list` | `show` | `resolve`) and `audit_page` (`action`:
+  `next` | `record` | `list`) map one to one onto `issues` and `audit`.
+
+## Appendix N — MCP write and admin tools amendment (2026-11-13)
+
+- **AL. MCP write and admin tools.** (issue #56) Assistants can change the
+  vault over MCP: `write_page` (`page upsert`; the body is a string argument
+  handed to the command on stdin with `--stdin`, never argv),
+  `rename_page` (`page rename`), `add_category` (`category add`),
+  `retract_source` (`source retract`, its own tool so it can be excluded on
+  its own) and `repair_vault` (`reindex`, then `page set-status` once per
+  listed page; `pages` and `status` come together or it is an
+  `InvalidParams` error). Results carry each step's data under its key; a
+  key run once per item (`statuses`) is always an array. **Multi-step
+  intents** stop at the first step that exits non-zero and return that
+  step's envelope plus `completedSteps`; nothing is rolled back, because
+  each CLI step is atomic on its own. **Cancellation**
+  (`notifications/cancelled`) never interrupts a step: it is checked between
+  steps, and the intent then returns the failure shape (`errors[0].code:
+  cancelled`, `completedSteps`, no `exitCode`). Every step's audit line
+  records the server's transport (`via=stdio`). `init` is not exposed.
+
+## Appendix O — Persona auto-accept amendment (2026-11-13)
+
+- **AM. `WIKI_PERSONA_AUTO_ACCEPT` accepts persona changesets without human review.** (issue #51, decided in #32) Off by default. `1`, `true`, `yes` or `on` (case-insensitive) turn it on; unset, empty, `0`, `false`, `no` or `off` leave it off; any other value fails `persona propose` with `invalid-persona-auto-accept`, exit 1, before anything is read or written, so a typo never decides the review mode. The variable is read per command from the process environment, so a manual `wiki` run and the MCP server (which runs the same CLI step in-process) behave the same. When on, `persona propose` validates exactly as amendment AH says (every rejection, `persona-lint` and `persona-evidence` included, still fails closed with nothing written) and then accepts the queued changeset exactly as `review approve` would: it covers every section, Boundaries included, and leaves nothing pending in `wiki review` or `persona/changeset.md`. The result carries `autoAccepted: true` and the changeset with `status: "approved"`. The step writes **one** audit line, the accept, not a propose line: `persona.accept | PERSONA.md | changeset=<id> | lines=… | evidence=… | decidedVia=auto-accept | reason=… | changeset-detail=@… | ledger=@…`, followed by `supersedes=<id>` and `cleared=<ids>` when the propose half did either. Lint reads the ledger off that line as it does for a reviewed accept. A pass that proposes no line changes queues nothing and writes the ordinary `persona.propose` line. **Risk, named once:** with it on, an agent's distillation pass rewrites the persona, Boundaries included, with no human in the loop; the evidence rules, lint and the audit trail are the only checks.
+
+## Appendix P — Stale persona evidence amendment (2026-11-13)
+
+- **AN. Stale persona evidence and the re-check proposal.** (issue #52; decisions #33 "Removed persona lines", "A category losing persona-source" and #35 "Staleness", ADR 0001) **Stale.** `wiki lint` judges every line of `PERSONA.md` against the evidence ledger of the accept its `audit_entry` names, looking the accept up in the live audit log and, when rotated away, in the archived segments. A piece of page evidence is stale when the page (found by id, so a rename is not staleness) is gone, its body no longer hashes to the recorded SHA-256 (frontmatter changes never count), or it no longer cites a source in a persona-source category. Owner-stated evidence is not judged until #53 records it. **Warning, per line.** Each stale line is one `persona-stale-evidence` warning, subject `PERSONA.md#<section>: <line text>`, whose detail names each stale piece and why; lines resting only on intact evidence get none. **Re-check proposal.** The open issue *is* the re-check proposal: no changeset is generated, because which lines to keep, reword or drop is the distillation pass's judgement and the owner reviews it like any other changeset. `wiki persona distill` lists the open proposals that are still stale under `recheck: [{issue, section, text, evidence: [{page, path, slug, reason: changed|gone|not-endorsed, recordedHash, currentHash}]}]`. The pass settles each by proposing a `change` whose `text` equals `from` (re-confirm with current evidence; no longer a `duplicate-persona-line`), a reworded `change`, or a `remove`. **Retirement.** Lint resolves an open `persona-stale-evidence` issue once its line is no longer stale (re-confirmed, reworded, removed or the page restored), so retired evidence leaves no dangling warning; other kinds keep their manual lifecycle. The accept line, reviewed or auto-accepted (amendment AM) alike, gains `retired=<path>@<sha256>,…` listing every evidence reference the previous ledger held and the new one does not (removed and reworded lines, the old hashes of re-confirmed ones); the field is omitted when nothing is retired.

@@ -119,11 +119,10 @@ public sealed class PageService
     // id/created/body content are untouched (the slug lives in the filename,
     // never in frontmatter, so there's no frontmatter field to edit here).
     //
-    // The move is two file ops - AtomicFile.Write(new) then File.Delete(old)
-    // - not atomic as a pair, but each op alone is crash-safe. A crash caught
-    // between the two leaves both files on disk momentarily; `wiki reindex`
-    // heals that by rebuilding idmap/index fresh from whatever page files
-    // exist (spec §3 forward-repair), so this is acceptable per spec.
+    // The move is two file ops - AtomicFile.Write(new) then AtomicFile.Delete(old)
+    // - not atomic as a pair, but each op alone is crash-safe, and since
+    // issue #47 both are journaled: a crash between them is rolled back by
+    // the next command (WriteRecovery), so both files are never left behind.
     public RenameResult Rename(Vault v, string id, string newSlug)
     {
         // --- Blocking validation: ALL of it runs before anything below touches disk. ---
@@ -171,7 +170,7 @@ public sealed class PageService
         var newPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(fullPath)!, newSlug + ".md");
 
         AtomicFile.Write(newPath, doc.Serialize());
-        System.IO.File.Delete(fullPath);
+        AtomicFile.Delete(fullPath);
 
         var newRelPath = v.RelativePath(newPath);
         idmap.Put(front.Id, newRelPath);
@@ -654,7 +653,7 @@ public sealed class PageService
     // Reads each cited source's frontmatter for its category; the ids were
     // already checked against the idmap by the caller, so this is a read
     // during validation, not a precondition of its own.
-    private static bool CitesPersonaSource(Vault v, VaultConfig cfg, IdMap idmap, string[] sources)
+    internal static bool CitesPersonaSource(Vault v, VaultConfig cfg, IdMap idmap, string[] sources)
     {
         if (!cfg.Categories.Any(c => c.PersonaSource))
             return false;
@@ -664,7 +663,10 @@ public sealed class PageService
             // A stale idmap entry (raw file deleted outside the CLI) is not
             // this check's to report - the upsert has always accepted it - and
             // a source that is not there endorses nothing.
-            var fullPath = System.IO.Path.Combine(v.Root, idmap.PathFor(sourceId)!);
+            var relPath = idmap.PathFor(sourceId);
+            if (relPath is null)
+                continue;
+            var fullPath = System.IO.Path.Combine(v.Root, relPath);
             if (!File.Exists(fullPath))
                 continue;
             var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(fullPath));

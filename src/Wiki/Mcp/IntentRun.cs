@@ -22,6 +22,12 @@ namespace Wiki.Mcp;
 //   cancelled        -> checked between steps only; the failure shape with
 //                       code `cancelled` and no exitCode; no rollback
 //
+// Steps that already ran are never undone: each CLI step is atomic on its
+// own, so after fixing what failed the agent re-runs the tool or the rest of
+// the steps. A step marked CliStep.Collect() appends its data to an array
+// under its key (one command per item); DataOf(key) hands a completed step's
+// data to the steps built after it.
+//
 // Usage in a tool:
 //   var run = cli.Begin(ct);
 //   if (run.Step(new CliStep("page", "page", "show").Positional(page)) && backlinks)
@@ -75,6 +81,15 @@ public sealed class IntentRun
         return false;
     }
 
+    // True once a step failed or the intent was cancelled; no later step runs.
+    public bool Stopped => _stopped is not null;
+
+    // The data of the last completed step with this key (null when none ran),
+    // so a later step can be built from an earlier step's output, e.g. the
+    // source ids a scan returned. A clone: the tool result is unaffected.
+    public JsonNode? DataOf(string key)
+        => _completed.LastOrDefault(s => s.Step.Key == key)?.Envelope["data"]?.DeepClone();
+
     public CallToolResult Result()
     {
         if (_stopped is not null)
@@ -82,7 +97,15 @@ public sealed class IntentRun
 
         var data = new JsonObject();
         foreach (var step in _completed)
-            data[step.Step.Key] = step.Envelope["data"]?.DeepClone();
+        {
+            var stepData = step.Envelope["data"]?.DeepClone();
+            if (!step.Step.Collected)
+                data[step.Step.Key] = stepData;
+            else if (data[step.Step.Key] is JsonArray items)
+                items.Add(stepData);
+            else
+                data[step.Step.Key] = new JsonArray(stepData);
+        }
 
         var structured = new JsonObject
         {

@@ -13,12 +13,17 @@ namespace Wiki.Audit;
 //
 // Fail closed, in two halves:
 //   before next(): resolve the vault, read wiki.yaml for `audit.path`, open
-//                  the log and check its tail line. Any failure here throws
+//                  the log and verify its whole live segment (issue #45), rolling it
+//                  into an archived segment first at audit.rotate_bytes. Any failure here throws
 //                  before the command runs, so the vault is untouched.
-//   after next():  store detail files, then append and fsync the line. A
-//                  failure here surfaces as the command's failure (exit 2).
-//                  The change itself has been made by then; making that
-//                  window recoverable is #47's journal, not this step.
+//   after next():  store detail files, seal the line into the write journal
+//                  (#47), then append and fsync it. A failure here surfaces
+//                  as the command's failure (exit 2); the change has been
+//                  made by then, and the sealed journal is what lets the next
+//                  writer append the line it is owed (WriteRecovery).
+//
+// The audit log's own files are never journaled (WriteJournal.Suspend): they
+// must not be rolled back with the vault change they record.
 //
 // What gets a line:
 //   - the command returned, whatever its exit code (`exit=<n>`): it ran to
@@ -50,9 +55,17 @@ public static class AuditStep
             // yet. Such a command fails on its own unless it creates the
             // vault, in which case it says so through ctx.Audit.VaultRoot.
             var vault = TryResolve(ctx);
+
+            // `audit reanchor` (issue #45) is the one mutation that runs on a
+            // broken chain: the command validates, then the live log is set
+            // aside as an archived segment and its line starts the new one.
+            if (vault is not null && invocation.Name == AuditLog.ReanchorCommand)
+                return Reanchor(AuditLog.For(vault), invocation, next);
+
             if (vault is not null)
             {
-                writer = AuditLog.For(vault).OpenForAppend();
+                using (WriteJournal.Suspend())
+                    writer = AuditLog.For(vault).OpenForAppend();
                 openedRoot = vault.Root;
             }
 
@@ -61,11 +74,15 @@ public static class AuditStep
             {
                 exit = next();
             }
-            catch (Exception ex) when (ex is not ValidationException and not StateConflictException)
+            catch (Exception ex) when (ex is not ValidationException and not StateConflictException and not SimulatedInterruption)
             {
                 if (writer is not null)
                 {
-                    try { Append(writer, invocation, $"error={AuditLine.Escape(ex.GetType().Name)}"); }
+                    try
+                    {
+                        using (WriteJournal.Suspend())
+                            writer.Append(Segments(writer, invocation, $"error={AuditLine.Escape(ex.GetType().Name)}"));
+                    }
                     catch (Exception) { /* the original failure is the one to report */ }
                 }
                 throw;
@@ -78,7 +95,8 @@ public static class AuditStep
                 // resolved up front (`init <path>` while WIKI_VAULT names
                 // another vault): the line belongs in the new one.
                 writer?.Dispose();
-                writer = AuditLog.For(declared).OpenForAppend();
+                using (WriteJournal.Suspend())
+                    writer = AuditLog.For(declared).OpenForAppend();
             }
 
             if (writer is null)
@@ -89,13 +107,39 @@ public static class AuditStep
                 return exit;
             }
 
-            Append(writer, invocation, "exit=" + exit.ToString(CultureInfo.InvariantCulture));
+            using (WriteJournal.Suspend())
+            {
+                var segments = Segments(writer, invocation, "exit=" + exit.ToString(CultureInfo.InvariantCulture));
+                // Sealed into the journal BEFORE the append (#47): from here
+                // an interruption is finished by the next writer, line included.
+                WriteJournal.Current?.Commit(segments, writer.Prev);
+                writer.Append(segments);
+            }
             return exit;
         }
         finally
         {
             writer?.Dispose();
         }
+    }
+
+    // Nothing is opened before the command runs (OpenForAppend would refuse
+    // the broken chain); the command refuses an intact chain and a missing
+    // reason itself, and only once it has returned 0 is the live log archived
+    // and the re-anchor line appended, still under the vault lock.
+    private static int Reanchor(AuditLog log, CommandInvocation invocation, Func<int> next)
+    {
+        var exit = next();
+        if (exit != 0)
+            return exit;
+        using (WriteJournal.Suspend())
+        using (var writer = log.Reanchor())
+        {
+            var segments = Segments(writer, invocation, "exit=0");
+            WriteJournal.Current?.Commit(segments, writer.Prev);
+            writer.Append(segments);
+        }
+        return exit;
     }
 
     private static Vault? TryResolve(CommandContext ctx)
@@ -113,7 +157,8 @@ public static class AuditStep
     private static bool SamePath(string a, string? b)
         => b is not null && string.Equals(a, b, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
-    private static void Append(AuditWriter writer, CommandInvocation invocation, string outcome)
+    // The line's segments, before sealing. Stores any detail files it needs.
+    private static List<string> Segments(AuditWriter writer, CommandInvocation invocation, string outcome)
     {
         var draft = invocation.Context.Audit;
         var segments = new List<string>
@@ -133,7 +178,7 @@ public static class AuditStep
 
         segments.Add(outcome);
         segments.Add("via=" + invocation.Context.Origin.Via);
-        writer.Append(segments);
+        return segments;
     }
 
     // The positional arguments as typed (`page rename <id> <slug>` ->

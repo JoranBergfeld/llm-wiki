@@ -101,6 +101,13 @@ blocking validation, then a literal `--- Validation complete ---` comment, then
 the writes. A rejected call must leave the vault byte-identical to how it found
 it. Don't interleave.
 
+**Every vault write goes through `AtomicFile.Write`, `AtomicFile.Delete` or
+`LogFile.Append`.** They record the file's before-image in the write journal
+(`.wiki/journal`, amendment AI) before touching it; that is what lets the next
+command finish or roll back a write that was interrupted. A `File.WriteAll*`,
+`File.Delete` or `File.Move` on a vault file elsewhere is a change recovery
+cannot see.
+
 **Error codes are an API.** `ValidationException` takes a stable kebab-case
 code (`duplicate-title`, `unknown-source`) that agents branch on. Reuse an
 existing code where the meaning matches; introduce a new one rather than
@@ -157,7 +164,8 @@ What a change should come with:
   version, with no vault flags, JSON parsing, or policy prerequisites. The
   functional tests in `E2E/VersionTests.cs` run the real process outside a vault
   and with invalid vault state, and check that existing files are unchanged.
-- Exit codes asserted, not just `ok`. 1 (rejected), 2 (IO), 3 (state conflict), 5 (vault busy)
+- Exit codes asserted, not just `ok`. 1 (rejected), 2 (IO), 3 (state conflict), 5 (vault busy),
+  6 (audit chain broken)
   are distinct promises.
 - For anything touching derived state, a reindex assertion: idmap byte-identity
   and structural ledger state are rebuilt exactly; history is only

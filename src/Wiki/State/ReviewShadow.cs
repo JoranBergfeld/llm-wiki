@@ -79,7 +79,6 @@ public static class ReviewShadow
     public static void Clear(Vault v, string pageId)
     {
         var path = PathFor(v, pageId);
-        if (File.Exists(path))
-            File.Delete(path);
+        AtomicFile.Delete(path);
     }
 }

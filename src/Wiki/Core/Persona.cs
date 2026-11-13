@@ -32,6 +32,14 @@ public static class PersonaSectionX
         _ => throw new ValidationException("invalid-persona-section", $"unknown PersonaSection '{s}'"),
     };
 
+    public static PersonaSection? FromWire(string? wire)
+    {
+        foreach (var s in InOrder)
+            if (ToWire(s) == wire)
+                return s;
+        return null;
+    }
+
     // Line cap per section; tone of voice has none (it gets a word-count
     // warning instead - see PersonaDoc.ToneWordWarning).
     public static int? LineCap(PersonaSection s) => s switch
@@ -91,6 +99,31 @@ public sealed class PersonaDoc
     private string Body { get; init; } = "";
 
     public static PersonaDoc Empty() => Parse("");
+
+    // The canonical file text for a persona (issue #50, the first writer):
+    // the three frontmatter keys, a `# Persona` title and all four sections
+    // in order with `- ` bullets, an empty section kept as its bare heading.
+    // Parse(Serialize(...)) reads back exactly these entries, so what the
+    // CLI writes always passes the structural rules it was validated with.
+    public static string Serialize(string lastDistilled, string auditEntry,
+        IReadOnlyDictionary<PersonaSection, IReadOnlyList<string>> entries)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(Frontmatter.Delimiter).Append('\n');
+        sb.Append(Frontmatter.WriteScalar(SchemaVersionKey, CurrentSchemaVersion, quoted: false)).Append('\n');
+        sb.Append(Frontmatter.WriteScalar(LastDistilledKey, lastDistilled, quoted: false)).Append('\n');
+        sb.Append(Frontmatter.WriteScalar(AuditEntryKey, auditEntry, quoted: false)).Append('\n');
+        sb.Append(Frontmatter.Delimiter).Append('\n');
+        sb.Append("# Persona\n");
+        foreach (var s in PersonaSectionX.InOrder)
+        {
+            sb.Append('\n').Append("## ").Append(PersonaSectionX.Heading(s)).Append('\n');
+            if (entries.TryGetValue(s, out var lines))
+                foreach (var line in lines)
+                    sb.Append("- ").Append(line).Append('\n');
+        }
+        return sb.ToString();
+    }
 
     public IReadOnlyList<string> Section(PersonaSection s)
         => Entries.TryGetValue(s, out var lines) ? lines : Array.Empty<string>();
