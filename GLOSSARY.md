@@ -47,7 +47,7 @@ The opt-in mode (`WIKI_PERSONA_AUTO_ACCEPT`, off by default) in which a valid pe
 _Avoid_: auto-approve, skip review
 
 **Stale evidence**
-Evidence that no longer holds for the persona line it supports: the page changed since the line was accepted, is gone, or no longer comes from a persona-source category.
+Evidence that no longer holds for the persona line it supports: the page changed since the line was accepted, is gone, or no longer comes from a persona-source category; or the owner-stated answer was edited, removed, or retracted by deleting its interview transcript.
 
 **Re-check proposal**
 The open lint warning for a persona line on stale evidence, which the next distillation pass settles by re-confirming, rewording or removing the line. It is not a changeset.

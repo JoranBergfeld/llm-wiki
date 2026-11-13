@@ -380,7 +380,7 @@ recurring lint issues; you approve or reject. The agent never edits it directly.
 | Quality | `eval` · `audit [--deep]` · `audit next\|record\|list\|reanchor` |
 | Review | `review list\|approve\|reject` |
 | Reflect | `schema propose\|proposals\|approve\|reject` |
-| Persona | `persona read\|distill\|propose` |
+| Persona | `persona read\|distill\|propose`, `persona interview guide\|record` |
 
 `wiki <group> --help` documents every flag.
 
