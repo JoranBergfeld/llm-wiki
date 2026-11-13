@@ -296,7 +296,9 @@ wiki persona read                               PERSONA.md as four line arrays (
                                                 persona (exists: false), not an error. Never writes.
 
 # MCP server (Appendix I)
-wiki mcp                                        Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout)
+wiki mcp [--exclude-tools <tool,...>]           Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout).
+                                                --exclude-tools (else WIKI_MCP_EXCLUDE_TOOLS) removes tools from
+                                                this instance; default: every tool is exposed (amendment AG)
 ```
 
 ---
@@ -687,3 +689,18 @@ Same standing as Appendices B and C: these override the original text where they
   show` without a query) and `read_page` (`page show`, `page backlinks` with
   `backlinks: true`). The `dotnet tool` channel now needs the ASP.NET Core
   runtime.
+- **AG. Per-instance tool narrowing.** (issue #60, decision #30 "Exposure")
+  Every tool is exposed by default, approvals and repair included. One
+  server instance removes tools with `--exclude-tools <name,...>`
+  (repeatable, comma-separated, blanks ignored), else the
+  `WIKI_MCP_EXCLUDE_TOOLS` env var in the same format; the flag, when given,
+  replaces the env var rather than adding to it. Never `wiki.yaml`: the vault
+  does not decide what its clients may do. Names are the advertised MCP tool
+  names, matched exactly, so a tool added later is narrowable with no work of
+  its own. The set is fixed at startup: removed tools are absent from
+  `tools/list` and a call to one is the ordinary unknown-tool `InvalidParams`
+  error; no tool argument (undeclared arguments are rejected) or request
+  header can change it. A name that matches no tool refuses to start
+  (`unknown-tool`, exit 1, the message lists the valid names), because a
+  typo would otherwise silently leave the tool the operator meant to remove
+  exposed.
