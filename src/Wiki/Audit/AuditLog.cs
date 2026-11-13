@@ -512,6 +512,12 @@ public sealed class AuditWriter : IDisposable
 
     // Seals and appends one line, flushed through to disk before returning:
     // success is reported only once the line is durable.
+    //
+    // Written straight to the stream, NOT through AtomicFile/LogFile: the
+    // audit log is recovery infrastructure, exempt from the journaled write
+    // rule (CONTRIBUTING.md, "Every vault write goes through ..."). The line
+    // is what the write journal seals on commit, so journaling it would be
+    // circular, and rolling it back would erase the record of the change.
     public string Append(IReadOnlyList<string> segments)
     {
         var (line, hash) = AuditLine.Seal(segments, Prev);

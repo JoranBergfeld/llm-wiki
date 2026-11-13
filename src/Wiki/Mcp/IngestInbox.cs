@@ -108,21 +108,7 @@ public sealed class IngestInbox(string? root, long maxUploadBytes)
     private static void Write(string dir, string target, byte[] bytes)
     {
         Directory.CreateDirectory(dir);
-        var tmp = Path.Combine(dir, "." + Path.GetFileName(target) + "." + Guid.NewGuid().ToString("N") + ".tmp");
-        try
-        {
-            using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write))
-            {
-                fs.Write(bytes, 0, bytes.Length);
-                fs.Flush(flushToDisk: true);
-            }
-            File.Move(tmp, target, overwrite: true);
-        }
-        catch
-        {
-            try { File.Delete(tmp); } catch { }
-            throw;
-        }
+        Core.FileReplace.Write(target, bytes, tempPrefix: ".");
     }
 
     private Landing TooLarge() => Landing.Refused("upload-too-large",
