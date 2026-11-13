@@ -408,6 +408,42 @@ public class ReviewToolTests
         Assert.Equal("not me", AuditField(AuditLines(tv)[^1], "reason"));
     }
 
+    // Amendment AX: decision=withdraw takes a pending persona changeset (or a
+    // category/schema proposal) back, with a required reason, logged.
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task Decide_Withdraw_TakesAPendingProposalBack_WithItsReason(string transport)
+    {
+        using var tv = new TempVault(); InitPersona(tv);
+        var a = SummaryPage(tv, "Craft one");
+        var b = SummaryPage(tv, "Craft two");
+        var id = CliData(tv.RunStdin(PersonaChangeset("two notes", "I value careful craft.", a, b),
+            "persona", "propose", "--stdin", "--json")).GetProperty("changeset").GetProperty("id").GetString()!;
+        var category = CliData(tv.Run("category", "propose", "podcast", "--description", "Podcasts", "--json")).GetProperty("id").GetString()!;
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+
+        var without = await Decide(mcp, "persona", id, "withdraw");
+        Assert.True(without.IsError);
+        Assert.Contains("reason-required", Codes(without.Structured()));
+
+        var persona = await Decide(mcp, "persona", id, "withdraw", "a better pass is coming");
+        Assert.False(persona.IsError, persona.Text());
+        Assert.Equal(["review withdraw"], CompletedSteps(persona.Structured()));
+        Assert.Equal("withdrawn", persona.Structured().GetProperty("data").GetProperty("decision")
+            .GetProperty("changeset").GetProperty("status").GetString());
+        AssertDecidedOverMcp(tv, "persona.withdraw", transport);
+        Assert.Equal("a better pass is coming", AuditField(AuditLines(tv)[^1], "reason"));
+
+        var cat = await Decide(mcp, "category", category, "withdraw", "article fits");
+        Assert.False(cat.IsError, cat.Text());
+        AssertDecidedOverMcp(tv, "category.withdraw", transport);
+
+        // A page under review has no proposer to take it back: it is rejected.
+        var page = await Decide(mcp, "page", a, "withdraw", "r");
+        Assert.True(page.IsError);
+        Assert.Contains("not-found", Codes(page.Structured()));
+    }
+
     [Theory]
     [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
     public async Task Decide_AlreadyDecided_IsExit3_NotAnError(string transport)

@@ -386,6 +386,24 @@ public sealed class PersonaService
         return Decision(changeset);
     }
 
+    // The proposer takes a pending changeset back (amendment AX): it leaves
+    // review with its reason recorded, PERSONA.md untouched. Flags the pass
+    // cleared stay cleared - the pass did consider those pages.
+    public PersonaDecisionResult Withdraw(Vault v, string id, string reason)
+    {
+        var store = new PersonaChangesets();
+        store.Load(v);
+        var changeset = RequireOpen(store, id);
+
+        // --- Validation complete ---
+
+        changeset.Status = "withdrawn";
+        changeset.Note = reason;
+        store.Save(v);
+        DeletePending(v);
+        return Decision(changeset);
+    }
+
     public static bool IsChangeset(Vault v, string id)
     {
         var store = new PersonaChangesets();

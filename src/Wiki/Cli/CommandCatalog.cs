@@ -75,16 +75,19 @@ public static class CommandCatalog
         ["review list"] = CommandKind.Read,
         ["review approve"] = CommandKind.Mutate,
         ["review reject"] = CommandKind.Mutate,
+        ["review withdraw"] = CommandKind.Mutate,
 
         ["schema propose"] = CommandKind.Mutate,
         ["schema proposals"] = CommandKind.Read,
         ["schema approve"] = CommandKind.Mutate,
         ["schema reject"] = CommandKind.Mutate,
+        ["schema withdraw"] = CommandKind.Mutate,
 
         ["category propose"] = CommandKind.Mutate,
         ["category proposals"] = CommandKind.Read,
         ["category approve"] = CommandKind.Mutate,
         ["category reject"] = CommandKind.Mutate,
+        ["category withdraw"] = CommandKind.Mutate,
         ["category add"] = CommandKind.Mutate,
         ["category list"] = CommandKind.Read,
 

@@ -117,6 +117,25 @@ public sealed class SchemaService
         LogFile.Append(v, utcIso, "schema-reject", proposalId, note ?? "(no note)");
     }
 
+    // The proposer takes an open proposal back (amendment AX); AGENTS.md is
+    // never touched.
+    public void Withdraw(Vault v, string proposalId, string reason)
+    {
+        var store = new Proposals();
+        store.Load(v);
+        var proposal = store.Get(proposalId)
+            ?? throw new ValidationException("not-found", $"no proposal found for id '{proposalId}'");
+        if (proposal.Status != "open")
+            throw new StateConflictException("state-conflict",
+                $"proposal '{proposalId}' is already '{proposal.Status}'; nothing to do");
+
+        // --- Validation complete ---
+
+        store.SetStatus(proposalId, "withdrawn", reason);
+        store.Save(v);
+        LogFile.Append(v, ToIso(_nowUnixMs()), "schema-withdraw", proposalId, reason);
+    }
+
     private static string ReadAgents(Vault v)
     {
         if (!File.Exists(v.AgentsPath))

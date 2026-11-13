@@ -19,6 +19,7 @@ public static class ReviewCommand
         review.Add(BuildList(vaultOption, jsonOption, stdout, stdin));
         review.Add(BuildApprove(vaultOption, jsonOption, stdout, stdin));
         review.Add(BuildReject(vaultOption, jsonOption, stdout, stdin));
+        review.Add(BuildWithdraw(vaultOption, jsonOption, stdout, stdin));
         return review;
     }
 
@@ -130,6 +131,44 @@ public static class ReviewCommand
         }));
 
         return reject;
+    }
+
+    // `wiki review withdraw <id> --reason` (amendment AX): the proposer takes
+    // a pending persona changeset back. Pages under review have no proposer
+    // to withdraw them - they are rejected - so only a changeset id is found.
+    private static Command BuildWithdraw(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var idArgument = new Argument<string>("id")
+        {
+            Description = "The pending persona changeset id (ULID) to withdraw",
+        };
+        var reasonOption = DecisionAudit.WithdrawReasonOption();
+
+        var withdraw = new Command("withdraw", "Withdraw a pending persona changeset, with a reason; PERSONA.md is left untouched")
+        {
+            idArgument,
+            reasonOption,
+        };
+
+        withdraw.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var id = parseResult.GetRequiredValue(idArgument);
+            var vault = ctx.ResolveVault();
+            if (!PersonaService.IsChangeset(vault, id))
+                throw new ValidationException("not-found",
+                    $"no persona changeset found for id '{id}'; a page under review is rejected, not withdrawn");
+            var reason = DecisionAudit.RequireWithdrawReason(parseResult.GetValue(reasonOption));
+
+            var result = new PersonaService().Withdraw(vault, id, reason);
+
+            ctx.Audit.Action = "persona.withdraw";
+            ctx.Audit.Subject = id;
+            DecisionAudit.RecordWithdraw(ctx, reason);
+            ctx.EmitOk(result);
+            return 0;
+        }));
+
+        return withdraw;
     }
 
     // A persona changeset is decided all-or-nothing (issue #32). Both
