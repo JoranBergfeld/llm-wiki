@@ -37,9 +37,11 @@ public sealed class McpHarness : IAsyncDisposable
 
     // `extraTools` registers test-only tools beside the catalogue, through the
     // same CliAdapter (StdioStreams.ConfigureForTests), for adapter behaviour
-    // no shipped tool can trigger yet.
+    // no shipped tool can trigger yet. `serverArgs` are appended to the
+    // `wiki mcp` argv (e.g. --exclude-tools).
     public static async Task<McpHarness> StartAsync(TempVault vault, string transport,
-        Action<Microsoft.Extensions.DependencyInjection.IMcpServerBuilder, CliAdapter>? extraTools = null)
+        Action<Microsoft.Extensions.DependencyInjection.IMcpServerBuilder, CliAdapter>? extraTools = null,
+        params string[] serverArgs)
     {
         if (transport != McpTransports.Stdio)
             throw new NotSupportedException($"transport '{transport}' is not wired into the harness yet");
@@ -49,7 +51,10 @@ public sealed class McpHarness : IAsyncDisposable
         var streams = new StdioStreams(c2s.Reader.AsStream(), s2c.Writer.AsStream()) { ConfigureForTests = extraTools };
 
         var serverStdout = new StringWriter();
-        var server = Task.Run(() => App.Main(["mcp", "--vault", vault.Path], serverStdout, TextReader.Null, streams));
+        var server = Task.Run(() => App.Main(["mcp", "--vault", vault.Path, .. serverArgs], serverStdout, TextReader.Null, streams));
+        // A server that refuses to start never answers initialize; closing
+        // its side of the pipe makes the client fail now, not at the timeout.
+        _ = server.ContinueWith(_ => s2c.Writer.Complete(), TaskScheduler.Default);
 
         var clientTransport = new StreamClientTransport(c2s.Writer.AsStream(), s2c.Reader.AsStream());
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));

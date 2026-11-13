@@ -1,3 +1,4 @@
+using System;
 using System.CommandLine;
 using System.IO;
 using Wiki.Core;
@@ -17,6 +18,15 @@ public static class McpCommand
     {
         var mcp = new Command("mcp", "Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout)");
 
+        // Issue #60: remove tools from this server instance. Repeatable and
+        // comma-separated; an unknown name refuses to start.
+        var excludeOption = new Option<string[]>(ToolNarrowing.Option)
+        {
+            Description = $"Tools this server does not expose, comma-separated or repeated (overrides {ToolNarrowing.Env}; default: none, every tool is exposed)",
+            Arity = ArgumentArity.OneOrMore,
+        };
+        mcp.Add(excludeOption);
+
         mcp.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
         {
             var vault = ctx.ResolveVault();
@@ -28,7 +38,11 @@ public static class McpCommand
             if (stdio is null)
                 throw new ValidationException("mcp-unavailable", "'wiki mcp' can only be started as its own process");
 
-            return WikiMcpServer.RunStdio(vault.Root, stdio);
+            var excluded = ToolNarrowing.Parse(
+                parseResult.GetResult(excludeOption) is null ? null : parseResult.GetValue(excludeOption),
+                Environment.GetEnvironmentVariable(ToolNarrowing.Env));
+
+            return WikiMcpServer.RunStdio(vault.Root, excluded, stdio);
         }));
 
         return mcp;
