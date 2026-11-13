@@ -88,6 +88,8 @@ public static class CommandCatalog
 
         ["links check"] = CommandKind.Mutate,
         ["persona read"] = CommandKind.Read,
+        ["persona distill"] = CommandKind.Read,
+        ["persona propose"] = CommandKind.Mutate,
     };
 
     // null means unclassified: a bug, which the tests catch before it ships
