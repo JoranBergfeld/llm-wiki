@@ -134,6 +134,11 @@ public static class App
         }
     }
 
+    // The command tree App.Main parses against, with null streams. For
+    // walking the tree (CommandClassificationTests enumerate it to prove every
+    // command is classified read or mutate); never for invoking.
+    public static RootCommand CommandTree() => BuildRootCommand(TextWriter.Null, TextReader.Null).Root;
+
     // argv fallback for the parse-error path. Matches the bare flag and the
     // `--json=true` / `--json:true` forms System.CommandLine also accepts.
     private static bool WantsJson(string[] args)
