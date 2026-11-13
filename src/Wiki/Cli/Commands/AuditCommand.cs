@@ -36,7 +36,7 @@ public static class AuditCommand
         // of changes intact?) and page faithfulness (are pages true to their
         // sources?). They answer different questions and neither stands in
         // for the other. Read-only: a broken chain is reported, not repaired
-        // (blocking writes and re-anchoring are #45), so the exit code is 0
+        // (mutations refuse a broken chain; `audit reanchor` restores them), so the exit code is 0
         // and the agent branches on chain.intact.
         //
         // `--deep` (issue #45) also verifies every archived segment and the

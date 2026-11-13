@@ -114,7 +114,7 @@ flowchart TD
 | `Wiki.Services` | One class per command group: preconditions, orchestration, and the order of validation-then-write. This is where the spec's rules live |
 | `Wiki.Core` | The vault's vocabulary — path model, config, frontmatter parse/serialize, slugs, ULIDs, wikilinks, atomic writes |
 | `Wiki.State` | The `.wiki/` JSON caches. Each store is a `Load` / mutate / `Save` object with deterministic, sorted serialization |
-| `Wiki.Audit` | The hash-chained audit log (spec amendment AE): `AuditStep` on the mutation boundary, `AuditDraft` (what a command adds to its line via `ctx.Audit`), `AuditLine` (format and hashing), `AuditLog` (location, append, live-segment verification) |
+| `Wiki.Audit` | The hash-chained audit log (spec amendment AE): `AuditStep` on the mutation boundary, `AuditDraft` (what a command adds to its line via `ctx.Audit`), `AuditLine` (format and hashing), `AuditLog` (location, append, verification of the live segment before every write and of every segment with `--deep`, rotation into gzip segments plus manifest at `audit.rotate_bytes`, re-anchor; amendment AF) |
 | `Wiki.Docs` | The two CLI-generated markdown files, `index.md` (fully regenerated) and `log.md` (appended) |
 | `Wiki.Json` | The envelope type and the source-generated `JsonSerializerContext` every DTO is registered in |
 | `Wiki.Templates` | Embedded `wiki.yaml` and `AGENTS.md` scaffolds for `wiki init` |

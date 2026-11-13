@@ -364,7 +364,7 @@ recurring lint issues; you approve or reject. The agent never edits it directly.
 | Pages | `page upsert\|show\|list\|rename\|set-status\|backlinks` |
 | Retrieval | `search` · `index show` |
 | Health | `lint` · `issues list\|show\|resolve` · `links check` |
-| Quality | `eval` · `audit next\|record\|list` |
+| Quality | `eval` · `audit next|record|list` · `audit [--deep]` · `audit reanchor` |\|record\|list` |
 | Review | `review list\|approve\|reject` |
 | Reflect | `schema propose\|proposals\|approve\|reject` |
 | Persona | `persona read` |

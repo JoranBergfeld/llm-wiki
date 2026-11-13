@@ -13,7 +13,8 @@ namespace Wiki.Audit;
 //
 // Fail closed, in two halves:
 //   before next(): resolve the vault, read wiki.yaml for `audit.path`, open
-//                  the log and check its tail line. Any failure here throws
+//                  the log and verify its whole live segment (issue #45), rolling it
+//                  into an archived segment first at audit.rotate_bytes. Any failure here throws
 //                  before the command runs, so the vault is untouched.
 //   after next():  store detail files, then append and fsync the line. A
 //                  failure here surfaces as the command's failure (exit 2).
