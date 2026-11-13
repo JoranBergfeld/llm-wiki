@@ -7,7 +7,8 @@ using Wiki.Mcp;
 
 namespace Wiki.Cli.Commands;
 
-// `wiki mcp`: serve the vault to MCP clients over stdio (issue #54). The
+// `wiki mcp`: serve the vault to MCP clients over stdio (issue #54), or over
+// streamable HTTP with --http (issue #61). The
 // vault is resolved once, here, to an absolute path, and the server refuses
 // to start when it cannot be - a misconfiguration shows up immediately, not
 // on the first tool call. Classified CommandKind.Host: the command itself
@@ -17,7 +18,7 @@ public static class McpCommand
 {
     public static Command Build(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin, StdioStreams? stdio)
     {
-        var mcp = new Command("mcp", "Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout)");
+        var mcp = new Command("mcp", "Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout), or over streamable HTTP with --http");
 
         // Issue #60: remove tools from this server instance. Repeatable and
         // comma-separated; an unknown name refuses to start.
@@ -40,6 +41,29 @@ public static class McpCommand
         };
         mcp.Add(inboxRootOption);
         mcp.Add(maxUploadOption);
+
+        // Issue #61: streamable HTTP instead of stdio, and its server config.
+        var httpOption = new Option<bool>(McpHttpSettings.HttpOption)
+        {
+            Description = $"Serve streamable HTTP (stateless, plain http, endpoint {McpHttpSettings.EndpointPath}) instead of stdio; runs until stopped",
+        };
+        var listenOption = new Option<string?>(McpHttpSettings.ListenOption)
+        {
+            Description = $"With --http: the http://<host>:<port> to listen on (overrides {McpHttpSettings.ListenEnv}; default {McpHttpSettings.DefaultListen})",
+        };
+        var tokenOption = new Option<string?>(McpHttpSettings.TokenOption)
+        {
+            Description = $"With --http: the bearer token every request must present (overrides {McpHttpSettings.TokenEnv}, which is preferred: argv is visible to other users; default: none)",
+        };
+        var allowedHostsOption = new Option<string[]>(McpHttpSettings.AllowedHostsOption)
+        {
+            Description = $"With --http: Host header names this server answers for, comma-separated or repeated; '*' allows any (overrides {McpHttpSettings.AllowedHostsEnv}; default: localhost,127.0.0.1,[::1])",
+            Arity = ArgumentArity.OneOrMore,
+        };
+        mcp.Add(httpOption);
+        mcp.Add(listenOption);
+        mcp.Add(tokenOption);
+        mcp.Add(allowedHostsOption);
 
         mcp.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
         {
@@ -68,7 +92,22 @@ public static class McpCommand
                 ? VaultLock.ResolveTimeout(flag, env: null).TotalSeconds.ToString(CultureInfo.InvariantCulture)
                 : null;
 
-            return WikiMcpServer.RunStdio(vault.Root, excluded, inbox, lockTimeout, stdio);
+            if (!parseResult.GetValue(httpOption))
+            {
+                // A transport setting without the transport is a mistake the
+                // operator should hear about, not a silently open server.
+                foreach (var name in new[] { McpHttpSettings.ListenOption, McpHttpSettings.TokenOption, McpHttpSettings.AllowedHostsOption })
+                    if (parseResult.GetResult(name) is not null)
+                        throw new ValidationException("http-only-option", $"{name} only applies with {McpHttpSettings.HttpOption}");
+                return WikiMcpServer.RunStdio(vault.Root, excluded, inbox, lockTimeout, stdio);
+            }
+
+            var http = McpHttpSettings.Resolve(
+                parseResult.GetValue(listenOption),
+                parseResult.GetValue(tokenOption),
+                parseResult.GetResult(allowedHostsOption) is null ? null : parseResult.GetValue(allowedHostsOption),
+                inbox);
+            return WikiMcpServer.RunHttp(vault.Root, excluded, inbox, lockTimeout, http, stdio, ctx.Out, ctx.Json);
         }));
 
         return mcp;

@@ -58,6 +58,7 @@ public class CancellationTests
         Assert.True(held.WaitUntilEntered(TimeSpan.FromSeconds(30)));
 
         var requestId = new RequestId("repair-1");
+        using var abandon = new CancellationTokenSource();
         var call = mcp.Client.SendRequestAsync(new JsonRpcRequest
         {
             Id = requestId,
@@ -67,14 +68,20 @@ public class CancellationTests
                 ["name"] = "repair_vault",
                 ["arguments"] = new JsonObject { ["reindex"] = false, ["pages"] = $"{a},{b}", ["status"] = "archived" },
             },
-        });
+        }, abandon.Token);
         await Task.Delay(TimeSpan.FromSeconds(1)); // the tool now waits on the lock inside its first step
-        await mcp.Client.SendNotificationAsync(NotificationMethods.CancelledNotification,
-            new CancelledNotificationParams { RequestId = requestId, Reason = "test" });
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+        if (transport == McpTransports.Stdio)
+            await mcp.Client.SendNotificationAsync(NotificationMethods.CancelledNotification,
+                new CancelledNotificationParams { RequestId = requestId, Reason = "test" });
+        else
+            // Stateless HTTP: each request is its own exchange, so a later
+            // notifications/cancelled has nothing to correlate with. A client
+            // cancels by abandoning the request; the server sees it aborted.
+            abandon.Cancel();
         await Task.Delay(TimeSpan.FromSeconds(1)); // the server has seen the cancel
         held.Release();
         await writer;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
 
         var deadline = DateTime.UtcNow.AddSeconds(30);
         while (PageStatus(tv, a) != "archived" && DateTime.UtcNow < deadline)

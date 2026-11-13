@@ -76,7 +76,7 @@ src/Wiki/            the CLI — see docs/architecture.md for the layer map
   State/             .wiki/*.json stores
   Docs/              generated index.md and log.md
   Json/              envelope + source-generated serializer context
-  Mcp/               `wiki mcp`: server, adapter (CliStep, IntentRun), Tools/ one class per tool
+  Mcp/               `wiki mcp` (stdio, --http): server, adapter (CliStep, IntentRun), HttpGate, Tools/ one class per tool
   Templates/         embedded wiki.yaml and AGENTS.md scaffolds
 tests/Wiki.Tests/    xunit; Commands/ Core/ Docs/ State/ E2E/ Support/
 docs/                spec + architecture + flow documentation
