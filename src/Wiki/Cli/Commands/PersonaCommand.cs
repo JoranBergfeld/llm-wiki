@@ -109,9 +109,8 @@ internal static class PersonaAudit
     public static string LedgerJson(PersonaLedgerLine[] ledger)
         => System.Text.Json.JsonSerializer.Serialize(ledger, Json.WikiJsonContext.Default.PersonaLedgerLineArray);
 
-    // `cli` for a person or agent at the terminal, `mcp` for either MCP
-    // transport (issue #32); auto-accept (#51) sets its own value.
-    public static string DecidedVia(CommandContext ctx) => ctx.Origin.Transport == Transport.Cli ? "cli" : "mcp";
+    // `cli` or `mcp` (issue #32); auto-accept (#51) sets its own value.
+    public static string DecidedVia(CommandContext ctx) => DecisionAudit.DecidedVia(ctx);
 
     // Every evidence reference of the lines the changeset introduces, as
     // `<path>@<sha256>` (or `<path>#<anchor>@<sha256>` for owner-stated).

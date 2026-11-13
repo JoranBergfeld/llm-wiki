@@ -26,5 +26,8 @@ public static class McpToolCatalog
         .WithTools(new RenamePageTool(cli))
         .WithTools(new AddCategoryTool(cli))
         .WithTools(new RetractSourceTool(cli))
-        .WithTools(new RepairVaultTool(cli));
+        .WithTools(new RepairVaultTool(cli))
+        .WithTools(new ProposeChangeTool(cli))
+        .WithTools(new ReviewQueueTool(cli))
+        .WithTools(new DecideTool(cli));
 }

@@ -68,6 +68,7 @@ public static class ReviewCommand
 
             var service = new ReviewService();
             service.Approve(vault, id);
+            DecisionAudit.Record(ctx);
 
             var view = PageQuery.Show(vault, id, frontmatterOnly: true);
             if (ctx.Json)
@@ -113,6 +114,7 @@ public static class ReviewCommand
 
             var service = new ReviewService();
             service.Reject(vault, id, note);
+            DecisionAudit.Record(ctx);
 
             var view = PageQuery.Show(vault, id, frontmatterOnly: true);
             if (ctx.Json)
