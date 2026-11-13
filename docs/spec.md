@@ -196,7 +196,8 @@ Blocking validation (§11) rejects any write whose frontmatter deviates from the
 
 - Binary name: `wiki`. Vault resolution: `--vault <path>` flag, else `WIKI_VAULT` env var, else walk up from CWD looking for `wiki.yaml`. **All three branches require a `wiki.yaml` at the resolved root** (amendment M) — an explicit path that isn't a vault is an error, never an empty vault.
 - **`--json` on vault operations** emits a stable, versioned JSON envelope: `{"ok": bool, "data": …, "errors": [{"code": "…", "message": "…", "path": "…"}]}`. This is the primary agent interface; human-facing output uses Spectre.Console rendering — **on the failure path as well as the success path** (amendment P). Exit codes are identical in both modes. Standalone `wiki --version` takes no other flags and returns plain-text executable metadata (amendment AA).
-- Exit codes: `0` success · `1` blocking validation failure (input rejected, nothing written) · `2` environment/IO error · `3` state conflict (e.g., resuming a ledger step already done — safe, idempotent no-op reported) · `4` a measurement came in under an explicitly requested threshold (`wiki eval --fail-under` only, amendment W — never produced by any other command).
+- Exit codes: `0` success · `1` blocking validation failure (input rejected, nothing written) · `2` environment/IO error · `3` state conflict (e.g., resuming a ledger step already done — safe, idempotent no-op reported) · `4` a measurement came in under an explicitly requested threshold (`wiki eval --fail-under` only, amendment W — never produced by any other command) · `5` the vault is busy (`vault-busy`): the vault lock could not be taken within the lock timeout, nothing was read or written, retry (amendment AD).
+- **Vault lock** (amendment AD): every command runs inside one vault-wide lock held through an OS file handle on `.wiki/lock`. Readers share it; a mutating command holds it exclusively for its whole step. A command waits for a busy vault up to the lock timeout — `--lock-timeout <seconds>`, else `WIKI_LOCK_TIMEOUT`, else 10 s — then fails with `vault-busy`, exit 5. The timeout bounds the wait only; it never cancels a step already running.
 - Page bodies always arrive via **stdin** (`--stdin`) or `--body-file <path>`; never as shell arguments (quoting/size hazards).
 - Every mutating command appends one line to `wiki/log.md` in the format `## [2026-07-13T14:02:11Z] <op> | <subject> | <one-line detail>` (grep-parseable, per the gist).
 
@@ -508,7 +509,8 @@ Never scan bodies to discover relevance.
 For vault operations, pass `--vault <path>` and `--json`. Exit codes: 0 success · 1 your input was rejected — read
 `errors[].code`, correct it, retry once, never retry blind · 2 environment/IO
 problem, do not retry · 3 state conflict, the world is already how you asked,
-treat as a no-op and move on.
+treat as a no-op and move on · 5 `vault-busy`, another wiki command holds the
+vault and nothing was changed: retry the same command shortly.
 
 ### Ingest
 1. The human registers the source:
@@ -624,3 +626,27 @@ Same standing as Appendices B and C: these override the original text where they
   schema.
 
 - **AC. `PERSONA.md`: a fixed four-section schema, read by `wiki persona read`, checked by lint.** (issue #48; decisions in issues #31, #33 and ADR 0001) The owner's persona is one small file at the vault root, outside `wiki/`, so it is never a knowledge page, never indexed and never searched. **Format.** A frontmatter block with exactly three scalar keys — `schema_version: 1`, `last_distilled: <yyyy-MM-dd>`, `audit_entry: <audit-log entry that produced the file>` — then an optional `# ` title and four `## ` sections in this order: `Values` (max 10 lines), `Principles` (max 15), `Tone of voice` (no line cap), `Boundaries` (max 10). Every non-blank line inside a section is one entry; a leading `- ` or `* ` is presentation and is stripped. An entry is at most 200 characters, counted in Unicode scalar values so non-ASCII text is not penalised. The file holds no links and no ids: it must read as a standalone document, and knowledge pages never link to it (ADR 0001). **Ownership.** Only the `wiki persona` command group writes it; ingest has no path to it. This amendment adds the read side only — writing arrives with persona changesets. **Read.** `wiki persona read` is lenient: it returns whatever entries it can find, with frontmatter fields null when absent or malformed, because an assistant is better served by the lines that are there than by nothing; reporting a malformed file is lint's job. A vault without the file reads as an empty persona with `exists: false`. **Lint.** One issue kind per rule, all with subject `PERSONA.md`, because issues merge on `(kind, subject)` and a shared kind would let the rules overwrite each other's detail and occurrences; a rule broken several times files one issue listing every occurrence. The structural rules are **errors** and tone of voice past 600 words is a **warning**; the lint report's per-kind `counts` now carry that `severity`, and every pre-existing kind reports `warning`. Lint still exits 0 on errors — it reports and files; it does not gate. The errors are exactly the rules a persona changeset will have to pass before it can be queued, so the rules are defined once and shared. **Not in this amendment:** the evidence rules (two supporting pages for a line distilled from endorsed notes, and the stale-evidence warning) need the audit log and arrive with it; and ids are not detected beyond links, because no id format is reliably distinguishable from prose.
+
+## Appendix G — Vault lock amendment (2026-11-13)
+
+- **AD. One vault-wide lock; a busy vault is exit 5, `vault-busy`.** (issue
+  #46, design in #36) The MCP server runs CLI steps in-process and a manual
+  `wiki` run is a separate process writing the same vault, and nothing kept
+  them from interleaving a read-modify-write. Every command now runs inside
+  one vault-wide lock, taken as the outermost step of the read and mutation
+  boundaries: shared for read commands, exclusive for mutating ones, held for
+  exactly one CLI step (so later boundary steps — the audit append and
+  rotation — run inside it). It is an OS file handle on `.wiki/lock`
+  (`wiki init` creates the file), so a crashed or killed process releases it;
+  there is no flag or PID file to get stuck. On Unix .NET implements the
+  share modes with `flock(2)`, which is per open file, so two commands in one
+  process exclude each other as well; `DOTNET_SYSTEM_IO_DISABLEFILELOCKING`
+  disables it. `init` takes no lock: its target is not a vault yet. A
+  command waits up to the lock timeout (`--lock-timeout <seconds>`, else
+  `WIKI_LOCK_TIMEOUT`, else 10 s; `invalid-lock-timeout`, exit 1, for a value
+  that is not a non-negative number). On timeout it fails with `vault-busy`
+  and **exit 5**, before reading or writing anything. Not exit 3: exit 3
+  means "already done, move on" and is reported over MCP as a success, while
+  a busy vault means "not done, retry" and must surface as an error. The
+  timeout never cancels a step that already holds the lock. Guarantee: local
+  storage only; network filesystems are outside it.

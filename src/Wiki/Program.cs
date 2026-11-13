@@ -141,6 +141,11 @@ public static class App
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = scex.Code, Message = scex.Message, Path = scex.Path });
             return 3;
         }
+        catch (VaultBusyException vbex)
+        {
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = VaultBusyException.Code, Message = vbex.Message, Path = vbex.Path });
+            return VaultBusyException.ExitCode;
+        }
         catch (Exception ex)
         {
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = "io-error", Message = ex.Message });
@@ -186,10 +191,19 @@ public static class App
             Description = "Emit a machine-readable JSON envelope instead of human-readable output",
         };
 
+        // Read by name in VaultLock.Step rather than threaded through every
+        // command's Build signature.
+        var lockTimeoutOption = new Option<string?>(VaultLock.TimeoutOption)
+        {
+            Recursive = true,
+            Description = $"Seconds to wait for a busy vault before failing with vault-busy (overrides {VaultLock.TimeoutEnv}; default 10)",
+        };
+
         var root = new RootCommand("wiki - a CLI-maintained, LLM-legible knowledge base")
         {
             vaultOption,
             jsonOption,
+            lockTimeoutOption,
         };
 
         root.Add(InitCommand.Build(vaultOption, jsonOption, stdout, stdin));

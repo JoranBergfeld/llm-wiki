@@ -156,7 +156,7 @@ What a change should come with:
   version, with no vault flags, JSON parsing, or policy prerequisites. The
   functional tests in `E2E/VersionTests.cs` run the real process outside a vault
   and with invalid vault state, and check that existing files are unchanged.
-- Exit codes asserted, not just `ok`. 1 (rejected), 2 (IO), 3 (state conflict)
+- Exit codes asserted, not just `ok`. 1 (rejected), 2 (IO), 3 (state conflict), 5 (vault busy)
   are distinct promises.
 - For anything touching derived state, a reindex assertion: idmap byte-identity
   and structural ledger state are rebuilt exactly; history is only
