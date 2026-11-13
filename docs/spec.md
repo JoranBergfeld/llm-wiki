@@ -280,6 +280,9 @@ wiki schema propose --section "<heading>" --stdin Full-section replacement (amen
 wiki schema proposals
 wiki schema approve <proposal-id>               Human applies the diff; logs amendment
 wiki schema reject <proposal-id> [--note "…"]
+
+# MCP server (Appendix G)
+wiki mcp                                        Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout)
 ```
 
 ---
@@ -608,3 +611,26 @@ Same standing as Appendices B and C: these override the original text where they
   value; lint and every page read accept it, and reject anything else as
   `frontmatter-schema`. This is the only change persona makes to the page
   schema.
+
+## Appendix G — MCP amendments (2026-11-13)
+
+- **AF. `wiki mcp` over stdio.** (issue #54, spec issue #41) §2 kept the CLI
+  the only interface. `wiki mcp` now serves the vault to MCP clients over
+  stdio from the same binary. The vault is resolved once at startup
+  (`--vault`, `WIKI_VAULT` or the working directory) to an absolute path,
+  and the server refuses to start (`no-vault`, exit 1) when it cannot be.
+  Every tool is a thin sequence of CLI steps run in-process with argv built
+  only from typed arguments (option values as `--opt=value`, positional
+  values after `--`) plus the bound `--vault` and `--json`, so validation,
+  the vault lock, the audit log and logging apply per step exactly as on the
+  command line. Tool results: all steps exit 0 → `isError: false`,
+  structured content `{v, ok, data:{<step key>: <data>}, errors, exitCode:0,
+  completedSteps}`; a step exits non-zero → the sequence stops and the
+  structured content is that step's envelope unchanged plus `exitCode` and
+  `completedSteps`, with `isError: true` for every exit except 3 (state
+  conflict, idempotent no-op). Unknown tools and arguments that fail the
+  tool's input schema (missing, wrongly typed or undeclared) are JSON-RPC
+  `InvalidParams` errors. First tools: `search_wiki` (`search`, or `index
+  show` without a query) and `read_page` (`page show`, `page backlinks` with
+  `backlinks: true`). The `dotnet tool` channel now needs the ASP.NET Core
+  runtime.
