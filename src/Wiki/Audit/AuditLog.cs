@@ -198,21 +198,14 @@ public sealed class AuditLog
     {
         var file = NextSegmentFile(manifest);
         var path = SegmentPath(file);
-        var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
+        // Through AtomicFile like every vault write (#47); the caller holds
+        // WriteJournal.Suspend, so the audit log's own files stay out of the
+        // journal and are never rolled back with the change they record.
+        using (var compressed = new MemoryStream())
         {
-            using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write))
-            {
-                using (var gz = new GZipStream(fs, CompressionLevel.Optimal, leaveOpen: true))
-                    gz.Write(bytes, 0, bytes.Length);
-                fs.Flush(flushToDisk: true);
-            }
-            File.Move(tmp, path, overwrite: true);
-        }
-        catch
-        {
-            try { File.Delete(tmp); } catch (Exception) { /* best effort */ }
-            throw;
+            using (var gz = new GZipStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
+                gz.Write(bytes, 0, bytes.Length);
+            AtomicFile.Write(path, compressed.ToArray());
         }
 
         manifest.Segments.Add(new AuditSegment
@@ -255,7 +248,11 @@ public sealed class AuditLog
 
     private AuditManifest SetAsideManifest()
     {
-        File.Move(ManifestPath, ManifestPath + "." + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture) + ".unreadable");
+        // Copy, then delete, through AtomicFile (#47) rather than File.Move:
+        // the unreadable manifest is kept byte-for-byte, never overwritten.
+        var aside = ManifestPath + "." + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture) + ".unreadable";
+        AtomicFile.Write(aside, File.ReadAllBytes(ManifestPath));
+        AtomicFile.Delete(ManifestPath);
         return new AuditManifest();
     }
 
