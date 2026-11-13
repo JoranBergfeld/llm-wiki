@@ -6,9 +6,10 @@ using Wiki.Services;
 
 namespace Wiki.Cli.Commands;
 
-// `wiki persona ...` (spec §8, amendments AC and AG): the owner's persona in
+// `wiki persona ...` (spec §8, amendments AC, AH and AM): the owner's persona in
 // PERSONA.md. `read` serves it, `distill` is the read side of a distillation
-// pass, `propose` queues the pass's changeset for `wiki review`. The
+// pass, `propose` queues the pass's changeset for `wiki review`, or accepts it
+// at once when WIKI_PERSONA_AUTO_ACCEPT is on. The
 // onboarding interview (`persona interview guide|record`) joins as a nested
 // command in a later ticket.
 public static class PersonaCommand
