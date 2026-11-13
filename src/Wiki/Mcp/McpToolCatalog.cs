@@ -15,7 +15,7 @@ namespace Wiki.Mcp;
 // int?) for the same reason.
 public static class McpToolCatalog
 {
-    public static IMcpServerBuilder AddWikiTools(this IMcpServerBuilder builder, CliAdapter cli) => builder
+    public static IMcpServerBuilder AddWikiTools(this IMcpServerBuilder builder, CliAdapter cli, IngestInbox inbox) => builder
         .WithTools(new SearchWikiTool(cli))
         .WithTools(new ReadPageTool(cli))
         .WithTools(new BrowseWikiTool(cli))
@@ -29,5 +29,7 @@ public static class McpToolCatalog
         .WithTools(new RepairVaultTool(cli))
         .WithTools(new ProposeChangeTool(cli))
         .WithTools(new ReviewQueueTool(cli))
-        .WithTools(new DecideTool(cli));
+        .WithTools(new DecideTool(cli))
+        .WithTools(new IngestSourceTool(cli, inbox))
+        .WithTools(new ContinueIngestTool(cli));
 }

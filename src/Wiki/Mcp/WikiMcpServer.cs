@@ -15,7 +15,7 @@ namespace Wiki.Mcp;
 // which in stdio mode carries the JSON-RPC stream.
 public static class WikiMcpServer
 {
-    public static int RunStdio(string vaultRoot, IReadOnlySet<string> excludedTools, StdioStreams streams)
+    public static int RunStdio(string vaultRoot, IReadOnlySet<string> excludedTools, IngestInbox inbox, StdioStreams streams)
     {
         var cli = new CliAdapter(vaultRoot, new InvocationOrigin(Transport.Stdio, TokenUsed: false));
 
@@ -24,7 +24,7 @@ public static class WikiMcpServer
             .AddMcpServer(options => options.ServerInfo = new Implementation { Name = "wiki", Version = Version() })
             .WithStreamServerTransport(streams.Input, streams.Output)
             .WithToolArgumentGuard()
-            .AddWikiTools(cli);
+            .AddWikiTools(cli, inbox);
         streams.ConfigureForTests?.Invoke(builder, cli);
 
         return Serve(services, excludedTools).GetAwaiter().GetResult();

@@ -27,6 +27,19 @@ public static class McpCommand
         };
         mcp.Add(excludeOption);
 
+        // Issue #57: where ingest_source lands uploads, and how large one may
+        // be. Server config fixed at startup; no tool argument reaches either.
+        var inboxRootOption = new Option<string?>(IngestInbox.RootOption)
+        {
+            Description = $"Inbox directory ingest_source lands uploads in, as <dir>/<category>/<filename>; must be outside the vault (overrides {IngestInbox.RootEnv}; default: none, ingest_source refuses)",
+        };
+        var maxUploadOption = new Option<string?>(IngestInbox.MaxUploadOption)
+        {
+            Description = $"Largest upload ingest_source accepts, in bytes (overrides {IngestInbox.MaxUploadEnv}; default: {IngestInbox.DefaultMaxUploadBytes})",
+        };
+        mcp.Add(inboxRootOption);
+        mcp.Add(maxUploadOption);
+
         mcp.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
         {
             var vault = ctx.ResolveVault();
@@ -42,7 +55,9 @@ public static class McpCommand
                 parseResult.GetResult(excludeOption) is null ? null : parseResult.GetValue(excludeOption),
                 Environment.GetEnvironmentVariable(ToolNarrowing.Env));
 
-            return WikiMcpServer.RunStdio(vault.Root, excluded, stdio);
+            var inbox = IngestInbox.Resolve(parseResult.GetValue(inboxRootOption), parseResult.GetValue(maxUploadOption), vault.Root);
+
+            return WikiMcpServer.RunStdio(vault.Root, excluded, inbox, stdio);
         }));
 
         return mcp;

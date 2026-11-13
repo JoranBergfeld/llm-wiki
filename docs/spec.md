@@ -318,6 +318,9 @@ wiki persona propose --stdin|--body-file <p>    One changeset as JSON (amendment
 wiki mcp [--exclude-tools <tool,...>]           Serve this vault to MCP clients over stdio (JSON-RPC on stdin/stdout).
                                                 --exclude-tools (else WIKI_MCP_EXCLUDE_TOOLS) removes tools from
                                                 this instance; default: every tool is exposed (amendment AG)
+    [--inbox-root <dir>] [--max-upload-bytes <n>] --inbox-root (else WIKI_MCP_INBOX_ROOT): where ingest_source lands
+                                                uploads, outside the vault; --max-upload-bytes (else
+                                                WIKI_MCP_MAX_UPLOAD_BYTES, default 10485760) caps one upload (AP)
 ```
 
 ---
@@ -812,3 +815,40 @@ Same standing as Appendices B and C: these override the original text where they
   passes into `App.Main`, never from a tool argument, so a client cannot
   claim to be the CLI; persona auto-accept (amendment AM) writes
   `decidedVia=auto-accept`.
+
+## Appendix R — MCP ingest tools amendment (2026-11-13)
+
+- **AP. MCP ingest tools.** (issue #57, decision #30 "Ingest") Over MCP,
+  `ingest_source` replaces `source add` and `source scan`. **Inbox.** The
+  upload lands at `<inboxRoot>/<category>/<filename>`: one directory per
+  category, the amendment T inbox shape. `inboxRoot` is server config, set
+  like the vault binding with `wiki mcp --inbox-root <dir>` or
+  `WIKI_MCP_INBOX_ROOT` (the flag wins), resolved to an absolute path at
+  startup; a root that overlaps the vault refuses to start
+  (`inbox-in-vault`, exit 1). No tool argument names a directory: `category`
+  must be kebab-case and `filename` a plain file name (no separators, no
+  leading dot, no Windows-reserved characters or device names). **Upload.**
+  The content is a base64 string argument; `--max-upload-bytes` /
+  `WIKI_MCP_MAX_UPLOAD_BYTES` (default 10 485 760) caps the decoded size and
+  is the limit the HTTP transport's `upload-too-large` reuses. The write is
+  atomic (a dot-prefixed temp file renamed into place, so a concurrent scan
+  never sees half an upload); re-uploading a filename replaces the inbox
+  copy, which is harmless because registered content lives in `raw/`.
+  Refusals of the tool's own checks (`inbox-not-configured`,
+  `invalid-category-id`, `invalid-filename`, `invalid-upload`,
+  `upload-too-large`) are failure results with `exitCode: 1`, like a
+  command's validation failure, and write nothing. **Steps.** After landing:
+  `source scan <inboxRoot>/<category> --category <category>` (`data.scan`,
+  every file's outcome; content is hashed and deduplicated, so the same
+  content again reports `skipped-duplicate` with the existing id), then
+  `ingest resume` for each source the scan registered and for the upload's
+  own source when it was a duplicate (`data.plans`, always an array).
+  `data.upload` carries the landed path, size, and the upload's `outcome`
+  and `sourceId`. With `categoryDescription` (and optional
+  `categoryRationale`) and a category that does not exist, the tool runs
+  `category list` and `category propose` instead of the scan
+  (`data.categoryProposal`); the upload waits in the inbox, and calling
+  `ingest_source` again after the proposal is approved registers it.
+  **`continue_ingest`** (`action` = `status` | `resume` | `advance`) wraps
+  `ingest status`, `ingest resume` and `ingest advance`; `advance` is
+  followed by `ingest resume`, so the result always holds the next step.
