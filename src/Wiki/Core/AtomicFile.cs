@@ -48,6 +48,36 @@ public static class AtomicFile
         WriteJournal.AfterChange();
     }
 
+    // Binary content (an archived audit segment, issue #45). Unlike the text
+    // overload this flushes the temp file to disk before the rename: a caller
+    // that orders writes for crash safety (segment before the manifest that
+    // names it) needs the content durable, not only renamed into place.
+    public static void Write(string path, byte[] content)
+    {
+        var dir = System.IO.Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            System.IO.Directory.CreateDirectory(dir);
+        }
+        WriteJournal.BeforeChange(path, append: false);
+        var tmp = path + "." + System.Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var fs = new System.IO.FileStream(tmp, System.IO.FileMode.CreateNew, System.IO.FileAccess.Write))
+            {
+                fs.Write(content, 0, content.Length);
+                fs.Flush(flushToDisk: true);
+            }
+            System.IO.File.Move(tmp, path, overwrite: true);
+        }
+        catch
+        {
+            try { System.IO.File.Delete(tmp); } catch { }
+            throw;
+        }
+        WriteJournal.AfterChange();
+    }
+
     // Deletes a vault file (a renamed page's old path, a cleared review
     // shadow). Journaled like Write, so an interrupted delete can be undone.
     public static void Delete(string path)

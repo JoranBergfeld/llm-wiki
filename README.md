@@ -289,7 +289,9 @@ Spectre-rendered human output. Exit codes are identical either way:
 `0` success · `1` your input was rejected · `2` environment/IO · `3` state
 conflict (idempotent no-op) · `4` a measurement came in under a threshold you
 asked for (`wiki eval --fail-under` only) · `5` the vault is busy (`vault-busy`):
-another `wiki` command holds it, nothing was changed, retry. An interrupted
+another `wiki` command holds it, nothing was changed, retry · `6` the audit
+log's chain is broken (`audit-chain-broken`): writes are refused until
+`wiki audit reanchor --reason "…"`. An interrupted
 write is recovered by the next command; when it cannot be recovered without
 guessing, writes fail with `repair-needed` (exit 2) until the journal at
 `.wiki/journal` is dealt with by hand. Reads keep working.
@@ -370,7 +372,7 @@ recurring lint issues; you approve or reject. The agent never edits it directly.
 | Pages | `page upsert\|show\|list\|rename\|set-status\|backlinks` |
 | Retrieval | `search` · `index show` |
 | Health | `lint` · `issues list\|show\|resolve` · `links check` |
-| Quality | `eval` · `audit next\|record\|list` |
+| Quality | `eval` · `audit [--deep]` · `audit next\|record\|list\|reanchor` |
 | Review | `review list\|approve\|reject` |
 | Reflect | `schema propose\|proposals\|approve\|reject` |
 | Persona | `persona read\|distill\|propose` |
