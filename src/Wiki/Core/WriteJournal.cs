@@ -57,19 +57,36 @@ public sealed class WriteJournal
 
     private readonly string _path;
     private readonly string _action;
+    private readonly Func<long> _nowUnixMs;
     private readonly object _gate = new();
     private readonly List<string> _touched = new();
     private readonly HashSet<string> _imaged = new(PathComparer);
     private readonly HashSet<string> _fullyImaged = new(PathComparer);
     private FileStream? _file;
+    private bool _wrote;
+    private bool _rollBackFailed;
     private int _suspended;
 
     public JournalPhase Phase { get; private set; } = JournalPhase.Pending;
 
-    public WriteJournal(string path, string action)
+    // The clock stamps the journal's `begin` record, which a rollback's
+    // `recover` audit line carries as `started=` (CONTRIBUTING: "Inject the
+    // clock and RNG").
+    public WriteJournal(string path, string action, Func<long> nowUnixMs)
     {
         _path = path;
         _action = action;
+        _nowUnixMs = nowUnixMs;
+    }
+
+    // How many distinct files this step has changed so far.
+    public int TouchedFiles
+    {
+        get
+        {
+            lock (_gate)
+                return _touched.Count;
+        }
     }
 
     internal static StringComparer PathComparer
@@ -139,7 +156,8 @@ public sealed class WriteJournal
                 // CreateNew: a journal left by an earlier step must have been
                 // recovered before this step started; never overwrite one.
                 _file = new FileStream(_path, FileMode.CreateNew, FileAccess.Write, FileShare.Read | FileShare.Delete);
-                text = JournalFile.EncodeBegin(_action, DateTimeOffset.UtcNow) + text;
+                _wrote = true;
+                text = JournalFile.EncodeBegin(_action, DateTimeOffset.FromUnixTimeMilliseconds(_nowUnixMs())) + text;
             }
             JournalFile.AppendDurably(_file, text);
 
@@ -190,31 +208,42 @@ public sealed class WriteJournal
 
     // The command failed while the journal was pending (an IO error, a
     // command breaking validate-then-write): undo what it changed, at once,
-    // under the same lock. If the undo itself fails the journal stays and the
-    // next writer rolls back instead.
-    public void RollBack()
+    // under the same lock. True when the vault is back as it was (including
+    // when nothing was written). If the undo itself fails it returns false,
+    // the journal stays, and the next writer rolls back instead (and audits
+    // that with a `recover` line); a second call then does not try again, so
+    // the audit line that said `rollback-pending` stays true.
+    public bool RollBack()
     {
         lock (_gate)
         {
-            if (_file is null)
+            if (Phase == JournalPhase.Done)
+                return true;
+            if (Phase != JournalPhase.Pending || _rollBackFailed)
+                return false;
+            Close();
+            if (!_wrote)
             {
                 Phase = JournalPhase.Done;
-                return;
+                return true;
             }
-            Close();
             try
             {
                 var journal = JournalFile.Read(_path);
-                if (journal is not { Phase: JournalPhase.Pending })
-                    return;
-                JournalFile.Restore(journal.Images);
-                JournalFile.Remove(_path);
-                Phase = JournalPhase.Done;
+                if (journal is { Phase: JournalPhase.Pending })
+                {
+                    JournalFile.Restore(journal.Images);
+                    JournalFile.Remove(_path);
+                    Phase = JournalPhase.Done;
+                    return true;
+                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 // Left for the next writer.
             }
+            _rollBackFailed = true;
+            return false;
         }
     }
 

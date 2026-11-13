@@ -51,7 +51,7 @@ public static class WriteRecovery
 
         Recover(vault, invocation.Context.Origin, nowUnixMs);
 
-        var journal = new WriteJournal(vault.JournalPath, invocation.Name);
+        var journal = new WriteJournal(vault.JournalPath, invocation.Name, nowUnixMs);
         int exit;
         using (WriteJournal.Enter(journal))
         {
@@ -69,7 +69,7 @@ public static class WriteRecovery
             catch (Exception)
             {
                 if (journal.Phase == JournalPhase.Pending)
-                    journal.RollBack();   // the command failed half way: undo now
+                    journal.RollBack();   // the command failed half way: undo now (AuditStep usually already has)
                 else
                     journal.Abandon();    // committed, but the audit append failed: the next writer appends it
                 throw;

@@ -183,6 +183,15 @@ public class WriteRecoveryTests
         Assert.Equal(2, r.ExitCode);
         Assert.False(File.Exists(JournalPath(tv)));
         Assert.Equal(before, Snapshot(tv));
+
+        // Amendment BC: the error line says the change was undone, the same
+        // fact a crash's `recover` line records, not that it may have landed.
+        Assert.Equal(new[] { "init", "page.upsert" }, Actions(tv));
+        var line = Fields(AuditLines(tv)[1]);
+        Assert.Contains("outcome=rolled-back", line);
+        Assert.Contains(line, f => f.StartsWith("files=") && f != "files=0");
+        Assert.Contains("error=IOException", line);
+        Assert.True(ChainIntact(tv));
     }
 
     // Ambiguous: the audit log is shared with a second vault (outside the

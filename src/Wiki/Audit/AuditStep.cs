@@ -30,7 +30,14 @@ namespace Wiki.Audit;
 //     the end, and lint, for one, writes and returns non-zero by design;
 //   - the command threw anything other than ValidationException /
 //     StateConflictException (`error=<type>`): it may have written part of a
-//     change before failing, and that must not go unrecorded.
+//     change before failing. That change is rolled back here, before the
+//     line is written, and the line says how that went (amendment BC):
+//       outcome=unchanged                 nothing had been written;
+//       outcome=rolled-back | files=<n>   every touched file was put back;
+//       outcome=rollback-pending          the undo itself failed; the
+//                                         journal stays and the next writer
+//                                         rolls back and logs a `recover`
+//                                         line, as after a crash.
 //   A ValidationException or StateConflictException gets NO line: by the
 //   codebase's validate-then-write rule (CONTRIBUTING.md) those are raised
 //   before any write, so nothing changed.
@@ -83,8 +90,10 @@ public static class AuditStep
                 {
                     try
                     {
+                        var outcome = RollBackFailedCommand();
+                        outcome.Add($"error={AuditLine.Escape(ex.GetType().Name)}");
                         using (WriteJournal.Suspend())
-                            writer.Append(Segments(writer, invocation, $"error={AuditLine.Escape(ex.GetType().Name)}", nowUnixMs));
+                            writer.Append(Segments(writer, invocation, outcome, nowUnixMs));
                     }
                     catch (Exception) { /* the original failure is the one to report */ }
                 }
@@ -112,7 +121,7 @@ public static class AuditStep
 
             List<string> segments;
             using (WriteJournal.Suspend())
-                segments = Segments(writer, invocation, "exit=" + exit.ToString(CultureInfo.InvariantCulture), nowUnixMs);
+                segments = Segments(writer, invocation, ["exit=" + exit.ToString(CultureInfo.InvariantCulture)], nowUnixMs);
 
             // A write that names this line by its hash (AuditDraft.WriteOnSeal,
             // amendment AY). Outside Suspend: it is a vault write like any
@@ -148,11 +157,27 @@ public static class AuditStep
         using (WriteJournal.Suspend())
         using (var writer = log.Reanchor())
         {
-            var segments = Segments(writer, invocation, "exit=0", nowUnixMs);
+            var segments = Segments(writer, invocation, ["exit=0"], nowUnixMs);
             WriteJournal.Current?.Commit(segments, writer.Prev);
             writer.Append(segments);
         }
         return exit;
+    }
+
+    // Undoes a command that threw part way, before its `error=` line is
+    // written, so the line can say what the vault looks like now. Without an
+    // ambient journal (no vault was resolved) there is nothing to undo.
+    private static List<string> RollBackFailedCommand()
+    {
+        var journal = WriteJournal.Current;
+        if (journal is null)
+            return [];
+        var files = journal.TouchedFiles;
+        if (!journal.RollBack())
+            return ["outcome=rollback-pending"];
+        return files == 0
+            ? ["outcome=unchanged"]
+            : ["outcome=rolled-back", "files=" + files.ToString(CultureInfo.InvariantCulture)];
     }
 
     private static Vault? TryResolve(CommandContext ctx)
@@ -171,7 +196,7 @@ public static class AuditStep
         => b is not null && string.Equals(a, b, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     // The line's segments, before sealing. Stores any detail files it needs.
-    private static List<string> Segments(AuditWriter writer, CommandInvocation invocation, string outcome, Func<long> nowUnixMs)
+    private static List<string> Segments(AuditWriter writer, CommandInvocation invocation, IEnumerable<string> outcome, Func<long> nowUnixMs)
     {
         var draft = invocation.Context.Audit;
         var segments = new List<string>
@@ -189,7 +214,7 @@ public static class AuditStep
             segments.Add(f.Key + "=" + value);
         }
 
-        segments.Add(outcome);
+        segments.AddRange(outcome);
         segments.Add("via=" + invocation.Context.Origin.Via);
         return segments;
     }
