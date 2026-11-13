@@ -330,7 +330,7 @@ public class AuditLogTests
 
         var r = tv.RunStdin("Body.", "page", "upsert", "--type", "entity", "--title", "Contoso", "--summary", "s", "--json");
 
-        Assert.Equal(3, r.ExitCode);
+        Assert.Equal(6, r.ExitCode);
         Assert.Equal("audit-chain-broken", r.Envelope.Errors[0].Code);
         Assert.Equal(before, Snapshot(tv));
     }

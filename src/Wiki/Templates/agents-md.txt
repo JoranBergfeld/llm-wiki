@@ -79,7 +79,10 @@ Exit codes: 0 success · 1 your input was rejected — read
 `errors[].code`, correct it, retry once, never retry blind · 2 environment/IO
 problem, do not retry · 3 state conflict, the world is already how you asked,
 treat as a no-op and move on · 5 `vault-busy`, another wiki command holds the
-vault and nothing was changed: retry the same command shortly.
+vault and nothing was changed: retry the same command shortly · 6
+`audit-chain-broken`, the audit log was altered and every write is refused:
+run `wiki audit`, then `wiki audit reanchor --reason "…"` once the cause is
+understood.
 
 ### Ingest
 1. Registration. The human decides WHAT enters the vault; you may perform the

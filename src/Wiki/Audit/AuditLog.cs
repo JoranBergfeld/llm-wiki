@@ -263,8 +263,8 @@ public sealed class AuditLog
     private static string BasePrev(AuditManifest manifest)
         => manifest.Segments.Count == 0 ? AuditLine.Genesis : manifest.Segments[^1].LastHash;
 
-    private static StateConflictException ChainBroken(string where, string path)
-        => new("audit-chain-broken",
+    private static AuditChainBrokenException ChainBroken(string where, string path)
+        => new(
             $"the audit log is broken at {where}, so writes are refused and the change was not made. " +
             "Run 'wiki audit' for details; once understood, 'wiki audit reanchor --reason <why>' restores writes",
             path);

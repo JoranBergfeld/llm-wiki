@@ -169,6 +169,11 @@ public static class App
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = VaultBusyException.Code, Message = vbex.Message, Path = vbex.Path });
             return VaultBusyException.ExitCode;
         }
+        catch (AuditChainBrokenException acex)
+        {
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = AuditChainBrokenException.Code, Message = acex.Message, Path = acex.Path });
+            return AuditChainBrokenException.ExitCode;
+        }
         catch (Exception ex)
         {
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = "io-error", Message = ex.Message });
