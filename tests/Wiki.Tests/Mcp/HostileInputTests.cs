@@ -12,10 +12,36 @@ namespace Wiki.Tests.Mcp;
 // response files are off.
 //
 // Driven off tools/list, so each tool a later ticket adds is covered without
-// touching this file.
+// touching this file. Every other string argument gets a plausible value
+// (Benign) so the hostile one reaches the command it would really run -
+// for the write tools (#56) that means a real write, which must land in the
+// bound vault and leave the other vault byte-identical.
 public class HostileInputTests
 {
     private const string OtherMarker = "zebracornmarker";
+
+    // A plausible value per argument name ("tool.argument" wins over
+    // "argument"); anything unlisted gets "contoso". Keys are argument names
+    // only - add one here when a new tool's argument needs a specific shape
+    // to get past validation.
+    private static Dictionary<string, string> Benign(string pageId, string sourceId) => new()
+    {
+        ["type"] = "entity",
+        ["kind"] = "page",
+        ["title"] = "Contoso",
+        ["summary"] = "s",
+        ["body"] = "Bound body.",
+        ["tags"] = "t",
+        ["sources"] = sourceId,
+        ["source"] = sourceId,
+        ["reason"] = "r",
+        ["description"] = "d",
+        ["status"] = "needs-review",
+        ["pages"] = pageId,
+        ["id"] = pageId,
+        ["newSlug"] = "contoso-renamed",
+        ["add_category.id"] = "podcast",
+    };
 
     [Theory]
     [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
@@ -23,11 +49,18 @@ public class HostileInputTests
     {
         using var bound = new TempVault();
         bound.Run("init", bound.Path, "--name", "bound", "--json");
-        bound.RunStdin("Bound body.", "page", "upsert", "--type", "entity", "--title", "Contoso", "--summary", "s", "--json");
+        var page = bound.RunStdin("Bound body.", "page", "upsert", "--type", "entity", "--title", "Contoso", "--summary", "s", "--json");
+        var pageId = Data(page).GetProperty("id").GetString()!;
+        var sourceFile = Path.Combine(bound.Path, "input.md");
+        File.WriteAllText(sourceFile, "content");
+        var sourceId = Data(bound.Run("source", "add", sourceFile, "--category", "article", "--title", "T", "--json"))
+            .GetProperty("id").GetString()!;
+        var benign = Benign(pageId, sourceId);
 
         using var other = new TempVault();
         other.Run("init", other.Path, "--name", "other", "--json");
         other.RunStdin($"{OtherMarker} lives here.", "page", "upsert", "--type", "entity", "--title", OtherMarker, "--summary", OtherMarker, "--json");
+        var otherBefore = Snapshot(other.Path);
 
         var responseFile = Path.Combine(bound.Path, "hostile.rsp");
         File.WriteAllText(responseFile, $"--vault\n{other.Path}\n");
@@ -44,14 +77,11 @@ public class HostileInputTests
                 .Where(p => IsString(p.Value))
                 .Select(p => p.Name)
                 .ToArray();
-            var required = schema.TryGetProperty("required", out var r)
-                ? r.EnumerateArray().Select(e => e.GetString()!).ToArray()
-                : [];
 
             foreach (var property in properties)
             foreach (var value in hostile)
             {
-                var args = required.ToDictionary(n => n, _ => (object?)"contoso");
+                var args = properties.ToDictionary(n => n, n => (object?)BenignFor(benign, tool.Name, n));
                 args[property] = value;
 
                 var result = await mcp.CallAsync(tool.Name, args);
@@ -72,7 +102,24 @@ public class HostileInputTests
         }
 
         Assert.True(calls > 0);
+        // No tool, write tools included, ever wrote to the other vault.
+        Assert.Equal(otherBefore, Snapshot(other.Path));
     }
+
+    private static string BenignFor(Dictionary<string, string> benign, string tool, string argument)
+        => benign.TryGetValue(tool + "." + argument, out var specific) ? specific
+            : benign.TryGetValue(argument, out var general) ? general
+            : "contoso";
+
+    private static JsonElement Data(CliResult r)
+    {
+        using var doc = JsonDocument.Parse(r.Stdout.Trim().Split('\n')[^1]);
+        return doc.RootElement.GetProperty("data").Clone();
+    }
+
+    private static Dictionary<string, string> Snapshot(string root)
+        => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .ToDictionary(f => Path.GetRelativePath(root, f), f => Convert.ToBase64String(File.ReadAllBytes(f)));
 
     private static bool IsString(JsonElement property)
     {
