@@ -180,7 +180,7 @@ public class PersonaToolTests
         Assert.Contains("**Answer**\n\n> Careful craft.", text);
         Assert.Contains("**Answer**\n\n> Short and plain.", text);
         Assert.Contains("- recordedVia: mcp", text);
-        Assert.Contains("- transport: stdio", text);
+        Assert.Contains("- transport: " + transport, text);
         Assert.DoesNotContain("- recordedVia: cli", text);
         var audit = AuditLast(tv);
         Assert.Contains("| persona.interview.record |", audit);
