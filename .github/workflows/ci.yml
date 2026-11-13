@@ -1,7 +1,7 @@
 name: CI
 
-# Pull requests run the gate only: tests, then the native-AOT build for every
-# target. Nothing is published from a PR - the three release jobs below are
+# Pull requests run the gate only: tests on Linux, Windows and macOS, then the
+# native-AOT build for every target. Nothing is published from a PR - the three release jobs below are
 # guarded on `github.event_name == 'push'`, so a fork PR can never reach a
 # registry even though the workflow declares write permissions.
 #
@@ -46,9 +46,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The full suite on every OS a binary ships for. The lock, the write journal
+  # and path handling go through OS-specific code (share modes on Windows,
+  # flock and errno values on Linux and macOS, case-insensitive paths), so a
+  # pass on Linux says nothing about the other two. On the PR, not only on
+  # main: a failure found after merge would block the release instead.
+  # The repo is public, so macOS and Windows minutes are free.
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       # All three SDKs, because the suite multi-targets net8.0/net9.0/net10.0
