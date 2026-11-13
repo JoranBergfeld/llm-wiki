@@ -27,6 +27,10 @@ public sealed class CliStep
     public string CommandPath => string.Join(" ", Command);
     public string? StdinText { get; private set; }
 
+    // True when this step's data is appended to an array under its key
+    // instead of being the key's value. See Collect().
+    public bool Collected { get; private set; }
+
     // Omitted when null, so the CLI's own default applies.
     public CliStep Option(string name, string? value)
     {
@@ -57,6 +61,16 @@ public sealed class CliStep
     public CliStep Stdin(string text)
     {
         StdinText = text;
+        return this;
+    }
+
+    // For a tool that runs the same command once per item (repair_vault's
+    // `page set-status` per page): every step with this key appends its data
+    // to the array data.<key> in the order the steps ran, so the key is an
+    // array whether one item or many were given.
+    public CliStep Collect()
+    {
+        Collected = true;
         return this;
     }
 

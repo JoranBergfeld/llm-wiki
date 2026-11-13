@@ -21,5 +21,10 @@ public static class McpToolCatalog
         .WithTools(new BrowseWikiTool(cli))
         .WithTools(new CheckHealthTool(cli))
         .WithTools(new WorkIssuesTool(cli))
-        .WithTools(new AuditPageTool(cli));
+        .WithTools(new AuditPageTool(cli))
+        .WithTools(new WritePageTool(cli))
+        .WithTools(new RenamePageTool(cli))
+        .WithTools(new AddCategoryTool(cli))
+        .WithTools(new RetractSourceTool(cli))
+        .WithTools(new RepairVaultTool(cli));
 }

@@ -754,3 +754,22 @@ Same standing as Appendices B and C: these override the original text where they
   happen over MCP; the agent reads `data.eval.score`. `work_issues`
   (`action`: `list` | `show` | `resolve`) and `audit_page` (`action`:
   `next` | `record` | `list`) map one to one onto `issues` and `audit`.
+
+## Appendix N — MCP write and admin tools amendment (2026-11-13)
+
+- **AL. MCP write and admin tools.** (issue #56) Assistants can change the
+  vault over MCP: `write_page` (`page upsert`; the body is a string argument
+  handed to the command on stdin with `--stdin`, never argv),
+  `rename_page` (`page rename`), `add_category` (`category add`),
+  `retract_source` (`source retract`, its own tool so it can be excluded on
+  its own) and `repair_vault` (`reindex`, then `page set-status` once per
+  listed page; `pages` and `status` come together or it is an
+  `InvalidParams` error). Results carry each step's data under its key; a
+  key run once per item (`statuses`) is always an array. **Multi-step
+  intents** stop at the first step that exits non-zero and return that
+  step's envelope plus `completedSteps`; nothing is rolled back, because
+  each CLI step is atomic on its own. **Cancellation**
+  (`notifications/cancelled`) never interrupts a step: it is checked between
+  steps, and the intent then returns the failure shape (`errors[0].code:
+  cancelled`, `completedSteps`, no `exitCode`). Every step's audit line
+  records the server's transport (`via=stdio`). `init` is not exposed.
