@@ -76,6 +76,7 @@ src/Wiki/            the CLI — see docs/architecture.md for the layer map
   State/             .wiki/*.json stores
   Docs/              generated index.md and log.md
   Json/              envelope + source-generated serializer context
+  Mcp/               `wiki mcp`: server, adapter (CliStep, IntentRun), Tools/ one class per tool
   Templates/         embedded wiki.yaml and AGENTS.md scaffolds
 tests/Wiki.Tests/    xunit; Commands/ Core/ Docs/ State/ E2E/ Support/
 docs/                spec + architecture + flow documentation
@@ -102,7 +103,7 @@ it. Don't interleave.
 
 **Every vault write goes through `AtomicFile.Write`, `AtomicFile.Delete` or
 `LogFile.Append`.** They record the file's before-image in the write journal
-(`.wiki/journal`, amendment AF) before touching it; that is what lets the next
+(`.wiki/journal`, amendment AH) before touching it; that is what lets the next
 command finish or roll back a write that was interrupted. A `File.WriteAll*`,
 `File.Delete` or `File.Move` on a vault file elsewhere is a change recovery
 cannot see.

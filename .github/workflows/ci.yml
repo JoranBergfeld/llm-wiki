@@ -13,7 +13,9 @@ name: CI
 #      install.ps1 pull from) - the recommended install;
 #   2. a multi-arch container image on GHCR, which ships those same binaries;
 #   3. a .NET global tool on the GitHub Packages NuGet feed - the IL build,
-#      not the AOT one, so it needs the .NET 9 runtime.
+#      not the AOT one, so it needs the ASP.NET Core runtime (8.0, 9.0 or
+#      10.0; included in any .NET SDK): the MCP server (`wiki mcp`) brings a
+#      Microsoft.AspNetCore.App framework reference for the whole program.
 #
 # Native AOT cannot cross-compile across OSes, so each target builds on its
 # own runner.
@@ -107,6 +109,17 @@ jobs:
       # `dotnet tool` channel, not for these.
       - name: Publish (native AOT)
         run: dotnet publish src/Wiki/Wiki.csproj -c Release -f net10.0 -r ${{ matrix.rid }} -o publish/${{ matrix.rid }}
+
+      # The MCP server against the binary we are about to ship (issue #54).
+      # A trimmed tool method or a reflection-based JSON path publishes
+      # without a warning and fails only at runtime in the AOT binary, so the
+      # stdio smoke test drives the published `wiki mcp` with a real MCP
+      # client. Only the net10.0 test build is needed here.
+      - name: MCP stdio smoke test (native AOT)
+        shell: bash
+        env:
+          WIKI_SMOKE_BINARY: ${{ github.workspace }}/publish/${{ matrix.rid }}/${{ runner.os == 'Windows' && 'wiki.exe' || 'wiki' }}
+        run: dotnet test tests/Wiki.Tests/Wiki.Tests.csproj -c Release -f net10.0 --filter "FullyQualifiedName~Wiki.Tests.E2E.McpStdioProcessTests"
 
       - name: Package (unix)
         if: runner.os != 'Windows'
@@ -216,8 +229,9 @@ jobs:
             ${{ steps.image.outputs.name }}:${{ github.sha }}
 
   # The NuGet channel is the odd one out: `dotnet tool` has no native-AOT
-  # story, so this ships the IL build. It is published for people already
-  # living in the .NET toolchain, not pointed at newcomers.
+  # story, so this ships the IL build, which needs the ASP.NET Core runtime
+  # on the machine. It is published for people already living in the .NET
+  # toolchain (every SDK carries that runtime), not pointed at newcomers.
   nuget:
     name: NuGet global tool
     needs: build

@@ -57,10 +57,19 @@ public static class VaultBoundary
     // change) before this reader takes it shared; ReadGuard then re-checks
     // under the shared hold. See WriteRecovery.
     private static readonly BoundaryStep[] ReadSteps = [WriteRecovery.BeforeRead, VaultLock.Step, WriteRecovery.ReadGuard];
+    // Host commands (`wiki mcp`) run inside no boundary: see CommandKind.Host.
+    // Never add a step here; the steps it hosts each take their own.
+    private static readonly BoundaryStep[] HostSteps = [];
 
     public static int Run(CommandInvocation invocation, Func<int> command)
     {
-        var steps = invocation.Kind == CommandKind.Mutate ? MutationSteps : ReadSteps;
+        var steps = invocation.Kind switch
+        {
+            CommandKind.Mutate => MutationSteps,
+            CommandKind.Read => ReadSteps,
+            CommandKind.Host => HostSteps,
+            _ => throw new InvalidOperationException($"no boundary for command kind {invocation.Kind}"),
+        };
         return RunFrom(steps, 0, invocation, command);
     }
 
