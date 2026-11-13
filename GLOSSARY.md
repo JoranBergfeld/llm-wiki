@@ -37,3 +37,7 @@ _Avoid_: statement, answers file
 
 **Persona candidate**
 A page built from a persona-source category that a distillation pass has not yet considered.
+
+**Persona changeset**
+One distillation pass's proposed edits to the persona: any number of lines added, changed or removed across sections, each new line with its evidence. Reviewed all-or-nothing; at most one is pending, and a newer one supersedes it.
+_Avoid_: persona proposal, persona diff

@@ -67,5 +67,11 @@ namespace Wiki.Json;
 [JsonSerializable(typeof(CategoryData))]
 [JsonSerializable(typeof(CategoryData[]))]
 [JsonSerializable(typeof(PersonaView))]
+[JsonSerializable(typeof(PersonaDistillView))]
+[JsonSerializable(typeof(PersonaProposeResult))]
+[JsonSerializable(typeof(PersonaDecisionResult))]
+[JsonSerializable(typeof(Wiki.Core.PersonaChangesetData))]
+[JsonSerializable(typeof(Wiki.Core.PersonaChangesetData[]))]
+[JsonSerializable(typeof(Wiki.Core.PersonaLedgerLine[]))]
 [JsonSerializable(typeof(string[]))]
 public partial class WikiJsonContext : JsonSerializerContext { }

@@ -50,7 +50,7 @@ public static class ReviewCommand
     {
         var idArgument = new Argument<string>("id")
         {
-            Description = "Pending-review page id (ULID) to approve",
+            Description = "Pending-review page id, or the persona changeset id (ULID), to approve",
         };
 
         var approve = new Command("approve", "Approve a pending-review page: pending-review -> active")
@@ -63,6 +63,9 @@ public static class ReviewCommand
             var id = parseResult.GetRequiredValue(idArgument);
 
             var vault = ctx.ResolveVault();
+            if (PersonaService.IsChangeset(vault, id))
+                return ApprovePersona(ctx, vault, id);
+
             var service = new ReviewService();
             service.Approve(vault, id);
 
@@ -86,11 +89,11 @@ public static class ReviewCommand
     {
         var idArgument = new Argument<string>("id")
         {
-            Description = "Pending-review page id (ULID) to reject",
+            Description = "Pending-review page id, or the persona changeset id (ULID), to reject",
         };
-        var noteOption = new Option<string?>("--note")
+        var noteOption = new Option<string?>("--note", "--reason")
         {
-            Description = "Optional free-text rejection reason (recorded on the filed issue and the log)",
+            Description = "Rejection reason (recorded on the filed issue and the log); required for a persona changeset",
         };
 
         var reject = new Command("reject", "Reject a pending-review page: restores the previous body (update) or archives it (create); files an issue")
@@ -105,6 +108,9 @@ public static class ReviewCommand
             var note = parseResult.GetValue(noteOption);
 
             var vault = ctx.ResolveVault();
+            if (PersonaService.IsChangeset(vault, id))
+                return RejectPersona(ctx, vault, id, note);
+
             var service = new ReviewService();
             service.Reject(vault, id, note);
 
@@ -122,6 +128,42 @@ public static class ReviewCommand
         }));
 
         return reject;
+    }
+
+    // A persona changeset is decided all-or-nothing (issue #32). Both
+    // decisions record who decided (`decidedVia`) on their audit line; the
+    // accept also records every evidence reference with its hash and the
+    // full evidence ledger of the new PERSONA.md, which lint reads back.
+    private static int ApprovePersona(CommandContext ctx, Vault vault, string id)
+    {
+        var (result, ledger) = new PersonaService().Accept(vault, id);
+        var c = result.Changeset;
+
+        ctx.Audit.Action = PersonaEvidence.AcceptAction;
+        ctx.Audit.Subject = PersonaDoc.FileName;
+        ctx.Audit.Field(PersonaEvidence.ChangesetField, c.Id)
+                 .Field("lines", $"+{result.Added} ~{result.Changed} -{result.Removed}")
+                 .Field("evidence", PersonaAudit.EvidenceList(c))
+                 .Field("decidedVia", PersonaAudit.DecidedVia(ctx))
+                 .Field("reason", c.Reason)
+                 .Detail("changeset-detail", PersonaAudit.ChangesetJson(c))
+                 .Detail(PersonaEvidence.LedgerField, PersonaAudit.LedgerJson(ledger));
+
+        ctx.EmitOk(result);
+        return 0;
+    }
+
+    private static int RejectPersona(CommandContext ctx, Vault vault, string id, string? note)
+    {
+        var result = new PersonaService().Reject(vault, id, note);
+
+        ctx.Audit.Action = "persona.reject";
+        ctx.Audit.Subject = id;
+        ctx.Audit.Field("decidedVia", PersonaAudit.DecidedVia(ctx))
+                 .Field("reason", result.Changeset.Note ?? "");
+
+        ctx.EmitOk(result);
+        return 0;
     }
 
     private static void RenderListView(TextWriter output, System.Collections.Generic.IReadOnlyList<PendingView> rows)
