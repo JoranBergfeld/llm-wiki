@@ -52,9 +52,10 @@
 
   <!-- `dotnet pack` produces a global tool for the GitHub Packages NuGet feed.
        That channel ships the IL build, not the AOT one - `dotnet tool` has no
-       native-AOT story - so it needs a .NET runtime present: 8.0, 9.0 or
-       10.0, whichever the machine has, resolved from the matching tools/<tfm>
-       folder in the nupkg. The release
+       native-AOT story - so it needs the ASP.NET Core runtime present (the
+       MCP SDK's FrameworkReference, issue #38): 8.0, 9.0 or 10.0, whichever
+       the machine has, resolved from the matching tools/<tfm> folder in the
+       nupkg. Every .NET SDK includes it. The release
        binaries stay the recommended install; this exists for `dotnet tool`
        users and CI images that already have the SDK. PackAsTool is inert
        during `dotnet publish -r <rid>`, so the AOT build is unaffected. -->

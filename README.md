@@ -127,8 +127,11 @@ docker run --rm -v "$PWD:/vault" --user "$(id -u):$(id -g)" \
 
 **.NET global tool.** Published to the GitHub Packages NuGet feed. Two caveats,
 so pick this only if you are already in the .NET toolchain: it ships the **IL
-build, not the AOT one**, so it needs a .NET runtime present — 8.0, 9.0 or
-10.0, whichever you have; the package carries all three — and GitHub
+build, not the AOT one**, so it needs the **ASP.NET Core runtime** present —
+8.0, 9.0 or 10.0, whichever you have; the package carries all three. Every
+.NET SDK includes it; a machine with only the base .NET runtime cannot start
+`wiki` at all (any command, not just `wiki mcp`, which is what pulls it in).
+And GitHub
 Packages requires authentication *even for public packages* — you need a PAT
 with `read:packages`.
 
