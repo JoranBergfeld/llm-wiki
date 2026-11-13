@@ -12,8 +12,9 @@ public sealed record CategoryAddResult(string Id, string Description) : IHumanRe
     public string HumanSummary() => $"Added category '{Id}'";
 }
 
-// `wiki category list` row shape.
-public sealed record CategoryData(string Id, string Description);
+// `wiki category list` row shape. `PersonaSource` lets an agent see which
+// categories hold endorsed notes (issue #49) without reading wiki.yaml.
+public sealed record CategoryData(string Id, string Description, bool PersonaSource);
 
 // `wiki category propose/proposals/approve/reject` row shape - the wire view
 // of a CategoryProposal, mirroring how ProposalData surfaces a Proposal.
@@ -49,7 +50,7 @@ public sealed class CategoryService
     // proposal ids and timestamps. Same shape as SchemaService.
     public CategoryService(System.Func<long>? nowUnixMs = null, System.Func<byte[]>? randomBytes = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
         _randomBytes = randomBytes ?? DefaultRandomBytes;
     }
 
@@ -272,12 +273,31 @@ public sealed class CategoryService
         return ToView(updated);
     }
 
+    // The proposer takes an open proposal back (amendment AX); wiki.yaml is
+    // never touched.
+    public CategoryProposalView Withdraw(Vault v, string proposalId, string reason)
+    {
+        var store = new CategoryProposals();
+        store.Load(v);
+        var proposal = store.Get(proposalId)
+            ?? throw new ValidationException("not-found", $"no category proposal found for id '{proposalId}'");
+        if (proposal.Status != "open")
+            throw new StateConflictException("state-conflict",
+                $"category proposal '{proposalId}' is already '{proposal.Status}'; nothing to do");
+
+        // --- Validation complete ---
+
+        var updated = store.SetStatus(proposalId, "withdrawn", reason);
+        store.Save(v);
+        Docs.LogFile.Append(v, ToIso(_nowUnixMs()), "category-withdraw", proposalId, reason);
+        return ToView(updated);
+    }
+
     private static CategoryProposalView ToView(CategoryProposal p)
         => new(p.Id, p.CategoryId, p.Description, p.Rationale, p.Sources, p.Status, p.CreatedAt, p.Note);
 
     private static string ToIso(long unixMs)
-        => System.DateTimeOffset.FromUnixTimeMilliseconds(unixMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        => Timestamp.Iso(unixMs);
 
     private static byte[] DefaultRandomBytes()
     {
@@ -290,7 +310,7 @@ public sealed class CategoryService
     {
         var result = new List<CategoryData>();
         foreach (var c in cfg.Categories)
-            result.Add(new CategoryData(c.Id, c.Description));
+            result.Add(new CategoryData(c.Id, c.Description, c.PersonaSource));
         return result.ToArray();
     }
 
@@ -321,6 +341,11 @@ public sealed class CategoryService
                 !VaultConfig.StripInlineComment(lines[i + 1]).Trim().StartsWith("description:", System.StringComparison.Ordinal))
                 break;
             i += 2;
+            // Step over the item's optional keys (`persona-source:`) too, so
+            // the new item lands after the whole previous one instead of
+            // splitting it and inheriting its flag.
+            while (i < lines.Count && IsIndentedContinuation(lines[i]))
+                i++;
             insertAt = i;
         }
 

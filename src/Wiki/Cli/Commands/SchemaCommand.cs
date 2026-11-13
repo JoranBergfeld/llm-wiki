@@ -23,6 +23,7 @@ public static class SchemaCommand
         schema.Add(BuildProposals(vaultOption, jsonOption, stdout, stdin));
         schema.Add(BuildApprove(vaultOption, jsonOption, stdout, stdin));
         schema.Add(BuildReject(vaultOption, jsonOption, stdout, stdin));
+        schema.Add(BuildWithdraw(vaultOption, jsonOption, stdout, stdin));
         return schema;
     }
 
@@ -69,6 +70,13 @@ public static class SchemaCommand
             var vault = ctx.ResolveVault();
             var service = new SchemaService();
             var created = service.Propose(vault, section, newText, rationale);
+
+            // schema propose writes nothing to log.md, so the audit line is
+            // its only record; the proposed text is the large detail.
+            ctx.Audit.Subject = created.Id;
+            ctx.Audit.Field("section", created.Section)
+                     .Field("rationale", rationale)
+                     .Detail("text", newText);
 
             if (ctx.Json)
             {
@@ -138,6 +146,7 @@ public static class SchemaCommand
             var vault = ctx.ResolveVault();
             var service = new SchemaService();
             service.Approve(vault, id);
+            DecisionAudit.Record(ctx);
 
             var updated = Reload(vault, id);
             if (ctx.Json)
@@ -180,6 +189,7 @@ public static class SchemaCommand
             var vault = ctx.ResolveVault();
             var service = new SchemaService();
             service.Reject(vault, id, note);
+            DecisionAudit.Record(ctx);
 
             var updated = Reload(vault, id);
             if (ctx.Json)
@@ -195,6 +205,45 @@ public static class SchemaCommand
         }));
 
         return reject;
+    }
+
+    // `wiki schema withdraw <id> --reason` (amendment AX).
+    private static Command BuildWithdraw(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var idArgument = new Argument<string>("id")
+        {
+            Description = "Proposal id (ULID) to withdraw",
+        };
+        var reasonOption = DecisionAudit.WithdrawReasonOption();
+
+        var withdraw = new Command("withdraw", "Withdraw an open proposal, with a reason; AGENTS.md is left untouched")
+        {
+            idArgument,
+            reasonOption,
+        };
+
+        withdraw.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var id = parseResult.GetRequiredValue(idArgument);
+            var reason = DecisionAudit.RequireWithdrawReason(parseResult.GetValue(reasonOption));
+            var vault = ctx.ResolveVault();
+            new SchemaService().Withdraw(vault, id, reason);
+            DecisionAudit.RecordWithdraw(ctx, reason);
+
+            var updated = Reload(vault, id);
+            if (ctx.Json)
+            {
+                ctx.EmitOk(ToData(updated));
+            }
+            else
+            {
+                var console = AnsiConsole.Create(new AnsiConsoleSettings { Out = new AnsiConsoleOutput(ctx.Out) });
+                console.MarkupLine($"[yellow]OK[/] withdrew {Markup.Escape(updated.Id)}");
+            }
+            return 0;
+        }));
+
+        return withdraw;
     }
 
     // Approve/Reject are `void` on SchemaService (task interface) - re-read
@@ -215,8 +264,8 @@ public static class SchemaCommand
     {
         if (string.IsNullOrEmpty(raw))
             return null;
-        if (raw != "open" && raw != "approved" && raw != "rejected")
-            throw new ValidationException("invalid-proposal-status", $"unknown proposal status '{raw}'; expected 'open', 'approved', or 'rejected'");
+        if (raw != "open" && raw != "approved" && raw != "rejected" && raw != "withdrawn")
+            throw new ValidationException("invalid-proposal-status", $"unknown proposal status '{raw}'; expected 'open', 'approved', 'rejected' or 'withdrawn'");
         return raw;
     }
 

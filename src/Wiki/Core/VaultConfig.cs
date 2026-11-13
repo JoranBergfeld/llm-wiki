@@ -5,7 +5,13 @@ using System.Text.RegularExpressions;
 namespace Wiki.Core;
 
 // One source category, as declared under `categories:` in wiki.yaml.
-public sealed record Category(string Id, string Description);
+//
+// `PersonaSource` (issue #49, ADR 0001) is the owner's endorsement: pages
+// built from sources in this category are endorsed notes and land flagged
+// `persona: candidate`. Endorsement is per category, all or nothing - a mixed
+// inbox gets split rather than marked per file. Optional, default false, so
+// every wiki.yaml written before it existed still loads.
+public sealed record Category(string Id, string Description, bool PersonaSource = false);
 
 // Hand-parsed, validated `wiki.yaml`. No YamlDotNet, no reflection: the file
 // shape is small and fixed (spec §5), so this walks the lines itself looking
@@ -42,11 +48,35 @@ public sealed class VaultConfig
 
     public const int DefaultContentLossPercent = 25;
 
+    // `audit.path` (issue #44): where the hash-chained audit log lives,
+    // relative to the vault root or absolute. Optional; defaults to
+    // audit/audit.log so it sits OUTSIDE `.wiki/`, which is a rebuildable
+    // cache that `wiki reindex` regenerates - the audit log is history and can
+    // never be rebuilt. Detail files go in a `details/` directory beside it.
+    public string AuditPath { get; init; } = DefaultAuditPath;
+
+    public const string DefaultAuditPath = "audit/audit.log";
+
+    // `audit.rotate_bytes` (issue #45): once the live audit log reaches this
+    // size, the next mutation first rolls it into a compressed segment. About
+    // 10 MB by default; a positive integer number of bytes.
+    public long AuditRotateBytes { get; init; } = DefaultAuditRotateBytes;
+
+    public const long DefaultAuditRotateBytes = 10L * 1024 * 1024;
+
     public bool HasCategory(string id)
     {
         foreach (var c in Categories)
             if (c.Id == id)
                 return true;
+        return false;
+    }
+
+    public bool IsPersonaSource(string categoryId)
+    {
+        foreach (var c in Categories)
+            if (c.Id == categoryId)
+                return c.PersonaSource;
         return false;
     }
 
@@ -77,6 +107,8 @@ public sealed class VaultConfig
         string? stalenessDays = null;
         string? maxPageLines = null;
         string? contentLossPercent = null;
+        string? auditPath = null;
+        string? auditRotateBytes = null;
 
         int i = 0;
         while (i < lines.Length)
@@ -110,7 +142,24 @@ public sealed class VaultConfig
                         throw new ValidationException("config", $"category '{id}' is missing 'description'", yamlPath);
                     i++;
 
-                    categories.Add(new Category(id, description));
+                    // Optional per-category keys follow the description, one
+                    // per indented line, until the next `- ` item or the end
+                    // of the block. A closed set: an unknown key is a typo or
+                    // a guess at a flag that does not exist, and a silently
+                    // ignored endorsement is worse than a config error.
+                    var personaSource = false;
+                    while (i < lines.Length && IsIndentedKey(lines[i]))
+                    {
+                        var kv = lines[i].Trim();
+                        if (!TryScalarLine(kv, "persona-source", out var ps))
+                            throw new ValidationException("config", $"category '{id}' has unknown key: '{kv}'", yamlPath);
+                        if (!TryParseBool(ps, out personaSource))
+                            throw new ValidationException("config",
+                                $"category '{id}': 'persona-source' must be true or false, got '{ps}'", yamlPath);
+                        i++;
+                    }
+
+                    categories.Add(new Category(id, description, personaSource));
                 }
                 continue;
             }
@@ -125,6 +174,20 @@ public sealed class VaultConfig
                     else if (TryScalarLine(kv, "max_page_lines", out var mpl)) maxPageLines = mpl;
                     else if (TryScalarLine(kv, "content_loss_percent", out var clp)) contentLossPercent = clp;
                     else throw new ValidationException("config", $"unknown 'lint' key: '{kv}'", yamlPath);
+                    i++;
+                }
+                continue;
+            }
+
+            if (trimmed == "audit:")
+            {
+                i++;
+                while (i < lines.Length && IsIndentedKey(lines[i]))
+                {
+                    var kv = lines[i].Trim();
+                    if (TryScalarLine(kv, "path", out var ap)) auditPath = ap;
+                    else if (TryScalarLine(kv, "rotate_bytes", out var rb)) auditRotateBytes = rb;
+                    else throw new ValidationException("config", $"unknown 'audit' key: '{kv}'", yamlPath);
                     i++;
                 }
                 continue;
@@ -170,6 +233,21 @@ public sealed class VaultConfig
                     $"'lint.content_loss_percent' must be between 0 and 100, got {contentLossPercentNum}", yamlPath);
         }
 
+        if (auditPath is not null)
+        {
+            if (auditPath.Length == 0)
+                throw new ValidationException("config", "'audit.path' must not be empty", yamlPath);
+            // Containment outside .wiki/ is checked where the vault root is
+            // known: AuditLog.For.
+        }
+
+        var auditRotateBytesNum = DefaultAuditRotateBytes;
+        if (auditRotateBytes is not null
+            && (!long.TryParse(auditRotateBytes, NumberStyles.None, CultureInfo.InvariantCulture, out auditRotateBytesNum)
+                || auditRotateBytesNum < 1))
+            throw new ValidationException("config",
+                $"'audit.rotate_bytes' must be a positive whole number of bytes, got '{auditRotateBytes}'", yamlPath);
+
         var seenIds = new HashSet<string>();
         foreach (var category in categories)
         {
@@ -188,6 +266,8 @@ public sealed class VaultConfig
             StalenessDays = stalenessDaysNum,
             MaxPageLines = maxPageLinesNum,
             ContentLossPercent = contentLossPercentNum,
+            AuditPath = auditPath ?? DefaultAuditPath,
+            AuditRotateBytes = auditRotateBytesNum,
         };
     }
 

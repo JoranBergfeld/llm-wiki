@@ -1,0 +1,2 @@
+T:System.Console;Write through the TextWriter/TextReader passed to App.Main; under `wiki mcp` stdout carries JSON-RPC (issue #43)
+P:Spectre.Console.AnsiConsole.Console;Use AnsiConsole.Create over the command's TextWriter; the global console writes to the process stdout (issue #43)

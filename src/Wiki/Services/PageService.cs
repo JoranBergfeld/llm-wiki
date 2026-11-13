@@ -104,7 +104,7 @@ public sealed class PageService
 
     public PageService(Func<long>? nowUnixMs = null, Func<byte[]>? randomBytes = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
         _randomBytes = randomBytes ?? DefaultRandomBytes;
     }
 
@@ -119,11 +119,10 @@ public sealed class PageService
     // id/created/body content are untouched (the slug lives in the filename,
     // never in frontmatter, so there's no frontmatter field to edit here).
     //
-    // The move is two file ops - AtomicFile.Write(new) then File.Delete(old)
-    // - not atomic as a pair, but each op alone is crash-safe. A crash caught
-    // between the two leaves both files on disk momentarily; `wiki reindex`
-    // heals that by rebuilding idmap/index fresh from whatever page files
-    // exist (spec §3 forward-repair), so this is acceptable per spec.
+    // The move is two file ops - AtomicFile.Write(new) then AtomicFile.Delete(old)
+    // - not atomic as a pair, but each op alone is crash-safe, and since
+    // issue #47 both are journaled: a crash between them is rolled back by
+    // the next command (WriteRecovery), so both files are never left behind.
     public RenameResult Rename(Vault v, string id, string newSlug)
     {
         // --- Blocking validation: ALL of it runs before anything below touches disk. ---
@@ -171,7 +170,7 @@ public sealed class PageService
         var newPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(fullPath)!, newSlug + ".md");
 
         AtomicFile.Write(newPath, doc.Serialize());
-        System.IO.File.Delete(fullPath);
+        AtomicFile.Delete(fullPath);
 
         var newRelPath = v.RelativePath(newPath);
         idmap.Put(front.Id, newRelPath);
@@ -196,8 +195,7 @@ public sealed class PageService
         IndexFile.Regenerate(v, finalPages);
 
         var nowMs = _nowUnixMs();
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
         LogFile.Append(v, utcIso, "rename", newSlug,
             $"id={front.Id} old={oldSlug} new={newSlug} links_rewritten={rewrittenCount}");
 
@@ -227,8 +225,7 @@ public sealed class PageService
         var existingFront = doc.Front;
 
         var nowMs = _nowUnixMs();
-        var today = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var today = Timestamp.Date(nowMs);
 
         var front = new PageFrontmatter
         {
@@ -241,6 +238,9 @@ public sealed class PageService
             Summary = existingFront.Summary,
             Sources = existingFront.Sources,
             Tags = existingFront.Tags,
+            // A status change adds no content, so it neither raises nor
+            // clears the candidate flag.
+            PersonaCandidate = existingFront.PersonaCandidate,
         };
 
         var serialized = new PageDoc(front, doc.Body).Serialize();
@@ -255,8 +255,7 @@ public sealed class PageService
         var freshPages = PageStore.Enumerate(v);
         IndexFile.Regenerate(v, freshPages);
 
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
         var slug = System.IO.Path.GetFileNameWithoutExtension(fullPath);
         LogFile.Append(v, utcIso, "set-status", slug, $"id={existingFront.Id} status={PageStatusX.ToWire(status)}");
     }
@@ -322,6 +321,8 @@ public sealed class PageService
                 throw new ValidationException("unknown-source", $"unknown source id '{sourceId}'");
         }
 
+        var personaCandidate = IsEndorsedNote(v, cfg, idmap, req.Sources);
+
         // Title is immutable on update (not in the replace list, and renames
         // are Task 20's job), so there is no new title to collide with an
         // existing one - duplicate-title from Create simply doesn't apply
@@ -344,8 +345,7 @@ public sealed class PageService
                 $"dangling wikilink target(s): {string.Join(", ", danglingTargets)}");
 
         var nowMs = _nowUnixMs();
-        var today = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var today = Timestamp.Date(nowMs);
 
         var front = new PageFrontmatter
         {
@@ -358,6 +358,11 @@ public sealed class PageService
             Summary = req.Summary,
             Sources = req.Sources,
             Tags = req.Tags,
+            // Re-derived on every write, not carried over: a rewrite is new
+            // content a distillation pass has not seen (so it re-raises a
+            // flag the last pass cleared), and a page that no longer cites
+            // any endorsed source is no longer an endorsed note.
+            PersonaCandidate = personaCandidate,
         };
 
         var doc = new PageDoc(front, req.Body);
@@ -395,8 +400,7 @@ public sealed class PageService
         var freshPages = PageStore.Enumerate(v);
         IndexFile.Regenerate(v, freshPages);
 
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
         LogFile.Append(v, utcIso, "upsert", slug, $"update id={existingFront.Id} type={PageTypeX.ToWire(existingFront.Type)}");
 
         var filedDangling = FileDanglingIssues(v, slug, danglingTargets, req.AllowDangling, utcIso);
@@ -527,6 +531,8 @@ public sealed class PageService
                 throw new ValidationException("unknown-source", $"unknown source id '{sourceId}'");
         }
 
+        var personaCandidate = IsEndorsedNote(v, cfg, idmap, req.Sources);
+
         var existingSlugs = new HashSet<string>(existing.Select(p => p.Slug), StringComparer.Ordinal);
 
         // Overview is a singleton at a fixed path (`wiki/overview.md`), not a
@@ -551,8 +557,7 @@ public sealed class PageService
 
         var nowMs = _nowUnixMs();
         var id = WikiUlid.New(nowMs, _randomBytes());
-        var today = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var today = Timestamp.Date(nowMs);
 
         var front = new PageFrontmatter
         {
@@ -565,6 +570,7 @@ public sealed class PageService
             Summary = req.Summary,
             Sources = req.Sources,
             Tags = req.Tags,
+            PersonaCandidate = personaCandidate,
         };
 
         var doc = new PageDoc(front, req.Body);
@@ -588,8 +594,7 @@ public sealed class PageService
         var freshPages = PageStore.Enumerate(v);
         IndexFile.Regenerate(v, freshPages);
 
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
         LogFile.Append(v, utcIso, "upsert", slug, $"create id={id} type={PageTypeX.ToWire(req.Type)}");
 
         var filedDangling = FileDanglingIssues(v, slug, danglingTargets, req.AllowDangling, utcIso);
@@ -628,6 +633,41 @@ public sealed class PageService
         return danglingTargets;
     }
 
+
+    // Issue #49 / ADR 0001, amendment AV: a page is an endorsed note - and
+    // lands as `persona: candidate`, and counts as persona evidence - only
+    // when EVERY source it cites belongs to a category the owner marked
+    // `persona-source: true`. #49 first said "at least one", but a page that
+    // mixes in other material can carry words the owner never endorsed, and
+    // the persona must never be inferred from those (glossary "Persona").
+    // Pages citing nothing are never endorsed notes.
+    //
+    // Reads each cited source's frontmatter for its category; the ids were
+    // already checked against the idmap by the caller, so this is a read
+    // during validation, not a precondition of its own.
+    internal static bool IsEndorsedNote(Vault v, VaultConfig cfg, IdMap idmap, string[] sources)
+    {
+        if (sources.Length == 0 || !cfg.Categories.Any(c => c.PersonaSource))
+            return false;
+
+        foreach (var sourceId in sources)
+        {
+            // A stale idmap entry (raw file deleted outside the CLI) is not
+            // this check's to report - the upsert has always accepted it - but
+            // a source that is not there endorses nothing, so the page is not
+            // wholly endorsed.
+            var relPath = idmap.PathFor(sourceId);
+            if (relPath is null)
+                return false;
+            var fullPath = System.IO.Path.Combine(v.Root, relPath);
+            if (!File.Exists(fullPath))
+                return false;
+            var (scalars, lists, _) = Frontmatter.ReadBlock(File.ReadAllText(fullPath));
+            if (!cfg.IsPersonaSource(SourceFrontmatter.FromRaw(scalars, lists).Category))
+                return false;
+        }
+        return true;
+    }
 
     private static byte[] DefaultRandomBytes()
     {

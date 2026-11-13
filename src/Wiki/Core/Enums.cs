@@ -162,6 +162,43 @@ public enum IssueKind
     // detail/occurrences - corrupting the one measurement the amendment
     // workflow reads, with a finding that a flaky network can produce.
     BrokenExternalLink,
+
+    // PERSONA.md structural lint (issue #48, spec amendment AC). One kind
+    // per rule rather than one `persona` kind: issues merge on
+    // (kind, subject) and every persona finding has the same subject
+    // (`PERSONA.md`), so a shared kind would make the rules overwrite each
+    // other's detail and occurrences. All are errors (see IssueKindX.Severity)
+    // except PersonaToneLength, which is a warning.
+    PersonaFrontmatter,
+    PersonaSections,
+    PersonaLink,
+    PersonaEntryLength,
+    PersonaSectionCap,
+    PersonaToneLength,
+
+    // A persona line without the support it needs (issue #50, ADR 0001):
+    // fewer than two endorsed-note pages and no owner-stated evidence, or a
+    // tone-of-voice line not resting on owner-stated text. Read from the
+    // evidence the audit log recorded for the accept PERSONA.md's
+    // `audit_entry` names. Error, like the structural rules.
+    PersonaEvidence,
+
+    // A persona line whose recorded evidence no longer holds (issue #52):
+    // an evidence page whose body hash differs from the one the accept
+    // recorded, a page that is gone, or a page that no longer cites a
+    // persona-source category. One issue per stale line (subject
+    // `PERSONA.md#<section>: <line>`), so each is its own re-check proposal
+    // for the next distillation pass. Warning: the line was valid when
+    // accepted; it needs a second look, not a block. Lint resolves the issue
+    // itself once the line is no longer stale (re-confirmed, reworded or
+    // removed), so retired evidence leaves no dangling warning.
+    PersonaStaleEvidence,
+
+    // An id in PERSONA.md (issue #31 "no links, no IDs", amendment AZ): a
+    // ULID, a long hex hash or a vault path to a Markdown file. Conservative
+    // by design - only shapes ordinary prose never takes - so it never flags
+    // a sentence the owner actually wrote. Error, like persona-link.
+    PersonaId,
 }
 
 public static class IssueKindX
@@ -183,7 +220,29 @@ public static class IssueKindX
         IssueKind.ContentLoss => "content-loss",
         IssueKind.UnsupportedClaim => "unsupported-claim",
         IssueKind.BrokenExternalLink => "broken-external-link",
+        IssueKind.PersonaFrontmatter => "persona-frontmatter",
+        IssueKind.PersonaSections => "persona-sections",
+        IssueKind.PersonaLink => "persona-link",
+        IssueKind.PersonaEntryLength => "persona-entry-length",
+        IssueKind.PersonaSectionCap => "persona-section-cap",
+        IssueKind.PersonaToneLength => "persona-tone-length",
+        IssueKind.PersonaEvidence => "persona-evidence",
+        IssueKind.PersonaStaleEvidence => "persona-stale-evidence",
+        IssueKind.PersonaId => "persona-id",
         _ => throw new ValidationException("invalid-issue-kind", $"unknown IssueKind '{value}'"),
+    };
+
+    // Lint severity of a kind. Every pre-persona kind is advisory (spec §11)
+    // and reports as "warning"; the PERSONA.md structural rules are "error"
+    // because they are the rules a persona changeset must pass before it can
+    // be queued (spec §11 table, amendment AC). Lint itself still exits 0 on
+    // errors - it reports and files, it never gates.
+    public static string Severity(IssueKind value) => value switch
+    {
+        IssueKind.PersonaFrontmatter or IssueKind.PersonaSections or IssueKind.PersonaLink
+            or IssueKind.PersonaEntryLength or IssueKind.PersonaSectionCap or IssueKind.PersonaEvidence
+            or IssueKind.PersonaId => "error",
+        _ => "warning",
     };
 
     public static IssueKind Parse(string wire) => wire switch
@@ -203,6 +262,15 @@ public static class IssueKindX
         "content-loss" => IssueKind.ContentLoss,
         "unsupported-claim" => IssueKind.UnsupportedClaim,
         "broken-external-link" => IssueKind.BrokenExternalLink,
+        "persona-frontmatter" => IssueKind.PersonaFrontmatter,
+        "persona-sections" => IssueKind.PersonaSections,
+        "persona-link" => IssueKind.PersonaLink,
+        "persona-entry-length" => IssueKind.PersonaEntryLength,
+        "persona-section-cap" => IssueKind.PersonaSectionCap,
+        "persona-tone-length" => IssueKind.PersonaToneLength,
+        "persona-evidence" => IssueKind.PersonaEvidence,
+        "persona-stale-evidence" => IssueKind.PersonaStaleEvidence,
+        "persona-id" => IssueKind.PersonaId,
         _ => throw new ValidationException("invalid-issue-kind", $"unknown issue kind '{wire}'"),
     };
 }

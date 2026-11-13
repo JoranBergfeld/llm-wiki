@@ -14,7 +14,7 @@ The material that supports a persona line, recorded in the audit log. Knowledge 
 _Avoid_: persona link, weaving
 
 **Endorsed note**
-A page built from a source in a persona-source category. The owner endorses its content but may not have written it, so it can support values, principles and boundaries, never tone of voice.
+A page built only from sources in persona-source categories: every source it cites is in one. A page that also cites any other source is not an endorsed note. The owner endorses its content but may not have written it, so it can support values, principles and boundaries, never tone of voice.
 
 **Persona-source category**
 A source category the owner has marked as holding endorsed notes. Endorsement is per category, not per file.
@@ -36,4 +36,19 @@ The word-for-word record of one onboarding interview session: each question and 
 _Avoid_: statement, answers file
 
 **Persona candidate**
-A page built from a persona-source category that a distillation pass has not yet considered.
+An endorsed note that a distillation pass has not yet considered.
+
+**Persona changeset**
+One distillation pass's proposed edits to the persona: any number of lines added, changed or removed across sections, each new line with its evidence. Reviewed all-or-nothing; at most one is pending, and a newer one supersedes it. The proposer may withdraw a pending one, giving a reason that the audit log keeps.
+_Avoid_: persona proposal, persona diff
+
+**Persona auto-accept**
+The opt-in mode (`WIKI_PERSONA_AUTO_ACCEPT`, off by default) in which a valid persona changeset is accepted as soon as it is proposed, skipping human review but not lint or the evidence rules. Its accepts are audited as `decidedVia=auto-accept`.
+_Avoid_: auto-approve, skip review
+
+**Stale evidence**
+Evidence that no longer holds for the persona line it supports: the page changed since the line was accepted, is gone, or is no longer an endorsed note; or the owner-stated answer was edited, removed, or retracted by deleting its interview transcript.
+
+**Re-check proposal**
+The open `persona-stale-evidence` lint warning for a persona line on stale evidence, which `persona distill` hands the next distillation pass under `recheck`. The pass settles it with an ordinary changeset that re-confirms, rewords or removes the line. It is not a changeset itself, and lint generates none. Lint closes the warning on its own once the line no longer rests on stale evidence.
+_Avoid_: re-check changeset

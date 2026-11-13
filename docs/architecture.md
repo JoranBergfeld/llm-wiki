@@ -65,6 +65,7 @@ my-vault/
     ├── issues.json      # lint findings with lifecycle
     ├── lint.json        # last-lint timestamp
     ├── proposals.json   # open AGENTS.md amendment proposals
+    ├── persona-changesets.json # persona changesets and their review state (amendment AH)
     └── review/          # shadow copies for the review gate
 ```
 
@@ -110,10 +111,12 @@ flowchart TD
 
 | Namespace | Owns |
 |---|---|
-| `Wiki.Cli` | The `System.CommandLine` tree, one `Commands/*.cs` per command group, and the two output paths (`CommandContext.EmitOk`, `OutputMode.EmitFailure`) |
+| `Wiki.Cli` | The `System.CommandLine` tree, one `Commands/*.cs` per command group, and the two output paths (`CommandContext.EmitOk`, `OutputMode.EmitFailure`), and the read/mutation boundary: `CommandCatalog` classifies every command as `Read` or `Mutate`, and `CommandBinding.Bind` runs each handler inside `VaultBoundary` accordingly; `VaultLock` is the outermost step of the mutation boundary (exclusive) and of the read boundary (shared) after `WriteRecovery.BeforeRead`; `WriteRecovery` sits between the lock and the audit step, recovering an interrupted write and journaling this one (amendment AI). `InvocationOrigin` (how the call arrived) rides on `WikiRootCommand` into `CommandContext.Origin` |
+| `Wiki.Mcp` | `wiki mcp`: the MCP server bound to one vault, its intent tools (`Tools/*`, one class per tool, registered in `McpToolCatalog`), and the adapter every tool goes through. A tool runs CLI steps via `App.Main(argv, stdout, stdin, origin)` and reads the `--json` envelope back, never a service; `IntentRun` maps exit codes onto MCP tool results and `ToolArgumentGuard` turns schema-invalid arguments into protocol errors. `ToolNarrowing` removes the tools named by `--exclude-tools` / `WIKI_MCP_EXCLUDE_TOOLS` from every tool collection the server builds (a PostConfigure, because stateless HTTP builds one per request). `wiki mcp --http` serves the same tools over stateless streamable HTTP (slim builder, `/mcp`): `McpHttpSettings` holds its startup config (`--listen`, `--token`, `--allowed-hosts`), and `HttpGate` turns a disallowed Host, a missing or wrong bearer token, or an oversized body into RFC 9457 problem+json (catalogue: `docs/mcp-http-errors.md`). Tool calls run on dedicated threads so blocking CLI steps cannot starve Kestrel, at most `--max-concurrent-calls` at once (the rest wait on an async semaphore). `WikiServerOptions` bundles the startup config both transports share (vault, narrowing, inbox, lock timeout, call cap). `IngestInbox` is the inbox `ingest_source` lands uploads in (`--inbox-root`, `--max-upload-bytes`), fixed at startup and outside the vault. A `--lock-timeout` given to `wiki mcp` is bound into the adapter and added to every step's argv. `wiki mcp` itself is `CommandKind.Host`: it runs inside no boundary, and every step it hosts passes its own |
 | `Wiki.Services` | One class per command group: preconditions, orchestration, and the order of validation-then-write. This is where the spec's rules live |
-| `Wiki.Core` | The vault's vocabulary — path model, config, frontmatter parse/serialize, slugs, ULIDs, wikilinks, atomic writes |
+| `Wiki.Core` | The vault's vocabulary — path model, config, frontmatter parse/serialize, slugs, ULIDs, wikilinks, atomic writes, and the write journal (`WriteJournal`, `JournalFile`) every vault write records its before-image in |
 | `Wiki.State` | The `.wiki/` JSON caches. Each store is a `Load` / mutate / `Save` object with deterministic, sorted serialization |
+| `Wiki.Audit` | The hash-chained audit log (spec amendment AE): `AuditStep` on the mutation boundary, `AuditDraft` (what a command adds to its line via `ctx.Audit`), `AuditLine` (format and hashing), `AuditLog` (location, append, verification of the live segment before every write and of every segment with `--deep`, rotation into gzip segments plus manifest at `audit.rotate_bytes`, re-anchor; amendment AJ) |
 | `Wiki.Docs` | The two CLI-generated markdown files, `index.md` (fully regenerated) and `log.md` (appended) |
 | `Wiki.Json` | The envelope type and the source-generated `JsonSerializerContext` every DTO is registered in |
 | `Wiki.Templates` | Embedded `wiki.yaml` and `AGENTS.md` scaffolds for `wiki init` |

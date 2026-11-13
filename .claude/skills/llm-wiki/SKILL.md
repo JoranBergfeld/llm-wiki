@@ -292,7 +292,9 @@ Do these **never**; surface them and stop:
 - `wiki review approve` / `reject` — the review gate is theirs.
 - `wiki schema approve` / `reject` — you may *propose*, they dispose.
 - `wiki category add` — categories are schema. You may `wiki category
-  propose`; they dispose.
+  propose`; they dispose. You may take back your own pending proposal or
+  persona changeset (`wiki category|schema withdraw <id> --reason "…"`,
+  `wiki review withdraw <changeset-id> --reason "…"`); the reason is logged.
 - `wiki source retract` — destructive and cascading.
 
 Running unattended, collect these into one clear report at the end of the tick
@@ -326,6 +328,8 @@ Standalone `wiki --version` is not a vault operation and takes neither.
 | Pick a page to audit | `wiki audit next` |
 | Record an audit verdict | `wiki audit record <page-id> --verdict supported\|unsupported --note "…"` |
 | Past audit verdicts | `wiki audit list [--verdict <v>]` |
+| Check the audit log | `wiki audit [--deep]` |
+| Restore writes after a broken audit chain | `wiki audit reanchor --reason "…"` |
 | Outstanding repairs | `wiki issues list [--kind <k>] [--status open\|resolved]` |
 | Close a repair | `wiki issues resolve <id> --note "…"` |
 | Rebuild derived state | `wiki reindex` |
@@ -345,6 +349,9 @@ summarized | integrated | linted` · source status `active | retracted`.
 | `precondition-order` | You skipped a ledger state. Run `ingest resume` and take the next one. |
 | `precondition-summary` / `precondition-index` / `precondition-lint` | The artifact that state requires does not exist yet. Produce it, then advance. |
 | `state-conflict` (exit 3) | Already done. Move on. |
+| `vault-busy` (exit 5) | Another `wiki` command holds the vault; nothing was changed. Retry the same command shortly. |
+| `repair-needed` (exit 2) | An interrupted write could not be recovered automatically; every write is refused until a human repairs it. Stop writing, report the message (it names `.wiki/journal`); reads still work. |
+| `audit-chain-broken` (exit 6) | The audit log was altered, so every write is refused and nothing was changed. Run `wiki audit` to see what broke; once the cause is understood, `wiki audit reanchor --reason "<what happened>"` restores writes. |
 | `dangling-link` | Create the targets, or re-run with `--allow-dangling` and own the filed issue. |
 | `duplicate-title` | A page with this title exists. Update it with `--id` instead of creating. |
 | `duplicate-source` | Identical content already registered. Not an error — reuse the existing id. Line endings do not matter; the hash is newline-insensitive. |

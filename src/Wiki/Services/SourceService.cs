@@ -132,7 +132,7 @@ public sealed class SourceService
 
     public SourceService(Func<long>? nowUnixMs = null, Func<byte[]>? randomBytes = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
         _randomBytes = randomBytes ?? DefaultRandomBytes;
     }
 
@@ -180,8 +180,7 @@ public sealed class SourceService
 
         var nowMs = _nowUnixMs();
         var id = WikiUlid.New(nowMs, _randomBytes());
-        var today = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var today = Timestamp.Date(nowMs);
 
         var front = new SourceFrontmatter
         {
@@ -218,8 +217,7 @@ public sealed class SourceService
         idmap.Put(id, relPath);
         idmap.Save(v);
 
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
 
         var ledger = new Ledger();
         ledger.Load(v);
@@ -369,8 +367,7 @@ public sealed class SourceService
         // would happen without the vault changing.
         if (!dryRun && result.Registered > 0)
         {
-            var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(_nowUnixMs()).UtcDateTime
-                .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+            var utcIso = Timestamp.Iso(_nowUnixMs());
             LogFile.Append(v, utcIso, "source-scan", category,
                 $"dir=\"{SanitizeScalar(fullDir.Replace('\\', '/'))}\" registered={result.Registered} " +
                 $"duplicates={result.SkippedDuplicate} rejected={result.Rejected}");
@@ -602,8 +599,7 @@ public sealed class SourceService
         // --- Validation complete. Everything from here on is the write. ---
 
         var nowMs = _nowUnixMs();
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
 
         // Step 1: source frontmatter -> retracted.
         AtomicFile.Write(fullPath, serialized);
