@@ -247,7 +247,7 @@ public sealed class PersonaDoc
 
         if (distilled is null)
             problems.Add((IssueKind.PersonaFrontmatter, $"missing frontmatter key '{LastDistilledKey}'"));
-        else if (!DateOnly.TryParseExact(distilled, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+        else if (!DateOnly.TryParseExact(distilled, Timestamp.DateFormat, System.Globalization.CultureInfo.InvariantCulture,
                      System.Globalization.DateTimeStyles.None, out _))
             problems.Add((IssueKind.PersonaFrontmatter, $"{LastDistilledKey} '{distilled}' is not a yyyy-MM-dd date"));
 

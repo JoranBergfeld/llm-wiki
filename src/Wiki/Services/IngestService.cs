@@ -55,7 +55,7 @@ public sealed class IngestService
 
     public IngestService(Func<long>? nowUnixMs = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
     }
 
     // `wiki ingest status [<source-id>]`. With an id: that single entry (or
@@ -133,8 +133,7 @@ public sealed class IngestService
         }
 
         var nowMs = _nowUnixMs();
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
 
         // --- Validation complete. Everything from here on is the write. ---
 

@@ -83,14 +83,14 @@ public sealed class LintService
 
     public LintService(Func<long>? nowUnixMs = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
     }
 
     public LintReport Run(Vault v, VaultConfig cfg, bool fixLinks)
     {
         var nowMs = _nowUnixMs();
         var nowUtc = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime;
-        var utcIso = nowUtc.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
         var today = DateOnly.FromDateTime(nowUtc);
 
         var idmap = new IdMap();

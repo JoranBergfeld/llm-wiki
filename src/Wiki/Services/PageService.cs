@@ -104,7 +104,7 @@ public sealed class PageService
 
     public PageService(Func<long>? nowUnixMs = null, Func<byte[]>? randomBytes = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
         _randomBytes = randomBytes ?? DefaultRandomBytes;
     }
 
@@ -195,8 +195,7 @@ public sealed class PageService
         IndexFile.Regenerate(v, finalPages);
 
         var nowMs = _nowUnixMs();
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
         LogFile.Append(v, utcIso, "rename", newSlug,
             $"id={front.Id} old={oldSlug} new={newSlug} links_rewritten={rewrittenCount}");
 
@@ -226,8 +225,7 @@ public sealed class PageService
         var existingFront = doc.Front;
 
         var nowMs = _nowUnixMs();
-        var today = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var today = Timestamp.Date(nowMs);
 
         var front = new PageFrontmatter
         {
@@ -257,8 +255,7 @@ public sealed class PageService
         var freshPages = PageStore.Enumerate(v);
         IndexFile.Regenerate(v, freshPages);
 
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
         var slug = System.IO.Path.GetFileNameWithoutExtension(fullPath);
         LogFile.Append(v, utcIso, "set-status", slug, $"id={existingFront.Id} status={PageStatusX.ToWire(status)}");
     }
@@ -348,8 +345,7 @@ public sealed class PageService
                 $"dangling wikilink target(s): {string.Join(", ", danglingTargets)}");
 
         var nowMs = _nowUnixMs();
-        var today = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var today = Timestamp.Date(nowMs);
 
         var front = new PageFrontmatter
         {
@@ -404,8 +400,7 @@ public sealed class PageService
         var freshPages = PageStore.Enumerate(v);
         IndexFile.Regenerate(v, freshPages);
 
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
         LogFile.Append(v, utcIso, "upsert", slug, $"update id={existingFront.Id} type={PageTypeX.ToWire(existingFront.Type)}");
 
         var filedDangling = FileDanglingIssues(v, slug, danglingTargets, req.AllowDangling, utcIso);
@@ -562,8 +557,7 @@ public sealed class PageService
 
         var nowMs = _nowUnixMs();
         var id = WikiUlid.New(nowMs, _randomBytes());
-        var today = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var today = Timestamp.Date(nowMs);
 
         var front = new PageFrontmatter
         {
@@ -600,8 +594,7 @@ public sealed class PageService
         var freshPages = PageStore.Enumerate(v);
         IndexFile.Regenerate(v, freshPages);
 
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
         LogFile.Append(v, utcIso, "upsert", slug, $"create id={id} type={PageTypeX.ToWire(req.Type)}");
 
         var filedDangling = FileDanglingIssues(v, slug, danglingTargets, req.AllowDangling, utcIso);

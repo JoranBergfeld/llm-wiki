@@ -39,13 +39,17 @@ namespace Wiki.Cli;
 // and the files on disk.
 public static class WriteRecovery
 {
-    public static int Step(CommandInvocation invocation, Func<int> next)
+    public static int Step(CommandInvocation invocation, Func<int> next) => Step(invocation, next, Timestamp.NowUnixMs);
+
+    // The clock stamps a rollback's `recover` audit line (CONTRIBUTING:
+    // "Inject the clock and RNG").
+    public static int Step(CommandInvocation invocation, Func<int> next, Func<long> nowUnixMs)
     {
         var vault = TryResolve(invocation.Context);
         if (vault is null)
             return next();   // `init`: no vault, nothing journaled
 
-        Recover(vault, invocation.Context.Origin);
+        Recover(vault, invocation.Context.Origin, nowUnixMs);
 
         var journal = new WriteJournal(vault.JournalPath, invocation.Name);
         int exit;
@@ -102,7 +106,7 @@ public static class WriteRecovery
 
     // Brings the vault back to a state with no interrupted write, or throws
     // repair-needed. Caller holds the exclusive lock.
-    private static void Recover(Vault vault, InvocationOrigin origin)
+    private static void Recover(Vault vault, InvocationOrigin origin, Func<long> nowUnixMs)
     {
         var journal = JournalFile.Read(vault.JournalPath);
         if (journal is null)
@@ -121,8 +125,8 @@ public static class WriteRecovery
 
         if (journal.Phase == JournalPhase.Restored)
         {
-            using var writer = AuditLog.For(vault).OpenForAppend();
-            var segments = RecoverSegments(journal, origin);
+            using var writer = AuditLog.For(vault, nowUnixMs).OpenForAppend();
+            var segments = RecoverSegments(journal, origin, nowUnixMs);
             JournalFile.AppendDurably(vault.JournalPath,
                 JournalFile.EncodeSeal(JournalFile.RollbackRecord, writer.Prev, segments));
             writer.Append(segments);
@@ -143,7 +147,7 @@ public static class WriteRecovery
             }
         }
 
-        using (var writer = AuditLog.For(vault).OpenForAppend())
+        using (var writer = AuditLog.For(vault, nowUnixMs).OpenForAppend())
         {
             if (writer.Prev == seal.Prev)
                 writer.Append(seal.Segments);
@@ -171,9 +175,9 @@ public static class WriteRecovery
 
     // The audit line recording a rollback. It names the interrupted action
     // and when it started, so a rolled-back change is never a silent one.
-    private static IReadOnlyList<string> RecoverSegments(ParsedJournal journal, InvocationOrigin origin) =>
+    private static IReadOnlyList<string> RecoverSegments(ParsedJournal journal, InvocationOrigin origin, Func<long> nowUnixMs) =>
     [
-        DateTimeOffset.UtcNow.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture),
+        Timestamp.Iso(nowUnixMs()),
         "recover",
         AuditLine.Escape(journal.Action.Replace(' ', '.')),
         "outcome=rolled-back",

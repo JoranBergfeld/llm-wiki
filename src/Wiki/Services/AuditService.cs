@@ -127,7 +127,7 @@ public sealed class AuditService
 
     public AuditService(Func<long>? nowUnixMs = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
     }
 
     public AuditTarget Next(Vault v)
@@ -222,8 +222,7 @@ public sealed class AuditService
 
         // --- Validation complete. Everything from here on is the write. ---
 
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(_nowUnixMs()).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(_nowUnixMs());
 
         var audits = new Audits();
         audits.Load(v);

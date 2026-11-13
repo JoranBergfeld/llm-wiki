@@ -31,7 +31,7 @@ public sealed class SchemaService
 
     public SchemaService(Func<long>? nowUnixMs = null, Func<byte[]>? randomBytes = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
         _randomBytes = randomBytes ?? DefaultRandomBytes;
     }
 
@@ -144,8 +144,7 @@ public sealed class SchemaService
     }
 
     private static string ToIso(long unixMs)
-        => DateTimeOffset.FromUnixTimeMilliseconds(unixMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        => Timestamp.Iso(unixMs);
 
     private static byte[] DefaultRandomBytes()
     {

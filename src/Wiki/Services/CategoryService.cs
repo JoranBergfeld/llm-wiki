@@ -50,7 +50,7 @@ public sealed class CategoryService
     // proposal ids and timestamps. Same shape as SchemaService.
     public CategoryService(System.Func<long>? nowUnixMs = null, System.Func<byte[]>? randomBytes = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
         _randomBytes = randomBytes ?? DefaultRandomBytes;
     }
 
@@ -297,8 +297,7 @@ public sealed class CategoryService
         => new(p.Id, p.CategoryId, p.Description, p.Rationale, p.Sources, p.Status, p.CreatedAt, p.Note);
 
     private static string ToIso(long unixMs)
-        => System.DateTimeOffset.FromUnixTimeMilliseconds(unixMs).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        => Timestamp.Iso(unixMs);
 
     private static byte[] DefaultRandomBytes()
     {

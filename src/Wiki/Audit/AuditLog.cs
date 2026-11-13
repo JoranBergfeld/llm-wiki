@@ -54,8 +54,12 @@ public sealed class AuditLog
     private readonly string _stem;
     private readonly string _ext;
 
-    private AuditLog(string logPath, long rotateBytes)
+    // Stamps archived segments (`archivedAt`) and set-aside manifests.
+    private readonly Func<long> _nowUnixMs;
+
+    private AuditLog(string logPath, long rotateBytes, Func<long> nowUnixMs)
     {
+        _nowUnixMs = nowUnixMs;
         LogPath = logPath;
         RotateBytes = rotateBytes;
         _dir = Path.GetDirectoryName(logPath)!;
@@ -65,16 +69,17 @@ public sealed class AuditLog
         ManifestPath = Path.Combine(_dir, _stem + ".manifest.json");
     }
 
-    public static AuditLog For(Vault vault) => For(vault, VaultConfig.Load(vault.ConfigPath));
+    public static AuditLog For(Vault vault, Func<long>? nowUnixMs = null)
+        => For(vault, VaultConfig.Load(vault.ConfigPath), nowUnixMs);
 
-    public static AuditLog For(Vault vault, VaultConfig config)
+    public static AuditLog For(Vault vault, VaultConfig config, Func<long>? nowUnixMs = null)
     {
         var path = Path.GetFullPath(Path.Combine(vault.Root, config.AuditPath));
         var state = Path.GetFullPath(vault.StateDir) + Path.DirectorySeparatorChar;
         if (path.StartsWith(state, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
             throw new ValidationException("config",
                 $"'audit.path' resolves to '{path}', inside .wiki/, which is a rebuildable cache; move it elsewhere", vault.ConfigPath);
-        return new AuditLog(path, config.AuditRotateBytes);
+        return new AuditLog(path, config.AuditRotateBytes, nowUnixMs ?? Timestamp.NowUnixMs);
     }
 
     public string DetailPath(string hash) => Path.Combine(DetailsDir, hash + ".txt");
@@ -268,7 +273,7 @@ public sealed class AuditLog
             LastHash = lastHash,
             Sha256 = AuditLine.Sha256Hex(bytes),
             Reanchored = reanchored,
-            ArchivedAt = DateTimeOffset.UtcNow.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture),
+            ArchivedAt = Timestamp.Iso(_nowUnixMs()),
         });
         AtomicFile.Write(ManifestPath, JsonSerializer.Serialize(manifest, WikiJsonContext.Default.AuditManifest) + "\n");
 
@@ -303,7 +308,7 @@ public sealed class AuditLog
     {
         // Copy, then delete, through AtomicFile (#47) rather than File.Move:
         // the unreadable manifest is kept byte-for-byte, never overwritten.
-        var aside = ManifestPath + "." + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture) + ".unreadable";
+        var aside = ManifestPath + "." + _nowUnixMs().ToString(CultureInfo.InvariantCulture) + ".unreadable";
         AtomicFile.Write(aside, File.ReadAllBytes(ManifestPath));
         AtomicFile.Delete(ManifestPath);
         return new AuditManifest();

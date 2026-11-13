@@ -47,7 +47,7 @@ public sealed class ReviewService
 
     public ReviewService(Func<long>? nowUnixMs = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
     }
 
     // Every pending-review page in the vault, in PageStore's deterministic
@@ -92,8 +92,7 @@ public sealed class ReviewService
         // SetStatus already appended its own `set-status` log line; add a
         // distinct `review-approve` line too so grepping the log for review
         // decisions is symmetric with `review-reject` (Reject's own line).
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(_nowUnixMs()).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(_nowUnixMs());
         LogFile.Append(v, utcIso, "review-approve", slug, $"id={pageId} status=active");
     }
 
@@ -115,9 +114,8 @@ public sealed class ReviewService
         var isUpdate = snapshot is not null;
 
         var nowMs = _nowUnixMs();
-        var nowUtc = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime;
-        var today = nowUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        var utcIso = nowUtc.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var today = Timestamp.Date(nowMs);
+        var utcIso = Timestamp.Iso(nowMs);
 
         if (isUpdate)
         {

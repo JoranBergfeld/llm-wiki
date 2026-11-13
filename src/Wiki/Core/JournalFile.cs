@@ -28,7 +28,7 @@ public static class JournalFile
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
     public static string EncodeBegin(string action, DateTimeOffset now)
-        => Line("begin", B64(action), now.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture));
+        => Line("begin", B64(action), Timestamp.Iso(now));
 
     public static string EncodeAfter(string path, string? hash) => Line("after", B64(path), hash ?? "absent");
 
