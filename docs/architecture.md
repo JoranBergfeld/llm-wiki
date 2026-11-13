@@ -110,9 +110,9 @@ flowchart TD
 
 | Namespace | Owns |
 |---|---|
-| `Wiki.Cli` | The `System.CommandLine` tree, one `Commands/*.cs` per command group, and the two output paths (`CommandContext.EmitOk`, `OutputMode.EmitFailure`), and the read/mutation boundary: `CommandCatalog` classifies every command as `Read` or `Mutate`, and `CommandBinding.Bind` runs each handler inside `VaultBoundary` accordingly; `VaultLock` is the outermost step of both boundaries (shared for reads, exclusive for mutations). `InvocationOrigin` (how the call arrived) rides on `WikiRootCommand` into `CommandContext.Origin` |
+| `Wiki.Cli` | The `System.CommandLine` tree, one `Commands/*.cs` per command group, and the two output paths (`CommandContext.EmitOk`, `OutputMode.EmitFailure`), and the read/mutation boundary: `CommandCatalog` classifies every command as `Read` or `Mutate`, and `CommandBinding.Bind` runs each handler inside `VaultBoundary` accordingly; `VaultLock` is the outermost step of the mutation boundary (exclusive) and of the read boundary (shared) after `WriteRecovery.BeforeRead`; `WriteRecovery` sits between the lock and the audit step, recovering an interrupted write and journaling this one (amendment AF). `InvocationOrigin` (how the call arrived) rides on `WikiRootCommand` into `CommandContext.Origin` |
 | `Wiki.Services` | One class per command group: preconditions, orchestration, and the order of validation-then-write. This is where the spec's rules live |
-| `Wiki.Core` | The vault's vocabulary — path model, config, frontmatter parse/serialize, slugs, ULIDs, wikilinks, atomic writes |
+| `Wiki.Core` | The vault's vocabulary — path model, config, frontmatter parse/serialize, slugs, ULIDs, wikilinks, atomic writes, and the write journal (`WriteJournal`, `JournalFile`) every vault write records its before-image in |
 | `Wiki.State` | The `.wiki/` JSON caches. Each store is a `Load` / mutate / `Save` object with deterministic, sorted serialization |
 | `Wiki.Audit` | The hash-chained audit log (spec amendment AE): `AuditStep` on the mutation boundary, `AuditDraft` (what a command adds to its line via `ctx.Audit`), `AuditLine` (format and hashing), `AuditLog` (location, append, live-segment verification) |
 | `Wiki.Docs` | The two CLI-generated markdown files, `index.md` (fully regenerated) and `log.md` (appended) |

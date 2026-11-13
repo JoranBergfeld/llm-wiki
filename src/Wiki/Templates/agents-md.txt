@@ -76,7 +76,8 @@ Never scan bodies to discover relevance.
 For the vault operations above, pass `--vault <path>` and `--json` explicitly.
 Exit codes: 0 success · 1 your input was rejected — read
 `errors[].code`, correct it, retry once, never retry blind · 2 environment/IO
-problem, do not retry · 3 state conflict, the world is already how you asked,
+problem, do not retry (`repair-needed`: an interrupted write needs a human; stop
+writing and report it) · 3 state conflict, the world is already how you asked,
 treat as a no-op and move on · 5 `vault-busy`, another wiki command holds the
 vault and nothing was changed: retry the same command shortly.
 

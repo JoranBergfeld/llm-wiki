@@ -100,6 +100,13 @@ blocking validation, then a literal `--- Validation complete ---` comment, then
 the writes. A rejected call must leave the vault byte-identical to how it found
 it. Don't interleave.
 
+**Every vault write goes through `AtomicFile.Write`, `AtomicFile.Delete` or
+`LogFile.Append`.** They record the file's before-image in the write journal
+(`.wiki/journal`, amendment AF) before touching it; that is what lets the next
+command finish or roll back a write that was interrupted. A `File.WriteAll*`,
+`File.Delete` or `File.Move` on a vault file elsewhere is a change recovery
+cannot see.
+
 **Error codes are an API.** `ValidationException` takes a stable kebab-case
 code (`duplicate-title`, `unknown-source`) that agents branch on. Reuse an
 existing code where the meaning matches; introduce a new one rather than
