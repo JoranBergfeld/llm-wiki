@@ -68,6 +68,7 @@ Never scan bodies to discover relevance.
 | Start a persona distillation pass | `wiki persona distill` (settle its `recheck` lines: re-confirm, reword or remove; cite candidate `transcripts` answers as owner-stated evidence) |
 | Interview the owner | `wiki persona interview guide`, then per answer `wiki persona interview record --section <s> --question "…" --body-file <path> [--transcript <id>]` (word for word, never paraphrase) |
 | Propose a persona changeset | `wiki persona propose --body-file <path>` (JSON; reviewed in `wiki review`, or accepted at once when `autoAccepted` comes back true) |
+| Take back a pending proposal | `wiki review withdraw <changeset-id> --reason "…"` (persona), `wiki category withdraw` / `wiki schema withdraw <id> --reason "…"` |
 | Score retrieval quality | `wiki eval [--k N]` (needs a human-owned eval.yaml) |
 | List/check external URLs | `wiki links check [--external]` |
 | Pick a page to audit | `wiki audit next` |

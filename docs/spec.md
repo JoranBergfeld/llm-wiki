@@ -57,7 +57,7 @@ The same binary serves multiple independent vaults (e.g., one for work, one for 
 
 1. **Filesystem is the source of truth.** Structural derived state (the ID map, page/index consistency, and the *structural* ledger state a source is in) must be reconstructible by scanning the vault. Derived state is a cache. **Exception (amendment A):** issue history (`first_seen`/`occurrences`/`last_seen`), the ledger `--touched` audit list, the last-lint timestamp, and review shadow copies are *historical* state that markdown does not contain. `wiki reindex` rebuilds the idmap byte-identically and recomputes structural ledger state; it merge-preserves history best-effort and never claims byte-identity for it (see Appendix B).
 2. **The LLM writes prose, never files.** Page bodies enter the system only via CLI stdin/arguments. The CLI writes files.
-3. **Forward repair, not rollback.** Multi-file operations are not atomic. Instead: every mutation is idempotent, the ledger records completed steps, `wiki ingest resume` finishes interrupted work, and lint detects any residual inconsistency. There is no undo.
+3. **Forward repair, not rollback.** Multi-file operations are not atomic. Instead: every mutation is idempotent, the ledger records completed steps, `wiki ingest resume` finishes interrupted work, and lint detects any residual inconsistency. There is no undo. **One exception (amendment AU):** a single CLI step interrupted before it finished writing has no end state to repair forward to, so the next command rolls that step back to its journaled before-images and audits the rollback (amendment AI). Forward repair still governs everything above a single step: completed steps, ingest across commands and intent tools across steps are never undone.
 4. **Humans own the schema.** Categories and instructions change only through human action (config edit or explicit approval of a proposal). The LLM may propose; it may never apply.
 5. **Blocking validation at the write boundary; advisory validation at lint.** Malformed writes never land. Semantic decay (orphans, staleness) is detected, filed as issues, and repaired forward.
 6. **Closed vocabulary for structure.** Page types, ledger states, issue kinds, and frontmatter keys are fixed enumerations. Only category names and page content are free.
@@ -228,6 +228,7 @@ wiki category propose <id> --description "…"    Agent-proposable (amendment U)
 wiki category proposals [--status …]
 wiki category approve <proposal-id>             Human applies it; performs the equivalent `category add`
 wiki category reject <proposal-id> [--note "…"]
+wiki category withdraw <proposal-id> --reason "…" The proposer takes it back; wiki.yaml untouched (amendment AX)
 
 # Sources
 wiki source add <file> --category <id> --title "…" [--origin "…"]
@@ -294,6 +295,7 @@ wiki review approve <page-id>                   pending-review → active
 wiki review reject <page-id> [--note "…"]       pending-review → archived; files an issue for the agent
                                                 Both also take the pending persona changeset's id: approve writes
                                                 PERSONA.md, reject requires --note (amendment AH)
+wiki review withdraw <changeset-id> --reason "…" The proposer takes the pending persona changeset back (amendment AX)
 
 # Reflect loop (§13)
 wiki schema propose --section "<heading>" --stdin Full-section replacement (amendment C): LLM submits the new full
@@ -302,6 +304,7 @@ wiki schema propose --section "<heading>" --stdin Full-section replacement (amen
 wiki schema proposals
 wiki schema approve <proposal-id>               Human applies the diff; logs amendment
 wiki schema reject <proposal-id> [--note "…"]
+wiki schema withdraw <proposal-id> --reason "…"  The proposer takes it back; AGENTS.md untouched (amendment AX)
 
 # Persona (amendment AC)
 wiki persona read                               PERSONA.md as four line arrays (values, principles, toneOfVoice,
@@ -336,7 +339,10 @@ wiki mcp [--exclude-tools <tool,...>]           Serve this vault to MCP clients 
      [--allowed-hosts <host,...>]]              stopped. --listen (else WIKI_MCP_LISTEN, default http://127.0.0.1:8765);
                                                 --token (else WIKI_MCP_TOKEN): optional bearer token; --allowed-hosts
                                                 (else WIKI_MCP_ALLOWED_HOSTS, default loopback). Rejections are
-                                                problem+json, see docs/mcp-http-errors.md (AS)
+                                                problem+json, see docs/mcp-http-errors.md (AS). The HTTP
+                                                server must run under a supervisor that restarts it (BB)
+    [--max-concurrent-calls <n>]                At most n tool calls run at once; further calls wait (else
+                                                WIKI_MCP_MAX_CONCURRENT_CALLS, default 16) (BA)
 ```
 
 ---
@@ -407,11 +413,12 @@ The canonical agent flow (encoded in AGENTS.md, enforced by ledger preconditions
 | `persona-frontmatter` | **Error.** PERSONA.md frontmatter missing, or not exactly `schema_version` (`1`), `last_distilled` (yyyy-MM-dd) and a non-empty `audit_entry` (amendment AC) |
 | `persona-sections` | **Error.** PERSONA.md sections missing, duplicated, unknown, out of order, or content outside them |
 | `persona-link` | **Error.** Any link in PERSONA.md: wikilink, markdown link or image, autolink, bare URL |
+| `persona-id` | **Error.** An id in a PERSONA.md entry: a ULID, a hex run of 16 or more (a hash), or a vault path to a `.md` file. Ordinary prose never matches (amendment AZ) |
 | `persona-entry-length` | **Error.** A persona entry over 200 characters |
 | `persona-section-cap` | **Error.** Values over 10 lines, Principles over 15, Boundaries over 10 |
 | `persona-tone-length` | Warning. Tone of voice past 600 words |
-| `persona-evidence` | **Error.** A persona line whose recorded evidence (the audit log's `ledger` for the accept named by `audit_entry`) is fewer than two endorsed pages and no owner-stated text, or a tone-of-voice line not resting on owner-stated text (amendment AH) |
-| `persona-stale-evidence` | Warning. One per persona line (subject `PERSONA.md#<section>: <line>`) whose recorded evidence no longer holds: an evidence page whose body hash differs from the recorded one, a page that is gone, or a page that is no longer an endorsed note (a cited source outside the persona-source categories, amendment AV); an owner-stated answer that was edited, removed or retracted with its transcript (amendment AQ). The open issue is the line's re-check proposal; lint resolves it itself once the line is no longer stale (amendment AN) |
+| `persona-evidence` | **Error.** A persona line whose recorded evidence (the audit log's `ledger` for the accept whose audit line `audit_entry` names, amendment AY) is fewer than two endorsed pages and no owner-stated text, or a tone-of-voice line not resting on owner-stated text (amendment AH) |
+| `persona-stale-evidence` | Warning. One per persona line (subject `PERSONA.md#<section>: <line>`) whose recorded evidence no longer holds: an evidence page whose body hash differs from the recorded one, a page that is gone, or a page that is no longer an endorsed note (a cited source outside the persona-source categories, amendment AV); an owner-stated answer that was edited, removed or retracted with its transcript (amendment AQ). The open issue is the line's re-check proposal (no changeset is generated; `persona distill` lists it under `recheck`); lint resolves it itself once the line is no longer stale, the one issue kind lint closes on its own (amendments AN, AW) |
 
 Every kind above except the `persona-*` errors reports as severity `warning` in the lint report's per-kind counts; lint exits 0 regardless (amendment AC).
 
@@ -421,7 +428,7 @@ Lint never edits page content. `--fix-links` repairs only mechanical link target
 
 ## 12. Issues
 
-`.wiki/issues.json`; each issue: `{id, kind, subject(page/source id), detail, first_seen, last_seen, occurrences, status: open|resolved}`. Re-running lint refreshes `last_seen`/`occurrences` on persisting findings instead of duplicating them. **`occurrences` is the reflect-loop signal**: a finding that survives multiple lints indicates an instructions deficiency, not a one-off mistake.
+`.wiki/issues.json`; each issue: `{id, kind, subject(page/source id), detail, first_seen, last_seen, occurrences, status: open|resolved}`. Re-running lint refreshes `last_seen`/`occurrences` on persisting findings instead of duplicating them. **`occurrences` is the reflect-loop signal**: a finding that survives multiple lints indicates an instructions deficiency, not a one-off mistake. Issues are resolved by hand (`wiki issues resolve`), with one exception: lint resolves a `persona-stale-evidence` issue itself once its line is no longer stale (amendments AN, AW).
 
 ---
 
@@ -681,7 +688,7 @@ Same standing as Appendices B and C: these override the original text where they
   `frontmatter-schema`. This is the only change persona makes to the page
   schema.
 
-- **AC. `PERSONA.md`: a fixed four-section schema, read by `wiki persona read`, checked by lint.** (issue #48; decisions in issues #31, #33 and ADR 0001) The owner's persona is one small file at the vault root, outside `wiki/`, so it is never a knowledge page, never indexed and never searched. **Format.** A frontmatter block with exactly three scalar keys — `schema_version: 1`, `last_distilled: <yyyy-MM-dd>`, `audit_entry: <audit-log entry that produced the file>` — then an optional `# ` title and four `## ` sections in this order: `Values` (max 10 lines), `Principles` (max 15), `Tone of voice` (no line cap), `Boundaries` (max 10). Every non-blank line inside a section is one entry; a leading `- ` or `* ` is presentation and is stripped. An entry is at most 200 characters, counted in Unicode scalar values so non-ASCII text is not penalised. The file holds no links and no ids: it must read as a standalone document, and knowledge pages never link to it (ADR 0001). **Ownership.** Only the `wiki persona` command group writes it; ingest has no path to it. This amendment adds the read side only — writing arrives with persona changesets. **Read.** `wiki persona read` is lenient: it returns whatever entries it can find, with frontmatter fields null when absent or malformed, because an assistant is better served by the lines that are there than by nothing; reporting a malformed file is lint's job. A vault without the file reads as an empty persona with `exists: false`. **Lint.** One issue kind per rule, all with subject `PERSONA.md`, because issues merge on `(kind, subject)` and a shared kind would let the rules overwrite each other's detail and occurrences; a rule broken several times files one issue listing every occurrence. The structural rules are **errors** and tone of voice past 600 words is a **warning**; the lint report's per-kind `counts` now carry that `severity`, and every pre-existing kind reports `warning`. Lint still exits 0 on errors — it reports and files; it does not gate. The errors are exactly the rules a persona changeset will have to pass before it can be queued, so the rules are defined once and shared. **Not in this amendment:** the evidence rules (two supporting pages for a line distilled from endorsed notes, and the stale-evidence warning) need the audit log and arrive with it; and ids are not detected beyond links, because no id format is reliably distinguishable from prose.
+- **AC. `PERSONA.md`: a fixed four-section schema, read by `wiki persona read`, checked by lint.** (issue #48; decisions in issues #31, #33 and ADR 0001) The owner's persona is one small file at the vault root, outside `wiki/`, so it is never a knowledge page, never indexed and never searched. **Format.** A frontmatter block with exactly three scalar keys — `schema_version: 1`, `last_distilled: <yyyy-MM-dd>`, `audit_entry: <audit-log entry that produced the file>` — then an optional `# ` title and four `## ` sections in this order: `Values` (max 10 lines), `Principles` (max 15), `Tone of voice` (no line cap), `Boundaries` (max 10). Every non-blank line inside a section is one entry; a leading `- ` or `* ` is presentation and is stripped. An entry is at most 200 characters, counted in Unicode scalar values so non-ASCII text is not penalised. The file holds no links and no ids: it must read as a standalone document, and knowledge pages never link to it (ADR 0001). **Ownership.** Only the `wiki persona` command group writes it; ingest has no path to it. This amendment adds the read side only — writing arrives with persona changesets. **Read.** `wiki persona read` is lenient: it returns whatever entries it can find, with frontmatter fields null when absent or malformed, because an assistant is better served by the lines that are there than by nothing; reporting a malformed file is lint's job. A vault without the file reads as an empty persona with `exists: false`. **Lint.** One issue kind per rule, all with subject `PERSONA.md`, because issues merge on `(kind, subject)` and a shared kind would let the rules overwrite each other's detail and occurrences; a rule broken several times files one issue listing every occurrence. The structural rules are **errors** and tone of voice past 600 words is a **warning**; the lint report's per-kind `counts` now carry that `severity`, and every pre-existing kind reports `warning`. Lint still exits 0 on errors — it reports and files; it does not gate. The errors are exactly the rules a persona changeset will have to pass before it can be queued, so the rules are defined once and shared. **Not in this amendment:** the evidence rules (two supporting pages for a line distilled from endorsed notes, and the stale-evidence warning) need the audit log and arrive with it; and ids are not detected beyond links, because no id format is reliably distinguishable from prose (amendment AZ now flags the shapes that are).
 
 ## Appendix G — Vault lock amendment (2026-11-13)
 
@@ -755,7 +762,7 @@ Same standing as Appendices B and C: these override the original text where they
 
 ## Appendix K — Write recovery amendment (2026-11-13)
 
-- **AI. Interrupted writes are journaled and recovered by the next command; `repair-needed` when that would mean guessing.** (issue #47, design in #36 "Recoverable mutations" and "After an interruption") Atomic renames make each file crash-safe but not a command: `page upsert` changes a page, the idmap, the ledger, `index.md` and `log.md`, and a crash between them left a half change that nothing detected, plus (amendment AE) a window where the change was made but its audit line was not. **Journal.** Every change a command makes to a vault file goes through `AtomicFile.Write`/`AtomicFile.Delete` or `LogFile.Append`, and each first records the file's before-image (its bytes, its length for an append, or "absent") in `.wiki/journal`, flushed to disk before the file is touched. The journal is created at the first change, so a command that writes nothing leaves no trace. When the command returns, every touched file is flushed, its after-hash recorded, and the command's audit line sealed into the journal; only then is the line appended, and only once it is durable is the journal removed and success reported. A command that fails part way with an ordinary error is rolled back at once. **Recovery** runs in the next mutating command, under the exclusive lock, before it does anything else (a mutation-boundary step between the lock and the audit step). A journal whose command had finished (sealed) is *completed*: the touched files must still match their after-hashes, and the owed audit line is appended with its original timestamp unless the log already ends with it. A journal whose command had not finished has no end state to complete, so it is *rolled back* to the before-images and the rollback is audited as its own line, `recover | <interrupted action> | outcome=rolled-back | started=… | files=<n>` — the interrupted change is never discarded silently. Anything recovery cannot decide — a touched file changed since, an audit log that gained other lines meanwhile (one shared by two vaults), a damaged journal — fails every write with **`repair-needed`, exit 2** (not 3, which reads as success over MCP; not 5, retrying will not help), naming the journal; the vault and log are put right by hand and the journal deleted. **Reads** never see a half change: a reader that finds an unfinished journal takes the lock exclusively for a moment and restores the before-images first (the next writer audits that rollback), and a completed-but-unaudited or ambiguous journal leaves the files consistent, so reads go on. **Guarantee:** local storage, a separate audit log per vault, and no outside editor touching the vault while a journal is pending (#36). The journal is the one file in `.wiki/` that is not rebuildable: deleting it gives up recovering that write. Directory entries are not flushed separately (.NET cannot), so a power loss can still lose a rename the OS had not persisted; process crashes and kills are covered.
+- **AI. Interrupted writes are journaled and recovered by the next command; `repair-needed` when that would mean guessing.** (issue #47, design in #36 "Recoverable mutations" and "After an interruption") Atomic renames make each file crash-safe but not a command: `page upsert` changes a page, the idmap, the ledger, `index.md` and `log.md`, and a crash between them left a half change that nothing detected, plus (amendment AE) a window where the change was made but its audit line was not. **Journal.** Every change a command makes to a vault file goes through `AtomicFile.Write`/`AtomicFile.Delete` or `LogFile.Append`, and each first records the file's before-image (its bytes, its length for an append, or "absent") in `.wiki/journal`, flushed to disk before the file is touched. The journal is created at the first change, so a command that writes nothing leaves no trace. When the command returns, every touched file is flushed, its after-hash recorded, and the command's audit line sealed into the journal; only then is the line appended, and only once it is durable is the journal removed and success reported. A command that fails part way with an ordinary error is rolled back at once. **Recovery** runs in the next mutating command, under the exclusive lock, before it does anything else (a mutation-boundary step between the lock and the audit step). A journal whose command had finished (sealed) is *completed*: the touched files must still match their after-hashes, and the owed audit line is appended with its original timestamp unless the log already ends with it. A journal whose command had not finished has no end state to complete, so it is *rolled back* to the before-images (kept by decision, and reconciled with §3 in amendment AU) and the rollback is audited as its own line, `recover | <interrupted action> | outcome=rolled-back | started=… | files=<n>` — the interrupted change is never discarded silently. Anything recovery cannot decide — a touched file changed since, an audit log that gained other lines meanwhile (one shared by two vaults), a damaged journal — fails every write with **`repair-needed`, exit 2** (not 3, which reads as success over MCP; not 5, retrying will not help), naming the journal; the vault and log are put right by hand and the journal deleted. **Reads** never see a half change: a reader that finds an unfinished journal takes the lock exclusively for a moment and restores the before-images first (the next writer audits that rollback), and a completed-but-unaudited or ambiguous journal leaves the files consistent, so reads go on. **Guarantee:** local storage, a separate audit log per vault, and no outside editor touching the vault while a journal is pending (#36). The journal is the one file in `.wiki/` that is not rebuildable: deleting it gives up recovering that write. Directory entries are not flushed separately (.NET cannot), so a power loss can still lose a rename the OS had not persisted; process crashes and kills are covered.
 
 ## Appendix L — Audit chain amendment (2026-11-13)
 
@@ -820,7 +827,7 @@ Same standing as Appendices B and C: these override the original text where they
   proposals --status open` (`data.schema`). `decide` (`kind`: `page` |
   `persona` → `review approve|reject`; `category` → `category
   approve|reject`; `schema` → `schema approve|reject`; `decision`:
-  `approve` | `reject`; `id`; `reason`, passed as `--note` on reject and
+  `approve` | `reject`, and `withdraw` since amendment AX; `id`; `reason`, passed as `--note` on reject and
   ignored on approve) returns the command's data as `data.decision`.
   Rejecting a persona changeset without a reason is the CLI's
   `reason-required` (exit 1); an item already decided is exit 3, a success
@@ -871,7 +878,7 @@ Same standing as Appendices B and C: these override the original text where they
 
 ## Appendix S — Onboarding interview amendment (2026-11-13)
 
-- **AQ. The onboarding interview: `persona interview guide|record`, interview transcripts and owner-stated evidence.** (issue #53, decided in #40, ADR 0001) An external agent conducts the interview; the CLI stays deterministic and only serves the guide and records what was said. **Guide.** `wiki persona interview guide` (read) prints the versioned **interview guide** shipped with the binary (starter questions per persona section plus the rules: record word for word, never paraphrase, never suggest an answer; follow-ups allowed) as `{source: "shipped", version: "1", text}`, or, when the vault holds `persona/interview-guide.md`, that file as `{source: "vault", version: "sha256:<hex>", path, text}`. **Record.** `wiki persona interview record --section <values|principles|tone-of-voice|boundaries> [--question "…"] [--answer "…" | --stdin | --body-file <p>] [--transcript <id>]` appends one entry to an **interview transcript**. Without `--answer` the answer is read from stdin or `--body-file`, byte for byte (a trailing newline included). Without `--transcript` it starts a new transcript `persona/interviews/<yyyy-mm-dd>.md` (UTC date), then `<date>-v2.md`, `-v3` and so on for later sessions that day, with no cap, and returns its id; with one it appends. A dictated line is an entry without `--question`. Each entry is `## a<n>` (its anchor) with `section`, `guide` (the shipped version or `sha256:<hex>` of the override), `recorded` (UTC) and `recordedVia: cli|mcp` (plus `transport: stdio|http` and, over HTTP, `token: true|false`), then the question and answer as Markdown blockquotes, so nothing the owner says can be mistaken for transcript structure and it decodes back exactly. The result is `{transcript, path, anchor, created, section, guide, recordedVia, answerHash}`; errors: `invalid-persona-section`, `empty-answer`, `invalid-transcript`, `not-found` (exit 1), `transcript-finished` (exit 3, below). Audit: `persona.interview.record | persona/interviews/<id>.md#a<n> | section=… | guide=… | recordedVia=… | answer-hash=<sha256> [| created=true]`. **Not a knowledge page.** A transcript has no page schema and lives outside `wiki/`, so it never appears in `search`, `index.md`, `page list` or lint; it reads as plain Markdown in Obsidian. **Append only.** The CLI only appends entries and never rewrites one, so an interrupted interview keeps what was said and a rejected changeset removes nothing. A transcript starts with `persona: candidate` in its frontmatter; a distillation pass finishes it (below), after which `record --transcript <id>` is refused with `transcript-finished` and a new transcript must be started. The owner may edit or delete a transcript by hand. **Distillation.** `persona distill` gains `transcripts: [{id, path, entries: [{anchor, section, question?, answer, hash}]}]`, the transcripts still flagged. `persona propose` accepts transcript ids (or paths) in `considered`, and owner-stated evidence `{"kind": "owner-stated", "path": "<transcript id or path>", "anchor": "a<n>"}`, which the CLI resolves to `{kind, path: persona/interviews/<id>.md, anchor, hash}` where `hash` is the SHA-256 of that one answer (LF line endings); an unknown transcript or anchor is `not-found`. The pass clears the flag on every considered and every cited transcript by dropping the `persona: candidate` line only, so no answer hash changes; `cleared` lists their ids next to page ids. Owner-stated text alone supports any line and is the only support for tone of voice (amendment AH). **Staleness** (extends amendment AN). Owner-stated evidence is stale when its answer no longer hashes to the recorded value (`changed`), its anchor is no longer in the transcript (`gone`), or the transcript was deleted (`retracted`: deleting it takes back everything in it). Editing one answer makes only the lines resting on that answer stale. `recheck` evidence gains `kind` and `anchor`, `page` and `slug` are null for owner-stated evidence. The MCP tool `record_owner_statement` wraps `record` (#59, amendment AR). **Risk, named once:** transcripts are accepted from any channel and `recordedVia` is recorded; with auto-accept or agent approval over MCP an agent could invent the owner's answers and have them adopted without human review. A deployment can narrow the recording tool away (amendment AG).
+- **AQ. The onboarding interview: `persona interview guide|record`, interview transcripts and owner-stated evidence.** (issue #53, decided in #40, ADR 0001) An external agent conducts the interview; the CLI stays deterministic and only serves the guide and records what was said. **Guide.** `wiki persona interview guide` (read) prints the versioned **interview guide** shipped with the binary (starter questions per persona section plus the rules: record word for word, never paraphrase, never suggest an answer; follow-ups allowed) as `{source: "shipped", version: "1", text}`, or, when the vault holds `persona/interview-guide.md`, that file as `{source: "vault", version: "sha256:<hex>", path, text}`. **Record.** `wiki persona interview record --section <values|principles|tone-of-voice|boundaries> [--question "…"] [--answer "…" | --stdin | --body-file <p>] [--transcript <id>]` appends one entry to an **interview transcript**. Without `--answer` the answer is read from stdin or `--body-file`, byte for byte (a trailing newline included). Without `--transcript` it starts a new transcript `persona/interviews/<yyyy-mm-dd>.md` (UTC date), then `<date>-v2.md`, `-v3` and so on for later sessions that day, with no cap, and returns its id; with one it appends. A dictated line is an entry without `--question`. Each entry is `## a<n>` (its anchor) with `section`, `guide` (the shipped version or `sha256:<hex>` of the override), `recorded` (UTC) and `recordedVia: cli|mcp` (plus `transport: stdio|http` and, over HTTP, `token: true|false`), then the question and answer as Markdown blockquotes, so nothing the owner says can be mistaken for transcript structure and it decodes back exactly. The result is `{transcript, path, anchor, created, section, guide, recordedVia, answerHash}`; errors: `invalid-persona-section`, `empty-answer`, `invalid-transcript`, `not-found` (exit 1), `transcript-finished` (exit 3, below; exit 1 since amendment AT). Audit: `persona.interview.record | persona/interviews/<id>.md#a<n> | section=… | guide=… | recordedVia=… | answer-hash=<sha256> [| created=true]`. **Not a knowledge page.** A transcript has no page schema and lives outside `wiki/`, so it never appears in `search`, `index.md`, `page list` or lint; it reads as plain Markdown in Obsidian. **Append only.** The CLI only appends entries and never rewrites one, so an interrupted interview keeps what was said and a rejected changeset removes nothing. A transcript starts with `persona: candidate` in its frontmatter; a distillation pass finishes it (below), after which `record --transcript <id>` is refused with `transcript-finished` and a new transcript must be started. The owner may edit or delete a transcript by hand. **Distillation.** `persona distill` gains `transcripts: [{id, path, entries: [{anchor, section, question?, answer, hash}]}]`, the transcripts still flagged. `persona propose` accepts transcript ids (or paths) in `considered`, and owner-stated evidence `{"kind": "owner-stated", "path": "<transcript id or path>", "anchor": "a<n>"}`, which the CLI resolves to `{kind, path: persona/interviews/<id>.md, anchor, hash}` where `hash` is the SHA-256 of that one answer (LF line endings); an unknown transcript or anchor is `not-found`. The pass clears the flag on every considered and every cited transcript by dropping the `persona: candidate` line only, so no answer hash changes; `cleared` lists their ids next to page ids. Owner-stated text alone supports any line and is the only support for tone of voice (amendment AH). **Staleness** (extends amendment AN). Owner-stated evidence is stale when its answer no longer hashes to the recorded value (`changed`), its anchor is no longer in the transcript (`gone`), or the transcript was deleted (`retracted`: deleting it takes back everything in it). Editing one answer makes only the lines resting on that answer stale. `recheck` evidence gains `kind` and `anchor`, `page` and `slug` are null for owner-stated evidence. The MCP tool `record_owner_statement` wraps `record` (#59, amendment AR). **Risk, named once:** transcripts are accepted from any channel and `recordedVia` is recorded; with auto-accept or agent approval over MCP an agent could invent the owner's answers and have them adopted without human review. A deployment can narrow the recording tool away (amendment AG).
 
 ## Appendix T — MCP persona tools amendment (2026-11-13)
 
@@ -938,3 +945,129 @@ Same standing as Appendices B and C: these override the original text where they
   thread for each CLI step, vault-busy waits included. Each tool call
   therefore runs on a dedicated thread, so concurrent calls waiting on the
   lock cannot starve the thread pool that Kestrel needs to answer requests.
+  (How many run at once is capped since amendment BA; that the HTTP server
+  needs a supervisor is amendment BB.)
+
+## Appendix V — Code review amendments (2026-11-13)
+
+Corrections from the review of the MCP, persona and audit work (issues
+#42–#62) against spec issue #41.
+
+- **AT. Recording into a finished transcript is exit 1, not exit 3.**
+  Amendment AQ made `persona interview record --transcript <id>` on a
+  finished transcript `transcript-finished`, exit 3. Exit 3 means "already
+  done, a no-op", and the MCP adapter (AF) reports it as a success, so
+  `record_owner_statement` told the client its answer was recorded while it
+  was dropped. Nothing was done here and the answer is lost unless the agent
+  records it again, so it is a rejection: still `transcript-finished`, now
+  **exit 1**, `isError: true` over MCP. The transcript is unchanged either way.
+
+- **AU. A step that never finished is rolled back; §3 "Forward repair, not
+  rollback" holds above the step.** Amendment AI rolls an interrupted CLI step
+  back to its journaled before-images when its journal was never committed,
+  while §3 said "there is no undo" and story 100 asks the next writer to
+  *finish* an interrupted operation. Finishing needs an end state, and a step
+  that died mid-write has none on disk: only the command knew what it was
+  going to write. The owner kept the rollback (decision D1): the rollback is
+  never silent (its own `recover` audit line names the interrupted action and
+  when it started), a committed journal is still finished forward, and
+  anything ambiguous is `repair-needed`. §3 now says so. Forward repair still
+  governs everything larger than one step: steps that completed are never
+  undone, `wiki ingest resume` finishes multi-command work, and an MCP intent
+  that stops part way keeps its completed steps (`completedSteps`, AF).
+
+- **AV. An endorsed note cites only persona-source categories.** Amendment AB
+  flagged a page `persona: candidate` when *at least one* cited source was in
+  a persona-source category, and AH accepted such a page as evidence. A page
+  that also cites other material carries words the owner never endorsed, and
+  the persona must never be inferred from those (glossary "Persona"). Decision
+  D2: a page is an endorsed note only when **every** source it cites is in a
+  persona-source category (a cited source whose raw file is missing endorses
+  nothing, so it disqualifies the page; a page citing nothing is never one).
+  The rule is one function used three ways: `page upsert` sets or clears the
+  flag by it, `persona propose` rejects other pages as `evidence-not-endorsed`,
+  and lint reports evidence from a page that stopped being an endorsed note
+  (a non-persona source added, or its category lost `persona-source`) as
+  `persona-stale-evidence` with reason `not-endorsed`.
+
+- **AW. The re-check proposal is the lint warning, and lint closes it.** Story
+  81 asks lint to "trigger a re-check proposal". Amendment AN implemented that
+  as the open `persona-stale-evidence` issue itself, listed by `persona
+  distill` under `recheck[]`, rather than a generated changeset; decision D3
+  keeps it. So wherever this spec says re-check proposal it means that issue:
+  it proposes that the next distillation pass look at the line again, and the
+  pass settles it with an ordinary changeset (re-confirm with `text` equal to
+  `from`, reword, or remove) that the owner reviews as usual. No changeset is
+  ever generated by lint. AN also has lint **resolve** an open
+  `persona-stale-evidence` issue once its line is no longer stale; that was not
+  asked for but is kept, and it is the one exception to §12's rule that issues
+  are resolved by hand. Resolving one by hand dismisses it until the next lint
+  finds the line stale again.
+
+- **AX. A pending proposal can be withdrawn, with a reason, on the record.**
+  Story 88 wants rejected *and withdrawn* proposals logged with their reasons,
+  and the issue's audit section lists withdrawn changesets; nothing could
+  withdraw one. The proposer now takes a pending proposal back with
+  `wiki review withdraw <changeset-id> --reason "…"` (persona changesets),
+  `wiki category withdraw <proposal-id> --reason "…"` and `wiki schema withdraw
+  <proposal-id> --reason "…"` (Mutate; `--note` is an alias). The reason is
+  required (`reason-required`, exit 1); an item that is not open is exit 3
+  like any decided item; a page under review has no proposer and is rejected,
+  not withdrawn (`not-found`, exit 1). The item's status becomes `withdrawn`
+  with the reason as its note, the target file (`PERSONA.md`, `wiki.yaml`,
+  `AGENTS.md`) is untouched, `persona/changeset.md` is removed and flags the
+  pass cleared stay cleared. Audit: `persona.withdraw | <id> | decidedVia=… |
+  reason=…`, and `category.withdraw` / `schema.withdraw` with the same fields
+  (plus a `log.md` line for the latter two, like their reject). `--status
+  withdrawn` lists them. Over MCP, `decide` takes `decision: "withdraw"` for
+  kinds `persona`, `category` and `schema`, passing `reason`.
+
+- **AY. `audit_entry` names the audit line that produced `PERSONA.md`.**
+  Amendment AC defines `audit_entry` as "the audit-log entry that produced the
+  file", but AH wrote the changeset id, which names the changeset, not the
+  entry. It is now the SHA-256 **hash of the `persona.accept` line** (its
+  `hash=` field), whether the accept was reviewed or auto-accepted (AM). That
+  hash covers the line's timestamp and `prev`, so it exists only once the line
+  is built after the command returns: the accept therefore writes `PERSONA.md`
+  from the audit step, after building the line and before sealing it into the
+  write journal (AI), so the file write is journaled and recovered with the
+  rest of the step, and a step completed by the next writer appends exactly
+  the line the file names. Lint and the evidence lookup find the accept by
+  that hash, in the live log or an archived segment; a file written before
+  this amendment holds the changeset id and is still found by its
+  `changeset=` field.
+
+- **AZ. Lint flags ids in `PERSONA.md`.** AC requires "no links, no IDs" but
+  checked only links, because no id format seemed distinguishable from prose.
+  A conservative check now covers the shapes prose does not take, as the new
+  error kind `persona-id` (subject `PERSONA.md`, and a `persona-lint`
+  rejection at `persona propose`): a ULID (26 Crockford base32 characters with
+  a digit — page, source and changeset ids), a hex run of 16 or more with both
+  a digit and a letter (hashes), and a vault path to a `.md` file with a
+  directory (`wiki/entities/x.md`, `persona/interviews/<id>.md`). Wikilinks are
+  `persona-link` already. Not flagged, on purpose: bare slugs (`open-source`
+  is also a word), dates, version numbers, short hex like a colour, acronyms,
+  and a bare filename such as `README.md`. Only the sections are scanned; the
+  frontmatter's `audit_entry` is a hash by design.
+
+- **BA. Concurrent tool calls are capped.** AS gives every tool call a thread
+  of its own so calls blocked on the vault lock cannot starve the server, but
+  set no bound, so a burst of calls was a burst of threads. `wiki mcp
+  --max-concurrent-calls <n>` (else `WIKI_MCP_MAX_CONCURRENT_CALLS`, default
+  16) caps the calls running at once on either transport. A call over the cap
+  waits for a slot without holding a thread; it is queued, never refused, and
+  the server keeps answering other requests while it waits. A call cancelled
+  while waiting never runs. A value that is not a positive whole number
+  refuses to start (`invalid-max-concurrent-calls`, exit 1).
+
+- **BB. The HTTP server runs under a supervisor.** Story 104 asks the spec to
+  require one; AF said only that "a fatal runtime error ends the server". An
+  stdio server is restarted by its client, which spawned it. `wiki mcp --http`
+  has no such parent: a deployment **must** run it under a supervisor that
+  restarts it when it exits with a non-zero code (systemd with
+  `Restart=on-failure`, a container with `restart: unless-stopped`, a Windows
+  service with recovery actions, or similar). A clean stop (Ctrl+C or SIGTERM)
+  exits 0. Startup refusals (exit 1: bad options, an unknown tool name) recur
+  on every restart, so a supervisor should rate-limit restarts rather than
+  loop. Which supervisor is deployment environment (open question in #41); the
+  README shows a systemd unit.
