@@ -15,13 +15,20 @@ namespace Wiki.Services;
 // new page against. For an update (a shadow exists), `Diff` is a line-based
 // diff between the shadow's previous body and the page's current body, so
 // the human reviewing doesn't have to `page show` twice and eyeball it.
+//
+// `Kind` says what is pending: "page", or "persona" for the open persona
+// changeset (issue #50), which carries the changeset itself and reads as an
+// update to PERSONA.md (`Slug`), its reason as `Title`, and a diff of the
+// file as it is against the file as the changeset would leave it.
 public sealed record PendingView(
     string Id,
     string Slug,
     string Title,
     string Type,
     bool IsUpdate,
-    string? Diff) : IHumanRenderable
+    string? Diff,
+    string Kind = "page",
+    Wiki.Core.PersonaChangesetData? Changeset = null) : IHumanRenderable
 {
     public string HumanSummary() => $"[[{Slug}]] ({Type}, {(IsUpdate ? "update" : "create")})";
 }
@@ -40,7 +47,7 @@ public sealed class ReviewService
 
     public ReviewService(Func<long>? nowUnixMs = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
     }
 
     // Every pending-review page in the vault, in PageStore's deterministic
@@ -55,10 +62,16 @@ public sealed class ReviewService
 
             var snapshot = ReviewShadow.Load(v, front.Id);
             var isUpdate = snapshot is not null;
-            var diff = isUpdate ? UnifiedDiff(snapshot!.Body, body) : null;
+            var diff = isUpdate ? LineDiff(snapshot!.Body, body) : null;
 
             result.Add(new PendingView(front.Id, slug, front.Title, PageTypeX.ToWire(front.Type), isUpdate, diff));
         }
+
+        // At most one persona changeset is open (issue #32); it reviews here
+        // with the pages, all-or-nothing.
+        if (PersonaService.Pending(v) is { } persona)
+            result.Add(new PendingView(persona.Changeset.Id, PersonaDoc.FileName, persona.Changeset.Reason, "persona",
+                persona.PersonaExists, persona.Diff, "persona", persona.Changeset));
         return result.ToArray();
     }
 
@@ -79,8 +92,7 @@ public sealed class ReviewService
         // SetStatus already appended its own `set-status` log line; add a
         // distinct `review-approve` line too so grepping the log for review
         // decisions is symmetric with `review-reject` (Reject's own line).
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(_nowUnixMs()).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(_nowUnixMs());
         LogFile.Append(v, utcIso, "review-approve", slug, $"id={pageId} status=active");
     }
 
@@ -102,9 +114,8 @@ public sealed class ReviewService
         var isUpdate = snapshot is not null;
 
         var nowMs = _nowUnixMs();
-        var nowUtc = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime;
-        var today = nowUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        var utcIso = nowUtc.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var today = Timestamp.Date(nowMs);
+        var utcIso = Timestamp.Iso(nowMs);
 
         if (isUpdate)
         {
@@ -127,6 +138,8 @@ public sealed class ReviewService
                 Summary = doc.Front.Summary,
                 Sources = doc.Front.Sources,
                 Tags = doc.Front.Tags,
+                // Follows `sources`, which a reject keeps as-is.
+                PersonaCandidate = doc.Front.PersonaCandidate,
             };
             var serialized = new PageDoc(restoredFront, snapshot.Body).Serialize();
             // Frontmatter schema gate proper: must round-trip through the
@@ -201,7 +214,7 @@ public sealed class ReviewService
     // max_page_lines in practice), so the DP cost is negligible. Output is a
     // simple `- removed` / `+ added` / `  unchanged` prefix per line, good
     // enough for a human review pass; not a patch-applicable unified diff.
-    private static string UnifiedDiff(string oldText, string newText)
+    internal static string LineDiff(string oldText, string newText)
     {
         var oldLines = oldText.Replace("\r\n", "\n").Split('\n');
         var newLines = newText.Replace("\r\n", "\n").Split('\n');

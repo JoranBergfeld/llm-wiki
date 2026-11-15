@@ -52,9 +52,10 @@
 
   <!-- `dotnet pack` produces a global tool for the GitHub Packages NuGet feed.
        That channel ships the IL build, not the AOT one - `dotnet tool` has no
-       native-AOT story - so it needs a .NET runtime present: 8.0, 9.0 or
-       10.0, whichever the machine has, resolved from the matching tools/<tfm>
-       folder in the nupkg. The release
+       native-AOT story - so it needs the ASP.NET Core runtime present (the
+       MCP SDK's FrameworkReference, issue #38): 8.0, 9.0 or 10.0, whichever
+       the machine has, resolved from the matching tools/<tfm> folder in the
+       nupkg. Every .NET SDK includes it. The release
        binaries stay the recommended install; this exists for `dotnet tool`
        users and CI images that already have the SDK. PackAsTool is inert
        during `dotnet publish -r <rid>`, so the AOT build is unaffected. -->
@@ -77,8 +78,36 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.3.0" />
     <PackageReference Include="System.CommandLine" Version="2.0.0" />
     <PackageReference Include="Spectre.Console" Version="0.49.1" />
+  </ItemGroup>
+
+  <!-- Stdout protection (issue #43). Under `wiki mcp` (stdio) the process
+       stdout carries the JSON-RPC stream, so any write that reaches the real
+       console instead of the TextWriter handed to App.Main corrupts the
+       protocol. BannedSymbols.txt bans System.Console and the process-global
+       AnsiConsole.Console; RS0030 is an error so a stray use fails the build.
+       Program.cs, the process entry point, is the one place allowed to touch
+       the real console and opts out with a pragma. Version 5.0.0 matches the
+       Roslyn in the .NET 10.0.1xx SDK; a newer analyzer than the compiler
+       is silently disabled (CS9057). -->
+  <PropertyGroup>
+    <WarningsAsErrors>$(WarningsAsErrors);RS0030</WarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <AdditionalFiles Include="BannedSymbols.txt" />
+  </ItemGroup>
+  <!-- Internals visible to the test suite. Among them the write-recovery
+       fault hook (WriteJournal.FaultHook, issue #47), which simulates an
+       interrupted write: internal so no argv flag, environment variable or
+       MCP client can reach it. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Wiki.Tests" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Templates/*.txt" />

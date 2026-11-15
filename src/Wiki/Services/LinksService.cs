@@ -110,7 +110,7 @@ public sealed class LinksService
     // seam.
     public LinksService(Func<long>? nowUnixMs = null, Func<string, int, Task<ProbeOutcome>>? probe = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
         _probe = probe;
     }
 
@@ -162,8 +162,7 @@ public sealed class LinksService
         // Only definitive failures are filed. Subject is the PAGE carrying the
         // link, matching how `dangling-link` subjects the containing page -
         // that is the thing someone has to edit.
-        var utcIso = DateTimeOffset.FromUnixTimeMilliseconds(_nowUnixMs()).UtcDateTime
-            .ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(_nowUnixMs());
 
         var brokenByPage = new SortedDictionary<string, List<string>>(StringComparer.Ordinal);
         foreach (var r in results.Where(r => r.Status == "broken"))

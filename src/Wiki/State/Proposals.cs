@@ -40,8 +40,9 @@ public sealed class Proposals
         return created;
     }
 
-    // `status` is "approved" or "rejected" - the only two terminal
-    // transitions out of "open" (spec §13: propose -> human approve/reject).
+    // `status` is "approved", "rejected" or "withdrawn" - the terminal
+    // transitions out of "open" (spec §13: propose -> human approve/reject;
+    // amendment AX: the proposer withdraws).
     // Callers (SchemaService) are responsible for the not-found/already-
     // decided precondition checks; this just records the transition.
     public Proposal SetStatus(string proposalId, string status, string? note)

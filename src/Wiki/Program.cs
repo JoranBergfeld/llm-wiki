@@ -1,3 +1,9 @@
+// The process entry point is the ONE file allowed to touch the real console
+// (issue #43). Everywhere else System.Console and AnsiConsole.Console are banned
+// (BannedSymbols.txt, RS0030 as error): under `wiki mcp` stdio the process
+// stdout carries JSON-RPC, so every command writes only to the TextWriter that
+// App.Main is handed.
+#pragma warning disable RS0030
 using System;
 using System.CommandLine;
 using System.IO;
@@ -6,6 +12,7 @@ using Wiki.Cli;
 using Wiki.Cli.Commands;
 using Wiki.Core;
 using Wiki.Json;
+using Wiki.Mcp;
 
 namespace Wiki;
 
@@ -52,7 +59,11 @@ public static class App
         using var _in = stdin;
         try
         {
-            return Main(args, stdout, stdin);
+            // The raw streams under the UTF-8 reader/writer, for `wiki mcp`:
+            // its JSON-RPC transport speaks bytes, and this file is the only
+            // one allowed to reach the process's standard streams. Nothing
+            // has been read from or written to either wrapper yet.
+            return Main(args, stdout, stdin, new StdioStreams(stdin.BaseStream, stdout.BaseStream));
         }
         finally
         {
@@ -74,9 +85,35 @@ public static class App
             new StreamReader(System.Console.OpenStandardInput(), Utf8NoBom));
 
     public static int Main(string[] args, TextWriter stdout, TextReader stdin)
+        => Main(args, stdout, stdin, InvocationOrigin.Cli);
+
+    // The overload the MCP adapter calls (#37): identical to the one above,
+    // plus how the call arrived. The origin is recorded on the audit line of
+    // any mutation this invocation makes (issue #44). It is a typed parameter
+    // on purpose: nothing in argv or the environment can set it, so a remote
+    // client cannot pass itself off as a local CLI run.
+    public static int Main(string[] args, TextWriter stdout, TextReader stdin, InvocationOrigin origin)
+        => Run(args, stdout, stdin, origin, stdio: null);
+
+    // With the raw standard streams, so `wiki mcp` can serve JSON-RPC over
+    // them (issue #54). Only the process entry point above and the MCP test
+    // seam call this; every other caller has no streams, so a nested
+    // `wiki mcp` cannot start.
+    public static int Main(string[] args, TextWriter stdout, TextReader stdin, StdioStreams stdio)
+        => Run(args, stdout, stdin, InvocationOrigin.Cli, stdio);
+
+    private static int Run(string[] args, TextWriter stdout, TextReader stdin, InvocationOrigin origin, StdioStreams? stdio)
     {
-        var (root, jsonOption) = BuildRootCommand(stdout, stdin);
-        var parseResult = root.Parse(args);
+        var (root, jsonOption) = BuildRootCommand(stdout, stdin, origin, stdio);
+
+        // Response files are OFF for the whole CLI (issue #43). System.CommandLine
+        // expands `@file` tokens into that file's contents by default; once the
+        // CLI is hosted in-process behind the MCP server, argv values can come
+        // from a remote client, and expansion would let one make the server read
+        // an arbitrary file and splice it into argv - `--vault` included. With
+        // the replacer gone, `@anything` is always a literal value.
+        var parserConfig = new ParserConfiguration { ResponseFileTokenReplacer = null };
+        var parseResult = root.Parse(args, parserConfig);
 
         // Whether failures render as JSON or as Spectre (amendment P). Taken
         // from the parsed result when the parse succeeded; on a parse error
@@ -127,12 +164,32 @@ public static class App
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = scex.Code, Message = scex.Message, Path = scex.Path });
             return 3;
         }
+        catch (VaultBusyException vbex)
+        {
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = VaultBusyException.Code, Message = vbex.Message, Path = vbex.Path });
+            return VaultBusyException.ExitCode;
+        }
+        catch (RepairNeededException rnex)
+        {
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = RepairNeededException.Code, Message = rnex.Message, Path = rnex.Path });
+            return RepairNeededException.ExitCode;
+        }
+        catch (AuditChainBrokenException acex)
+        {
+            OutputMode.EmitFailure(stdout, json, new WikiError { Code = AuditChainBrokenException.Code, Message = acex.Message, Path = acex.Path });
+            return AuditChainBrokenException.ExitCode;
+        }
         catch (Exception ex)
         {
             OutputMode.EmitFailure(stdout, json, new WikiError { Code = "io-error", Message = ex.Message });
             return 2;
         }
     }
+
+    // The command tree App.Main parses against, with null streams. For
+    // walking the tree (CommandClassificationTests enumerate it to prove every
+    // command is classified read or mutate); never for invoking.
+    public static RootCommand CommandTree() => BuildRootCommand(TextWriter.Null, TextReader.Null, InvocationOrigin.Cli, stdio: null).Root;
 
     // argv fallback for the parse-error path. Matches the bare flag and the
     // `--json=true` / `--json:true` forms System.CommandLine also accepts.
@@ -154,7 +211,7 @@ public static class App
     // Extension point for later tasks: add more `root.Add(XCommand.Build(...))`
     // calls here as command groups land. Nothing else in this method needs to
     // change.
-    private static (RootCommand Root, Option<bool> JsonOption) BuildRootCommand(TextWriter stdout, TextReader stdin)
+    private static (RootCommand Root, Option<bool> JsonOption) BuildRootCommand(TextWriter stdout, TextReader stdin, InvocationOrigin origin, StdioStreams? stdio)
     {
         var vaultOption = new Option<string?>("--vault")
         {
@@ -167,10 +224,19 @@ public static class App
             Description = "Emit a machine-readable JSON envelope instead of human-readable output",
         };
 
-        var root = new RootCommand("wiki - a CLI-maintained, LLM-legible knowledge base")
+        // Read by name in VaultLock.Step rather than threaded through every
+        // command's Build signature.
+        var lockTimeoutOption = new Option<string?>(VaultLock.TimeoutOption)
+        {
+            Recursive = true,
+            Description = $"Seconds to wait for a busy vault before failing with vault-busy (overrides {VaultLock.TimeoutEnv}; default 10)",
+        };
+
+        var root = new WikiRootCommand("wiki - a CLI-maintained, LLM-legible knowledge base", origin)
         {
             vaultOption,
             jsonOption,
+            lockTimeoutOption,
         };
 
         root.Add(InitCommand.Build(vaultOption, jsonOption, stdout, stdin));
@@ -188,6 +254,8 @@ public static class App
         root.Add(EvalCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(AuditCommand.Build(vaultOption, jsonOption, stdout, stdin));
         root.Add(LinksCommand.Build(vaultOption, jsonOption, stdout, stdin));
+        root.Add(PersonaCommand.Build(vaultOption, jsonOption, stdout, stdin));
+        root.Add(McpCommand.Build(vaultOption, jsonOption, stdout, stdin, stdio));
 
         return (root, jsonOption);
     }

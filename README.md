@@ -127,8 +127,11 @@ docker run --rm -v "$PWD:/vault" --user "$(id -u):$(id -g)" \
 
 **.NET global tool.** Published to the GitHub Packages NuGet feed. Two caveats,
 so pick this only if you are already in the .NET toolchain: it ships the **IL
-build, not the AOT one**, so it needs a .NET runtime present — 8.0, 9.0 or
-10.0, whichever you have; the package carries all three — and GitHub
+build, not the AOT one**, so it needs the **ASP.NET Core runtime** present —
+8.0, 9.0 or 10.0, whichever you have; the package carries all three. Every
+.NET SDK includes it; a machine with only the base .NET runtime cannot start
+`wiki` at all (any command, not just `wiki mcp`, which is what pulls it in).
+And GitHub
 Packages requires authentication *even for public packages* — you need a PAT
 with `read:packages`.
 
@@ -285,7 +288,62 @@ Add `--json` to vault operations for the agent-facing envelope; without it you g
 Spectre-rendered human output. Exit codes are identical either way:
 `0` success · `1` your input was rejected · `2` environment/IO · `3` state
 conflict (idempotent no-op) · `4` a measurement came in under a threshold you
-asked for (`wiki eval --fail-under` only).
+asked for (`wiki eval --fail-under` only) · `5` the vault is busy (`vault-busy`):
+another `wiki` command holds it, nothing was changed, retry · `6` the audit
+log's chain is broken (`audit-chain-broken`): writes are refused until
+`wiki audit reanchor --reason "…"`. An interrupted
+write is recovered by the next command; when it cannot be recovered without
+guessing, writes fail with `repair-needed` (exit 2) until the journal at
+`.wiki/journal` is dealt with by hand. Reads keep working.
+
+Commands take a vault-wide lock (readers share it, writers hold it alone), so
+an MCP server and a manual run can work on one vault at once. A command waits
+for a busy vault up to `--lock-timeout <seconds>` (or `WIKI_LOCK_TIMEOUT`;
+default 10) before failing with exit 5.
+
+Persona changesets wait in `wiki review` by default. Set
+`WIKI_PERSONA_AUTO_ACCEPT=1` (for manual runs and the MCP server alike) to accept
+a valid changeset as soon as it is proposed; lint still rejects an invalid one,
+and the audit log records the accept as `decidedVia=auto-accept`. A pending
+changeset (or category or schema proposal) can be taken back with
+`wiki review withdraw <id> --reason "…"` (`category withdraw`, `schema withdraw`);
+the reason is recorded in the audit log.
+
+### Serving a vault over MCP
+
+`wiki mcp` serves one vault to MCP clients. Over stdio (the default) the
+client starts it and restarts it if it dies. `wiki mcp --http` serves
+streamable HTTP at `http://127.0.0.1:8765/mcp` until stopped; set
+`WIKI_MCP_TOKEN` to require a bearer token and `--allowed-hosts` when it sits
+behind a reverse proxy. At most 16 tool calls run at once
+(`--max-concurrent-calls <n>` or `WIKI_MCP_MAX_CONCURRENT_CALLS`); further calls
+wait their turn.
+
+**The HTTP server needs a supervisor.** Nothing restarts it after a fatal
+error, so run it under one that restarts it when it exits non-zero (spec
+amendment BB). With systemd:
+
+```ini
+[Unit]
+Description=llm-wiki MCP server
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/wiki mcp --http --vault /srv/vault --listen http://127.0.0.1:8765
+Environment=WIKI_MCP_TOKEN=change-me
+Restart=on-failure
+RestartSec=5
+# A startup refusal (bad option, exit 1) recurs on every restart: give up
+# after a few tries instead of looping.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+In Docker the equivalent is `restart: unless-stopped`; on Windows, a service
+with recovery actions. Ctrl+C or SIGTERM stops it cleanly with exit 0.
 
 Then open the vault in Obsidian and look at the graph.
 
@@ -352,15 +410,17 @@ recurring lint issues; you approve or reject. The agent never edits it directly.
 | Group | Commands |
 |---|---|
 | Vault | `init` · `reindex` |
-| Categories | `category add\|list\|propose\|proposals\|approve\|reject` |
+| Categories | `category add\|list\|propose\|proposals\|approve\|reject\|withdraw` |
 | Sources | `source add\|scan\|list\|show\|impact\|retract` |
 | Ingest | `ingest status\|advance\|resume` |
 | Pages | `page upsert\|show\|list\|rename\|set-status\|backlinks` |
 | Retrieval | `search` · `index show` |
 | Health | `lint` · `issues list\|show\|resolve` · `links check` |
-| Quality | `eval` · `audit next\|record\|list` |
-| Review | `review list\|approve\|reject` |
-| Reflect | `schema propose\|proposals\|approve\|reject` |
+| Quality | `eval` · `audit [--deep]` · `audit next\|record\|list\|reanchor` |
+| Review | `review list\|approve\|reject\|withdraw` |
+| Reflect | `schema propose\|proposals\|approve\|reject\|withdraw` |
+| Persona | `persona read\|distill\|propose`, `persona interview guide\|record` |
+| MCP server | `mcp [--http]` |
 
 `wiki <group> --help` documents every flag.
 

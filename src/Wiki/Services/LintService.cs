@@ -21,7 +21,12 @@ public sealed record LintFinding(IssueKind Kind, string Subject, string Detail);
 // pairs rather than Dictionary<string,int> (not registered in
 // WikiJsonContext, and every other list-shaped result in this codebase is
 // already an array of a small record, e.g. PageSummary[]/Hit[]).
-public sealed record LintKindCount(string Kind, int Count);
+//
+// `Severity` ("error" | "warning", from IssueKindX.Severity) was added with
+// the PERSONA.md rules (amendment AC): those are errors - the rules a persona
+// changeset must pass - while every earlier kind is advisory. It is a
+// property of the kind, so it lives here rather than on each stored issue.
+public sealed record LintKindCount(string Kind, int Count, string Severity);
 
 // `wiki lint` result. Filed/Refreshed split is Issues.Upsert's merge
 // semantics surfaced to the caller: a finding whose (kind,subject) already
@@ -78,14 +83,14 @@ public sealed class LintService
 
     public LintService(Func<long>? nowUnixMs = null)
     {
-        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _nowUnixMs = nowUnixMs ?? Timestamp.NowUnixMs;
     }
 
     public LintReport Run(Vault v, VaultConfig cfg, bool fixLinks)
     {
         var nowMs = _nowUnixMs();
         var nowUtc = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).UtcDateTime;
-        var utcIso = nowUtc.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        var utcIso = Timestamp.Iso(nowMs);
         var today = DateOnly.FromDateTime(nowUtc);
 
         var idmap = new IdMap();
@@ -106,6 +111,7 @@ public sealed class LintService
         findings.AddRange(CheckMissingTags(pages));
         findings.AddRange(CheckBacklog(pages, PageStatus.NeedsReview, IssueKind.NeedsReviewBacklog, today));
         findings.AddRange(CheckBacklog(pages, PageStatus.PendingReview, IssueKind.PendingBacklog, today));
+        findings.AddRange(CheckPersona(v, cfg));
 
         var renameDrifts = CheckRenameDrift(v, pages, idmap);
         foreach (var d in renameDrifts)
@@ -147,6 +153,7 @@ public sealed class LintService
         var filed = 0;
         var refreshed = 0;
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var severities = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var f in findings)
         {
             issues.Upsert(f.Kind, f.Subject, f.Detail, utcIso);
@@ -154,6 +161,19 @@ public sealed class LintService
 
             var wireKind = IssueKindX.ToWire(f.Kind);
             counts[wireKind] = counts.TryGetValue(wireKind, out var c) ? c + 1 : 1;
+            severities[wireKind] = IssueKindX.Severity(f.Kind);
+        }
+
+        // A stale-evidence warning is about one persona line. Once that line
+        // is no longer stale - re-confirmed with current evidence, reworded,
+        // removed, or its page restored - lint resolves the warning itself,
+        // so retired evidence leaves nothing dangling (issue #52). Other
+        // kinds keep the "someone resolves it" lifecycle.
+        var staleNow = new HashSet<string>(findings.Where(f => f.Kind == IssueKind.PersonaStaleEvidence).Select(f => f.Subject), StringComparer.Ordinal);
+        foreach (var issue in issues.List(IssueKind.PersonaStaleEvidence, "open"))
+        {
+            if (!staleNow.Contains(issue.Subject))
+                issues.Resolve(issue.Id, "resolved by lint: the line's evidence is no longer stale (re-confirmed, reworded or removed)");
         }
         issues.Save(v);
 
@@ -165,7 +185,7 @@ public sealed class LintService
 
         var countArray = counts
             .OrderBy(kv => kv.Key, StringComparer.Ordinal)
-            .Select(kv => new LintKindCount(kv.Key, kv.Value))
+            .Select(kv => new LintKindCount(kv.Key, kv.Value, severities[kv.Key]))
             .ToArray();
 
         return new LintReport(filed, refreshed, countArray, indexRegenerated, idmapRepaired, bodiesRewritten);
@@ -373,6 +393,33 @@ public sealed class LintService
             yield return new LintFinding(kind, slug,
                 $"page has been '{PageStatusX.ToWire(status)}' for {ageDays}d (based on 'updated'; threshold 14d)");
         }
+    }
+
+    // PERSONA.md structural rules (amendment AC). The rules themselves live
+    // on PersonaDoc.Validate so lint and the persona changeset validation
+    // share one definition. A vault without PERSONA.md has an empty persona
+    // and nothing to check. Subject is always the file name: there is one
+    // persona per vault and its lines have no ids (issue #31).
+    private static IEnumerable<LintFinding> CheckPersona(Vault v, VaultConfig cfg)
+    {
+        if (!File.Exists(v.PersonaPath))
+            yield break;
+
+        var doc = PersonaService.Load(v);
+        foreach (var (kind, detail) in doc.Validate())
+            yield return new LintFinding(kind, PersonaDoc.FileName, detail);
+
+        // Evidence (issue #50): checked against what the audit log recorded
+        // for the accept that wrote the file. One finding listing every
+        // under-supported line, for the same (kind, subject) merge reason.
+        var evidence = PersonaEvidence.LintProblems(v, doc).ToArray();
+        if (evidence.Length > 0)
+            yield return new LintFinding(IssueKind.PersonaEvidence, PersonaDoc.FileName, string.Join("; ", evidence));
+
+        // Stale evidence (issue #52): one warning per line, each the
+        // re-check proposal a distillation pass picks up.
+        foreach (var line in PersonaEvidence.StaleLines(v, cfg, doc))
+            yield return new LintFinding(IssueKind.PersonaStaleEvidence, line.Subject, PersonaEvidence.StaleDetail(line));
     }
 
     // `rename-drift` (spec §11): a page file that actually exists at path P

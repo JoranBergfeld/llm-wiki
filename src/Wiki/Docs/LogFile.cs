@@ -17,6 +17,9 @@ public static class LogFile
         System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(v.LogPath)!);
         var line = $"## [{utcIso}] {op} | {subject} | {detail}\n";
         // Append is safe without temp-rename; no crash hazard from partial write.
+        // Journaled as an append (issue #47): undoing it is a truncate.
+        Wiki.Core.WriteJournal.BeforeChange(v.LogPath, append: true);
         System.IO.File.AppendAllText(v.LogPath, line);
+        Wiki.Core.WriteJournal.AfterChange();
     }
 }

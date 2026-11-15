@@ -12,9 +12,14 @@ public static class Templates
 {
     private const string WikiYamlResourceName = "Wiki.Templates.wiki-yaml.txt";
     private const string AgentsMdResourceName = "Wiki.Templates.agents-md.txt";
+    private const string InterviewGuideResourceName = "Wiki.Templates.interview-guide.txt";
 
     public static string WikiYaml => ReadResource(WikiYamlResourceName);
     public static string AgentsMd => ReadResource(AgentsMdResourceName);
+
+    // The shipped onboarding interview guide (issue #53). Its version is
+    // InterviewService.ShippedGuideVersion; bump both together.
+    public static string InterviewGuide => ReadResource(InterviewGuideResourceName);
 
     private static string ReadResource(string name)
     {

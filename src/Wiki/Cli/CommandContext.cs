@@ -15,6 +15,16 @@ public sealed class CommandContext
     public required TextWriter Out { get; init; }
     public required TextReader In { get; init; }
 
+    // How this invocation arrived (CLI, MCP stdio, MCP HTTP). Recorded on
+    // the audit line; never decides anything else.
+    public InvocationOrigin Origin { get; init; } = InvocationOrigin.Cli;
+
+    // What a mutating command wants said about itself on its audit line
+    // (issue #44). The audit boundary step reads it after the command
+    // returns; a command that adds nothing still gets a line built from its
+    // name and positional arguments. Ignored for read commands.
+    public global::Wiki.Audit.AuditDraft Audit { get; } = new();
+
     public Vault ResolveVault()
         => Vault.Resolve(VaultFlag, System.Environment.GetEnvironmentVariable, System.IO.Directory.GetCurrentDirectory());
 

@@ -1,0 +1,235 @@
+using System.ComponentModel;
+using System.IO;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+using Wiki.Mcp;
+using Wiki.Tests.Support;
+using Xunit;
+
+namespace Wiki.Tests.Mcp;
+
+// Issue #54, spec "Error contract": unknown tools and schema-invalid
+// arguments are JSON-RPC protocol errors; CLI exit 1/2 is a tool result with
+// isError and the CLI envelope unchanged plus exitCode (text: `code: message`
+// lines); exit 3 is a non-error result carrying exitCode 3.
+public class ErrorContractTests
+{
+    private static void Init(TempVault tv) => tv.Run("init", tv.Path, "--name", "t", "--json");
+
+    private static string AddSource(TempVault tv)
+    {
+        var src = Path.Combine(tv.Path, "input.md");
+        File.WriteAllText(src, "content");
+        var r = tv.Run("source", "add", src, "--category", "article", "--title", "T", "--json");
+        Assert.Equal(0, r.ExitCode);
+        using var doc = JsonDocument.Parse(r.Stdout.Trim().Split('\n')[^1]);
+        return doc.RootElement.GetProperty("data").GetProperty("id").GetString()!;
+    }
+
+    private static string[] CompletedSteps(CallToolResult r)
+        => r.Structured().GetProperty("completedSteps").EnumerateArray().Select(e => e.GetString()!).ToArray();
+
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task UnknownTool_IsAProtocolError(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+
+        var ex = await Assert.ThrowsAsync<McpProtocolException>(() => mcp.CallAsync("init"));
+        Assert.Equal(McpErrorCode.InvalidParams, ex.ErrorCode);
+    }
+
+    public static TheoryData<string, string, Dictionary<string, object?>> InvalidArguments()
+    {
+        var data = new TheoryData<string, string, Dictionary<string, object?>>();
+        foreach (var transport in McpTransports.Names)
+        {
+            data.Add(transport, "read_page", new Dictionary<string, object?>());                                            // required missing
+            data.Add(transport, "read_page", new Dictionary<string, object?> { ["page"] = 42 });                             // wrong type
+            data.Add(transport, "read_page", new Dictionary<string, object?> { ["page"] = "x", ["backlinks"] = "yes" });     // wrong type
+            data.Add(transport, "search_wiki", new Dictionary<string, object?> { ["query"] = "x", ["limit"] = "many" });     // wrong type
+            data.Add(transport, "search_wiki", new Dictionary<string, object?> { ["query"] = "x", ["vault"] = "/elsewhere" }); // undeclared
+        }
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidArguments))]
+    public async Task SchemaInvalidArguments_AreAProtocolError(string transport, string tool, Dictionary<string, object?> args)
+    {
+        using var tv = new TempVault(); Init(tv);
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+
+        var ex = await Assert.ThrowsAsync<McpProtocolException>(() => mcp.CallAsync(tool, args));
+        Assert.Equal(McpErrorCode.InvalidParams, ex.ErrorCode);
+    }
+
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task Exit1_IsAnErrorResult_CarryingTheEnvelopeUnchanged(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        var cli = tv.Run("page", "show", "nope", "--json");
+        Assert.Equal(1, cli.ExitCode);
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+
+        var result = await mcp.CallAsync("read_page", new Dictionary<string, object?> { ["page"] = "nope", ["backlinks"] = true });
+
+        Assert.True(result.IsError);
+        var s = result.Structured();
+        Assert.Equal(1, s.GetProperty("exitCode").GetInt32());
+        Assert.Empty(CompletedSteps(result));
+        // The CLI envelope, unchanged: same keys and values the CLI printed.
+        using var envelope = JsonDocument.Parse(cli.Stdout.Trim().Split('\n')[^1]);
+        foreach (var prop in envelope.RootElement.EnumerateObject())
+            Assert.Equal(prop.Value.GetRawText(), s.GetProperty(prop.Name).GetRawText());
+        Assert.Equal($"not-found: {cli.Envelope.Errors[0].Message}", result.Text());
+    }
+
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task Exit2_IsAnErrorResult(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        var created = tv.RunStdin("Body.", "page", "upsert", "--type", "entity", "--title", "Contoso", "--summary", "s", "--json");
+        using var doc = JsonDocument.Parse(created.Stdout.Trim().Split('\n')[^1]);
+        var id = doc.RootElement.GetProperty("data").GetProperty("id").GetString()!;
+        File.WriteAllText(Path.Combine(tv.Path, ".wiki", "idmap.json"), "garbage{"); // unreadable state: an IO failure
+        await using var mcp = await McpHarness.StartAsync(tv, transport);
+
+        var result = await mcp.CallAsync("read_page", new Dictionary<string, object?> { ["page"] = id });
+
+        Assert.True(result.IsError);
+        var s = result.Structured();
+        Assert.Equal(2, s.GetProperty("exitCode").GetInt32());
+        Assert.False(s.GetProperty("ok").GetBoolean());
+        Assert.Equal("io-error", s.GetProperty("errors")[0].GetProperty("code").GetString());
+        Assert.StartsWith("io-error: ", result.Text());
+    }
+
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task Exit3_IsANonErrorResult_CarryingExitCode3(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        var source = AddSource(tv);
+        Assert.Equal(0, tv.Run("source", "retract", source, "--reason", "first", "--json").ExitCode);
+        await using var mcp = await McpHarness.StartAsync(tv, transport, (b, cli) => b.WithTools(new ProbeTools(cli)));
+
+        var result = await mcp.CallAsync("probe_retract", new Dictionary<string, object?> { ["source"] = source });
+
+        Assert.False(result.IsError);
+        var s = result.Structured();
+        Assert.Equal(3, s.GetProperty("exitCode").GetInt32());
+        Assert.Equal("already-retracted", s.GetProperty("errors")[0].GetProperty("code").GetString());
+        Assert.StartsWith("already-retracted: ", result.Text());
+    }
+
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task MidSequenceFailure_ReturnsTheFailingStep_AndTheStepsBeforeIt(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        tv.RunStdin("Body.", "page", "upsert", "--type", "entity", "--title", "Contoso", "--summary", "s", "--json");
+        await using var mcp = await McpHarness.StartAsync(tv, transport, (b, cli) => b.WithTools(new ProbeTools(cli)));
+
+        var result = await mcp.CallAsync("probe_two_steps", new Dictionary<string, object?> { ["page"] = "contoso", ["source"] = "missing" });
+
+        Assert.True(result.IsError);
+        Assert.Equal(["page show"], CompletedSteps(result));
+        Assert.Equal(1, result.Structured().GetProperty("exitCode").GetInt32());
+        Assert.Equal("not-found", result.Structured().GetProperty("errors")[0].GetProperty("code").GetString());
+    }
+
+    // Issue #46: a busy vault (exit 5, vault-busy) means "not done, retry",
+    // so unlike exit 3 it is an error result. A real CLI writer is parked
+    // mid-step holding the exclusive lock; the tool's read step waits out the
+    // server's lock timeout (`wiki mcp --lock-timeout`, applied to every step
+    // it runs) and fails.
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task Exit5_VaultBusy_IsAnErrorResult(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        await using var mcp = await McpHarness.StartAsync(tv, transport, null, "--lock-timeout", "0.5");
+        var held = new HeldStdin("Body.");
+        var writer = Task.Run(() => tv.RunWith(held, new StringWriter(),
+            "page", "upsert", "--type", "entity", "--title", "Contoso", "--summary", "s", "--stdin", "--json"));
+        try
+        {
+            Assert.True(held.WaitUntilEntered(TimeSpan.FromSeconds(30)));
+
+            var result = await mcp.CallAsync("read_page", new Dictionary<string, object?> { ["page"] = "contoso" });
+
+            Assert.True(result.IsError);
+            Assert.Equal(5, result.Structured().GetProperty("exitCode").GetInt32());
+            Assert.StartsWith("vault-busy: ", result.Text());
+            Assert.Contains("the 0.5 s lock timeout", result.Text());
+        }
+        finally
+        {
+            held.Release();
+            await writer;
+        }
+    }
+
+    // A malformed server lock timeout is a startup error (exit 1), not a
+    // failure on every later tool call.
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task InvalidLockTimeout_RefusesToStart(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            McpHarness.StartAsync(tv, transport, null, "--lock-timeout", "soon", "--json"));
+
+        Assert.Contains("server exited 1", ex.Message);
+        Assert.Contains("\"invalid-lock-timeout\"", ex.Message);
+    }
+
+    // Issue #44 seam: every CLI step a stdio tool runs is recorded as
+    // arriving over stdio, passed as a typed origin (no env var, no argv).
+    [Theory]
+    [MemberData(nameof(McpTransports.All), MemberType = typeof(McpTransports))]
+    public async Task MutationsThroughTheServer_AreAuditedWithTheTransport(string transport)
+    {
+        using var tv = new TempVault(); Init(tv);
+        var source = AddSource(tv);
+        await using var mcp = await McpHarness.StartAsync(tv, transport, (b, cli) => b.WithTools(new ProbeTools(cli)));
+
+        var result = await mcp.CallAsync("probe_retract", new Dictionary<string, object?> { ["source"] = source });
+
+        Assert.False(result.IsError);
+        var last = File.ReadAllLines(Path.Combine(tv.Path, "audit", "audit.log"))[^1];
+        Assert.Contains($" | {transport switch { McpTransports.Stdio => "via=stdio", _ => "via=" + transport }} | ", last);
+        Assert.Contains(" | source.retract | ", last);
+    }
+
+    // Test-only tools, built through the real adapter and registered with the
+    // generic WithTools<T> like the catalogue's own.
+    [McpServerToolType]
+    public sealed class ProbeTools(CliAdapter cli)
+    {
+        [McpServerTool(Name = "probe_retract"), Description("test probe")]
+        public CallToolResult Retract(string source, CancellationToken cancellationToken = default)
+        {
+            var run = cli.Begin(cancellationToken);
+            run.Step(new CliStep("retract", "source", "retract").Option("--reason", "probe").Positional(source));
+            return run.Result();
+        }
+
+        [McpServerTool(Name = "probe_two_steps"), Description("test probe")]
+        public CallToolResult TwoSteps(string page, string source, CancellationToken cancellationToken = default)
+        {
+            var run = cli.Begin(cancellationToken);
+            if (run.Step(new CliStep("page", "page", "show").Positional(page)))
+                run.Step(new CliStep("retract", "source", "retract").Option("--reason", "probe").Positional(source));
+            return run.Result();
+        }
+    }
+}

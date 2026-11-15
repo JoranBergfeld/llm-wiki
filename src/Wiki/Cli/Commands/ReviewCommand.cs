@@ -19,6 +19,7 @@ public static class ReviewCommand
         review.Add(BuildList(vaultOption, jsonOption, stdout, stdin));
         review.Add(BuildApprove(vaultOption, jsonOption, stdout, stdin));
         review.Add(BuildReject(vaultOption, jsonOption, stdout, stdin));
+        review.Add(BuildWithdraw(vaultOption, jsonOption, stdout, stdin));
         return review;
     }
 
@@ -50,7 +51,7 @@ public static class ReviewCommand
     {
         var idArgument = new Argument<string>("id")
         {
-            Description = "Pending-review page id (ULID) to approve",
+            Description = "Pending-review page id, or the persona changeset id (ULID), to approve",
         };
 
         var approve = new Command("approve", "Approve a pending-review page: pending-review -> active")
@@ -63,8 +64,12 @@ public static class ReviewCommand
             var id = parseResult.GetRequiredValue(idArgument);
 
             var vault = ctx.ResolveVault();
+            if (PersonaService.IsChangeset(vault, id))
+                return ApprovePersona(ctx, vault, id);
+
             var service = new ReviewService();
             service.Approve(vault, id);
+            DecisionAudit.Record(ctx);
 
             var view = PageQuery.Show(vault, id, frontmatterOnly: true);
             if (ctx.Json)
@@ -86,11 +91,11 @@ public static class ReviewCommand
     {
         var idArgument = new Argument<string>("id")
         {
-            Description = "Pending-review page id (ULID) to reject",
+            Description = "Pending-review page id, or the persona changeset id (ULID), to reject",
         };
-        var noteOption = new Option<string?>("--note")
+        var noteOption = new Option<string?>("--note", "--reason")
         {
-            Description = "Optional free-text rejection reason (recorded on the filed issue and the log)",
+            Description = "Rejection reason (recorded on the filed issue and the log); required for a persona changeset",
         };
 
         var reject = new Command("reject", "Reject a pending-review page: restores the previous body (update) or archives it (create); files an issue")
@@ -105,8 +110,12 @@ public static class ReviewCommand
             var note = parseResult.GetValue(noteOption);
 
             var vault = ctx.ResolveVault();
+            if (PersonaService.IsChangeset(vault, id))
+                return RejectPersona(ctx, vault, id, note);
+
             var service = new ReviewService();
             service.Reject(vault, id, note);
+            DecisionAudit.Record(ctx);
 
             var view = PageQuery.Show(vault, id, frontmatterOnly: true);
             if (ctx.Json)
@@ -122,6 +131,69 @@ public static class ReviewCommand
         }));
 
         return reject;
+    }
+
+    // `wiki review withdraw <id> --reason` (amendment AX): the proposer takes
+    // a pending persona changeset back. Pages under review have no proposer
+    // to withdraw them - they are rejected - so only a changeset id is found.
+    private static Command BuildWithdraw(Option<string?> vaultOption, Option<bool> jsonOption, TextWriter stdout, TextReader stdin)
+    {
+        var idArgument = new Argument<string>("id")
+        {
+            Description = "The pending persona changeset id (ULID) to withdraw",
+        };
+        var reasonOption = DecisionAudit.WithdrawReasonOption();
+
+        var withdraw = new Command("withdraw", "Withdraw a pending persona changeset, with a reason; PERSONA.md is left untouched")
+        {
+            idArgument,
+            reasonOption,
+        };
+
+        withdraw.SetAction(CommandBinding.Bind(vaultOption, jsonOption, stdout, stdin, (parseResult, ctx) =>
+        {
+            var id = parseResult.GetRequiredValue(idArgument);
+            var vault = ctx.ResolveVault();
+            if (!PersonaService.IsChangeset(vault, id))
+                throw new ValidationException("not-found",
+                    $"no persona changeset found for id '{id}'; a page under review is rejected, not withdrawn");
+            var reason = DecisionAudit.RequireWithdrawReason(parseResult.GetValue(reasonOption));
+
+            var result = new PersonaService().Withdraw(vault, id, reason);
+
+            ctx.Audit.Action = "persona.withdraw";
+            ctx.Audit.Subject = id;
+            DecisionAudit.RecordWithdraw(ctx, reason);
+            ctx.EmitOk(result);
+            return 0;
+        }));
+
+        return withdraw;
+    }
+
+    // A persona changeset is decided all-or-nothing (issue #32). Both
+    // decisions record who decided (`decidedVia`) on their audit line; the
+    // accept also records every evidence reference with its hash and the
+    // full evidence ledger of the new PERSONA.md, which lint reads back.
+    private static int ApprovePersona(CommandContext ctx, Vault vault, string id)
+    {
+        var acceptance = new PersonaService().Accept(vault, id);
+        PersonaAudit.Accept(ctx, acceptance, PersonaAudit.DecidedVia(ctx));
+        ctx.EmitOk(acceptance.Result);
+        return 0;
+    }
+
+    private static int RejectPersona(CommandContext ctx, Vault vault, string id, string? note)
+    {
+        var result = new PersonaService().Reject(vault, id, note);
+
+        ctx.Audit.Action = "persona.reject";
+        ctx.Audit.Subject = id;
+        ctx.Audit.Field("decidedVia", PersonaAudit.DecidedVia(ctx))
+                 .Field("reason", result.Changeset.Note ?? "");
+
+        ctx.EmitOk(result);
+        return 0;
     }
 
     private static void RenderListView(TextWriter output, System.Collections.Generic.IReadOnlyList<PendingView> rows)

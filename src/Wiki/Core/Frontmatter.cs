@@ -126,8 +126,8 @@ public static class Frontmatter
 }
 
 // Frontmatter for a normal wiki page: id, type, title, status, created,
-// updated, summary, sources, tags. Fixed serialization order matches this
-// list. `summary` is required (amendment B).
+// updated, summary, sources, tags, and the optional persona flag. Fixed
+// serialization order matches this list. `summary` is required (amendment B).
 public sealed class PageFrontmatter
 {
     public required string Id { get; init; }
@@ -140,8 +140,20 @@ public sealed class PageFrontmatter
     public required string[] Sources { get; init; }
     public required string[] Tags { get; init; }
 
+    // `persona: candidate` (issue #49, ADR 0001): the page was built from a
+    // source in a persona-source category and no distillation pass has
+    // considered it yet. The one addition the persona makes to the page
+    // schema - optional, and written only when set, so every page without it
+    // serializes byte-identically to before. `candidate` is the only legal
+    // value; anything else is a schema error rather than a second flag nobody
+    // reads. Knowledge pages still never link to the persona.
+    public bool PersonaCandidate { get; init; }
+
+    public const string PersonaKey = "persona";
+    public const string PersonaCandidateValue = "candidate";
+
     private static readonly string[] AllowedKeys =
-        { "id", "type", "title", "status", "created", "updated", "summary", "sources", "tags" };
+        { "id", "type", "title", "status", "created", "updated", "summary", "sources", "tags", PersonaKey };
 
     private static readonly string[] RequiredScalarKeys =
         { "id", "type", "title", "status", "created", "updated", "summary" };
@@ -154,6 +166,17 @@ public sealed class PageFrontmatter
         Frontmatter.RequireScalarKeys(scalars, RequiredScalarKeys);
         Frontmatter.RequireListKeys(lists, RequiredListKeys);
 
+        if (lists.ContainsKey(PersonaKey))
+            throw new ValidationException("frontmatter-schema", $"'{PersonaKey}' must be '{PersonaCandidateValue}', not a list");
+        var personaCandidate = false;
+        if (scalars.TryGetValue(PersonaKey, out var persona))
+        {
+            if (persona != PersonaCandidateValue)
+                throw new ValidationException("frontmatter-schema",
+                    $"'{PersonaKey}' must be '{PersonaCandidateValue}', got '{persona}'");
+            personaCandidate = true;
+        }
+
         return new PageFrontmatter
         {
             Id = Frontmatter.ValidId(scalars),
@@ -165,6 +188,7 @@ public sealed class PageFrontmatter
             Summary = scalars["summary"],
             Sources = lists["sources"],
             Tags = lists["tags"],
+            PersonaCandidate = personaCandidate,
         };
     }
 
@@ -181,6 +205,8 @@ public sealed class PageFrontmatter
         sb.Append(Frontmatter.WriteScalar("summary", Summary, quoted: true)).Append('\n');
         sb.Append(Frontmatter.WriteList("sources", Sources)).Append('\n');
         sb.Append(Frontmatter.WriteList("tags", Tags)).Append('\n');
+        if (PersonaCandidate)
+            sb.Append(Frontmatter.WriteScalar(PersonaKey, PersonaCandidateValue, quoted: false)).Append('\n');
         sb.Append(Frontmatter.Delimiter);
         return sb.ToString();
     }

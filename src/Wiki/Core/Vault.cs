@@ -14,11 +14,26 @@ public sealed class Vault
     public string LogPath { get; }
     public string AgentsPath { get; }
 
+    // The file the vault lock holds an OS handle on (issue #46, see
+    // Wiki.Cli.VaultLock). Empty; its content is never read or written.
+    public string LockPath { get; }
+
+    // The write journal of the mutation in progress, or of one that was
+    // interrupted (issue #47, see Wiki.Core.WriteJournal). Absent between
+    // mutations. Unlike the rest of `.wiki/` it is NOT rebuildable: deleting
+    // it while it exists gives up recovering that interrupted write.
+    public string JournalPath { get; }
+
     // The human-owned golden-question file (issue #11 part A). Sits next to
     // wiki.yaml at the vault root, and is optional - `wiki eval` is the only
     // thing that reads it, and its absence is that command's problem, not
     // every command's.
     public string EvalPath { get; }
+
+    // The owner's persona (issue #48). At the vault root, beside AGENTS.md,
+    // and optional: a vault without it has an empty persona. Only the
+    // `wiki persona` commands write it; ingest never does.
+    public string PersonaPath { get; }
 
     private Vault(string root)
     {
@@ -30,7 +45,10 @@ public sealed class Vault
         IndexPath = System.IO.Path.Combine(WikiDir, "index.md");
         LogPath = System.IO.Path.Combine(WikiDir, "log.md");
         AgentsPath = System.IO.Path.Combine(root, "AGENTS.md");
+        LockPath = System.IO.Path.Combine(StateDir, "lock");
+        JournalPath = System.IO.Path.Combine(StateDir, "journal");
         EvalPath = System.IO.Path.Combine(root, "eval.yaml");
+        PersonaPath = System.IO.Path.Combine(root, PersonaDoc.FileName);
     }
 
     // The one way to turn an absolute path inside this vault into the
